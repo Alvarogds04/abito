@@ -47,7 +47,8 @@ jobs:
       - name: macOS unit tests and installed runtime lookup
         run: |
           cargo test --lib --locked -- daemonhost transport agentconn
-          cargo test --locked --test platform_runtime
+          # Installed behavior: release excludes Linux-only debug probes.
+          cargo test --release --locked --test platform_runtime
       - name: Build .app and .dmg (unsigned)
         run: |
           npx --yes @tauri-apps/cli@2 build --ci --bundles app,dmg \

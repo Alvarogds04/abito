@@ -94,6 +94,10 @@ impl HostSlot {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[path = "daemonhost_discovery_mac.rs"]
+mod mac_discovery;
+
 /// Session PATH first; only these canonical locations are tried afterwards.
 /// Empty/relative PATH components are ignored: no working-directory execution.
 pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Result<PathBuf, String> {
@@ -106,6 +110,7 @@ pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Resul
         if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) {
             candidates.push(home.join(".local/bin").join(name));
             candidates.push(home.join(".npm-global/bin").join(name));
+            candidates.extend(mac_discovery::candidates(name, home));
         }
     }
     match name {

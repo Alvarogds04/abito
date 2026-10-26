@@ -77,9 +77,15 @@ The host looks there before the debug-only source fallback. The daemon's existin
 sibling lookup also finds the hook installer there; no separate hook override is
 needed. Linux still uses the directories adjacent to the executable.
 
-Finder's minimal PATH is supported: macOS checks the user's `.local/bin` and
-`.npm-global/bin`, then Homebrew `/opt/homebrew/bin` and the existing system
-locations. Absolute inherited PATH entries still win. Node/Pi are not bundled.
+Finder's minimal PATH is supported: macOS checks the user's `.local/bin`,
+`.npm-global/bin`, `.volta/bin`, and selected NVM version, then Homebrew
+`/opt/homebrew/bin` and the existing system locations. NVM uses the exact version
+named by `.nvm/alias/default` (at most one extra alias file, including `lts/name`).
+If unavailable, it selects the highest numeric `vMAJOR.MINOR.PATCH/bin` under
+`.nvm/versions/node`; enumeration is capped at 128 entries and alias reads at
+256 bytes. No shell, glob expansion, or recursive alias resolution is used.
+Overflow yields no NVM candidate. Absolute inherited PATH entries still win.
+Node/Pi are not bundled; arbitrary custom prefixes and fnm require PATH setup.
 GUI installs on macOS/Windows use the canonical home directory only when
 `ABITO_PROJECT_ROOT` is absent (HOME on macOS, USERPROFILE on Windows). Explicit
 invalid settings still fail, debug roots remain unchanged, and Linux still
