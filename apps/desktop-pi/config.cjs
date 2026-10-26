@@ -1,0 +1,134 @@
+'use strict';
+// Mirrors apps/desktop-harness/src/config.cjs (own copy; no cross-app require): Pi and the harness hooks resolve
+// the island's stable endpoint handoff with the same closed checks, so a plain Pi session behaves like Claude Code.
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+function normalized(value) {
+  return typeof value === 'string' && value !== '/' && path.isAbsolute(value) &&
+    path.normalize(value) === value && !value.endsWith('/') && !value.includes('\0');
+}
+// sockaddr_un.sun_path: 108 bytes on Linux, 104 on macOS, both including the NUL.
+const SUN_PATH_MAX = process.platform === 'darwin' ? 103 : 107;
+// Per-user runtime base. Linux: $XDG_RUNTIME_DIR, else /run/user/<uid>. macOS has neither: the
+// per-user temp dir (same directory as confstr(_CS_DARWIN_USER_TEMP_DIR) in the Tauri transport),
+// canonicalized because /var is a symlink and the directory-chain check refuses symlinks.
+function runtimeBase(env, owner) {
+  if (process.platform === 'darwin') {
+    try { return fs.realpathSync(os.tmpdir()); } catch { throw new Error('No runtime base'); }
+  }
+  return normalized(env.XDG_RUNTIME_DIR) ? env.XDG_RUNTIME_DIR : `/run/user/${owner}`;
+}
+function endpointShape(endpoint, runtime) {
+  return normalized(endpoint) && Buffer.byteLength(endpoint) <= SUN_PATH_MAX &&
+    path.dirname(path.dirname(endpoint)) === runtime && path.basename(endpoint) === 's' &&
+    /^p-[a-zA-Z0-9]{6}$/.test(path.basename(path.dirname(endpoint)));
+}
+const MAX_HANDOFF = 4096;
+function readProcState(pid) {
+  let fd;
+  try {
+    fd = fs.openSync(`/proc/${pid}/stat`, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const buffer = Buffer.alloc(512);
+    const n = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const stat = buffer.toString('utf8', 0, n);
+    const close = stat.lastIndexOf(')');
+    if (close < 0) return undefined;
+    return /^\s+([A-Za-z])(?:\s|$)/.exec(stat.slice(close + 1))?.[1];
+  } catch { return undefined; } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+// Field 22 of /proc/<pid>/stat (process start time in clock ticks) as a decimal string. `comm` may contain spaces and
+// parentheses, so the fields are parsed after the LAST ')'. `undefined` when unreadable. Mirrors the island's `proc_start`.
+function readProcStart(pid) {
+  let fd;
+  try {
+    fd = fs.openSync(`/proc/${pid}/stat`, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const buffer = Buffer.alloc(1024);
+    const n = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const stat = buffer.toString('utf8', 0, n);
+    const close = stat.lastIndexOf(')');
+    if (close < 0) return undefined;
+    const ticks = stat.slice(close + 2).split(' ')[22 - 3];
+    return typeof ticks === 'string' && /^[0-9]+$/.test(ticks) ? ticks : undefined;
+  } catch { return undefined; } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+// Stable handoff `<runtime>/endpoint.json`: a pointer, not authority. Any failure => undefined (silent).
+function readHandoff(runtime, owner, procExists, procState, procStart) {
+  let fd;
+  try {
+    fd = fs.openSync(`${runtime}/endpoint.json`, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.uid !== owner || st.size > MAX_HANDOFF ||
+        (st.mode & 0o7777) !== 0o600 || st.nlink !== 1) return undefined;
+    const buffer = Buffer.alloc(MAX_HANDOFF + 1);
+    const n = fs.readSync(fd, buffer, 0, MAX_HANDOFF + 1, 0);
+    if (n > MAX_HANDOFF) return undefined;
+    const text = buffer.toString('utf8', 0, n);
+    const value = JSON.parse(text);
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const canonical = JSON.stringify(value);
+    if (text !== canonical && text !== `${canonical}\n`) return undefined;
+    // closed key set: v, endpoint, pid and, optionally, procStart (the island's identity of the pid)
+    const keys = Object.keys(value).sort().join();
+    const hasStart = keys === 'endpoint,pid,procStart,v';
+    if (keys !== 'endpoint,pid,v' && !hasStart) return undefined;
+    if (value.v !== 1 || !Number.isSafeInteger(value.pid) || value.pid < 1 || value.pid > 2147483647) return undefined;
+    if (typeof value.endpoint !== 'string' || !endpointShape(value.endpoint, runtime)) return undefined;
+    // Load lazily to avoid config.cjs <-> security.cjs initialization cycles.
+    require('./security.cjs').verifyEndpoint(value.endpoint, runtime);
+    if (!procExists(value.pid)) return undefined;
+    const state = procState(value.pid);
+    if (typeof state !== 'string' || !/^[A-Za-z]$/.test(state) || state === 'Z' || state === 'X') return undefined;
+    // Present = the pid is an IDENTITY: a recycled pid has another start time. Absent keeps the existence-only
+    // behaviour. A claimed value that is malformed, or a start time we cannot read, fails closed.
+    if (hasStart) {
+      const claimed = value.procStart;
+      if (typeof claimed !== 'string' || !/^[0-9]+$/.test(claimed)) return undefined;
+      if (procStart(value.pid) !== claimed) return undefined;
+    }
+    return value.endpoint;
+  } catch { return undefined; } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+// Resolving configuration never creates a directory or connects a socket.
+function resolveConfig(env, owner, options = {}) {
+  if (!Number.isInteger(owner) || owner < 0) throw new Error('Linux uid required');
+  // Default: the Tauri island's own leaf, exactly where `src/transport.rs default_runtime` binds
+  // (`$XDG_RUNTIME_DIR/abito-island`). The Electron production (`abito-desktop`) and Preview
+  // (`abito-desktop-preview`) roots are never a default: they need an explicit ABITO_SOCKET_DIR.
+  const xdg = runtimeBase(env, owner);
+  const runtime = env.ABITO_SOCKET_DIR ?? `${xdg}/abito-island`;
+  if (!normalized(runtime)) throw new Error('Invalid ABITO_SOCKET_DIR');
+  const explicit = env.ABITO_DESKTOP_SOCKET;
+  if (explicit !== undefined) {
+    if (!endpointShape(explicit, runtime)) throw new Error('Unexpected endpoint');
+    return { runtime, endpoint: explicit, source: 'env' };
+  }
+  const procExists = options.procExists ?? (pid => fs.existsSync(`/proc/${pid}`));
+  const procState = options.procState ?? readProcState;
+  const procStart = options.procStart ?? readProcStart;
+  const endpoint = readHandoff(runtime, owner, procExists, procState, procStart);
+  return { runtime, endpoint, source: endpoint === undefined ? undefined : 'handoff' };
+}
+// The current endpoint published by the running island, or undefined. Called on EVERY connection attempt: an island
+// restart binds a new `<runtime>/p-XXXXXX/s`, so a resolved-at-start path would go stale. Never throws.
+function resolveEndpoint(env, owner, options = {}) {
+  try { return resolveConfig(env, owner, options).endpoint; } catch { return undefined; }
+}
+function resolveQuestionConfig(env) {
+  const { timeoutValid, DEFAULT_TIMEOUT_MS } = require('./questions.cjs');
+  if (env.ABITO_QUESTIONS !== undefined && !['0', '1', '2', '3'].includes(env.ABITO_QUESTIONS)) {
+    throw new Error('ABITO_QUESTIONS must be 0, 1, 2 or 3');
+  }
+  const raw = env.ABITO_QUESTION_TIMEOUT_MS;
+  const questionTimeoutMs = raw === undefined ? DEFAULT_TIMEOUT_MS : /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!timeoutValid(questionTimeoutMs)) throw new Error('Invalid ABITO_QUESTION_TIMEOUT_MS');
+  return { questionLevel: Number(env.ABITO_QUESTIONS ?? '0'), questionTimeoutMs };
+}
+module.exports = { resolveConfig, resolveEndpoint, resolveQuestionConfig, endpointShape };

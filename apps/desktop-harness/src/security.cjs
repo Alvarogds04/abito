@@ -1,0 +1,31 @@
+'use strict';
+// mirrors apps/desktop-pi/security.cjs (own copy; no cross-app require).
+const fs = require('node:fs');
+const path = require('node:path');
+const { endpointShape } = require('./config.cjs');
+
+// Read-only port of legacy transport.cjs checks. Never mkdir, chmod or unlink.
+function privateDirectory(target, owner) {
+  let current = '/';
+  for (const part of target.split('/').filter(Boolean)) {
+    current = path.join(current, part);
+    const stat = fs.lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || ![0, owner].includes(stat.uid) || (stat.mode & 0o002)) {
+      throw new Error('Unsafe directory chain');
+    }
+  }
+  const stat = fs.lstatSync(target);
+  if (stat.uid !== owner || (stat.mode & 0o7777) !== 0o700) throw new Error('Private directory required');
+}
+function verifyEndpoint(endpoint, runtime) {
+  if (process.platform !== 'linux' || !endpointShape(endpoint, runtime)) throw new Error('Unexpected endpoint');
+  const owner = process.getuid();
+  privateDirectory(runtime, owner);
+  privateDirectory(path.dirname(endpoint), owner);
+  const stat = fs.lstatSync(endpoint);
+  if (!stat.isSocket() || stat.isSymbolicLink() || stat.uid !== owner || (stat.mode & 0o7777) !== 0o600) {
+    throw new Error('Unsafe socket');
+  }
+  return { dev: stat.dev, ino: stat.ino };
+}
+module.exports = { verifyEndpoint };

@@ -1,0 +1,26 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { resolveConfig } = require('../src/config.cjs');
+
+test('absent endpoint means unavailable; never scans, default root by uid', () => {
+  // uid 4321 does not exist here: the default runtime is computed WITHOUT reading the live island's real endpoint.json
+  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false }), { runtime: '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
+  assert.equal(resolveConfig({ ABITO_PROJECT_ROOT: '/x' }, 4321).endpoint, undefined);
+  assert.equal(resolveConfig({ ABITO_SOCKET_DIR: '/home/u/r' }, 1000).runtime, '/home/u/r');
+});
+test('uid and runtime shape matrix', () => {
+  for (const uid of [-1, 1.5, NaN, '1000', undefined]) assert.throws(() => resolveConfig({}, uid));
+  for (const value of ['', 'relative', '/a/../b', '/a//b', '/a/', '/', '/a\0b']) {
+    assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: value }, 1000));
+  }
+});
+test('endpoint shape matrix', () => {
+  const env = endpoint => ({ ABITO_SOCKET_DIR: '/home/u/root', ABITO_DESKTOP_SOCKET: endpoint });
+  assert.equal(resolveConfig(env('/home/u/root/p-abc123/s'), 1000).endpoint, '/home/u/root/p-abc123/s');
+  for (const e of ['/home/u/root/p-abc123/no', '/home/u/root/p-a/s', '/home/u/else/p-abc123/s',
+    '/home/u/root/p-abc12!/s', '/home/u/root/p-abc123/s/', 'rel/p-abc123/s', '']) {
+    assert.throws(() => resolveConfig(env(e), 1000), e);
+  }
+  assert.throws(() => resolveConfig({ ABITO_DESKTOP_SOCKET: '/home/u/root/p-abc123/s' }, 1000));
+});
