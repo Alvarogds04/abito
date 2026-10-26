@@ -1,7 +1,7 @@
 name: Preview macOS runtime
 on:
   push:
-    branches: ['preview/**']
+    branches: ['preview/mac', 'preview/mac-*']
 permissions:
   contents: read
 concurrency:

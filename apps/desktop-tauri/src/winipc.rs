@@ -164,7 +164,7 @@ pub mod ffi {
     };
     use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
     use windows_sys::Win32::Security::{
-        GetAce, GetAclInformation, GetSecurityDescriptorDacl, GetTokenInformation,
+        GetAce, GetAclInformation, GetSecurityDescriptorDacl, GetTokenInformation, AclSizeInformation,
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
         OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PROTECTED_DACL_SECURITY_INFORMATION,
         PSID, SECURITY_ATTRIBUTES, TokenUser, TOKEN_QUERY, TOKEN_USER,
@@ -322,7 +322,7 @@ pub mod ffi {
                 let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
                 if unsafe {
                     GetAclInformation(dacl, (&mut info as *mut ACL_SIZE_INFORMATION).cast(),
-                        std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32, ACL_SIZE_INFORMATION_CLASS)
+                        std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32, AclSizeInformation)
                 } == 0
                 {
                     return None;
@@ -349,8 +349,6 @@ pub mod ffi {
         verdict
     }
 
-    /// ACL_INFORMATION_CLASS value for AclSizeInformation (the only query we make).
-    const ACL_SIZE_INFORMATION_CLASS: i32 = 3;
 
     /// Create the notices directory (no symlink anywhere) and require a
     /// private DACL (owner, SYSTEM, Administrators only). Created fresh, it

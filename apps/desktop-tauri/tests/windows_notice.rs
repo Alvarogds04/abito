@@ -11,6 +11,7 @@
 //! before reuse/drop, accept-close is prompt, concurrent read/write on one
 //! connected handle, and creation-time owner-only DACLs on private files.
 
+use std::io::{Read as _, Write as _};
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,6 +37,10 @@ fn runtime_root(tag: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(tag);
     let _ = std::fs::remove_dir_all(&dir); // stale fixture from a previous run: ours
     std::fs::create_dir_all(&dir).expect("create runtime root");
+    // CI checkout directories need not inherit the runner user's private ACL.
+    // Provision only our empty fixture; production must still reject broad ACLs.
+    let sid = winipc::ffi::current_user_sid().expect("fixture owner");
+    winipc::ffi::set_owner_only_acl(&dir, &sid).expect("private fixture directory");
     dir
 }
 
@@ -321,13 +326,34 @@ fn concurrent_read_write_on_one_handle_is_bounded() {
         }
         received
     });
+    // The opposite endpoint echoes bytes: a duplex pipe is not loopback.
+    let echo = std::thread::spawn(move || {
+        let event = winipc::ffi::create_manual_event().expect("client event");
+        let mut buffer = [0u8; 512];
+        let mut echoed = 0;
+        while echoed < 5 * b"concurrent\n".len() {
+            let count = winipc::ffi::read_bounded_overlapped(
+                &client, event.as_raw_handle() as HANDLE, &mut buffer,
+                Duration::from_secs(2),
+            ).expect("client receives server writes");
+            assert!(count > 0, "server must not close before echo");
+            winipc::ffi::write_bounded(
+                client.as_raw_handle() as HANDLE, &buffer[..count],
+                Duration::from_secs(2),
+            ).expect("client echoes to server reader");
+            echoed += count;
+        }
+        // Keep this endpoint alive until the server reader consumes the echo.
+        client
+    });
     // Main thread: concurrent bounded writes on the SAME connected handle.
     for _ in 0..5 {
         winipc::ffi::write_bounded(handle, b"concurrent\n", Duration::from_secs(2))
             .expect("concurrent write on the shared connected handle");
     }
+    let client = echo.join().expect("client echo completes");
     let received = reader.join().expect("reader thread ends without hanging");
-    assert!(received >= 5 * "concurrent\n".len(), "reads saw the concurrent writes: {received}");
+    assert_eq!(received, 5 * "concurrent\n".len(), "server received every echoed byte");
     drop(client);
 }
 
@@ -360,18 +386,26 @@ fn relay_forwards_for_matching_server() {
     // The connected server handle is overlapped: bounded overlapped I/O only.
     let mut line = hello(&protocol::project_id("windows-notice-integration")).to_string().into_bytes();
     line.push(b'\n');
-    winipc::ffi::write_bounded(server_handle, &line, Duration::from_secs(5))
-        .expect("relay forwarded our hello to the pipe server");
+    child.stdin.as_mut().expect("relay stdin").write_all(&line)
+        .expect("hook sends hello through relay stdin");
     let read_event = winipc::ffi::create_manual_event().expect("event");
-    let mut buffer = [0u8; 256];
-    let count = winipc::ffi::read_bounded_overlapped(
-        &server_file,
-        read_event.as_raw_handle() as HANDLE,
-        &mut buffer,
-        Duration::from_secs(5),
-    )
-    .expect("read the relay's forwarded ready line");
-    assert_eq!(&buffer[..count], READY_LINE, "relay forwarded the ready line back");
+    let mut received = vec![0; line.len()];
+    let mut offset = 0;
+    while offset < received.len() {
+        let count = winipc::ffi::read_bounded_overlapped(
+            &server_file, read_event.as_raw_handle() as HANDLE,
+            &mut received[offset..], Duration::from_secs(5),
+        ).expect("server receives forwarded hello");
+        assert!(count > 0, "relay must not close mid-frame");
+        offset += count;
+    }
+    assert_eq!(received, line, "stdin bytes reach the actual server unchanged");
+    winipc::ffi::write_bounded(server_handle, READY_LINE, Duration::from_secs(5))
+        .expect("server replies ready");
+    let mut reply = vec![0; READY_LINE.len()];
+    child.stdout.as_mut().expect("relay stdout").read_exact(&mut reply)
+        .expect("hook receives reply through relay stdout");
+    assert_eq!(reply, READY_LINE, "pipe response reaches stdout unchanged");
     drop(read_event);
     drop(child.stdin.take());
     let status = child.wait().expect("relay exits");
@@ -471,6 +505,27 @@ fn private_file_refuses_directory_and_reparse_targets() {
     );
     assert!(dir_target.is_dir(), "the directory is untouched");
     let _ = std::fs::remove_dir_all(&runtime);
+}
+
+#[test]
+fn inherited_broad_runtime_acl_is_refused() {
+    let root = runtime_root("win-inherited-broad-acl");
+    let grant = Command::new("icacls").arg(&root)
+        .args(["/grant", "*S-1-1-0:(OI)(CI)(R)"])
+        .output().expect("grant inheritable Everyone read on fixture");
+    assert!(grant.status.success(), "fixture ACL broadening succeeds");
+    let runtime = root.join("inherited");
+    std::fs::create_dir(&runtime).expect("child inherits broad ACL");
+    let sentinel = runtime.join("untouched.txt");
+    std::fs::write(&sentinel, b"unchanged").expect("sentinel");
+    let sid = winipc::ffi::current_user_sid().expect("own sid");
+    assert!(!winipc::ffi::directory_private(&runtime, &sid, false));
+    let project = protocol::project_id("windows-notice-integration");
+    assert!(transport::create_transport(TransportOptions::new(&runtime, &project)).is_err(),
+        "production receiver refuses inherited broad runtime ACL");
+    assert_eq!(std::fs::read(&sentinel).expect("sentinel preserved"), b"unchanged");
+    assert!(!runtime.join(winipc::ffi::ENDPOINT_FILE).exists(), "no metadata published");
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 // --- metadata: a broadened file ACL is refused -------------------------------
