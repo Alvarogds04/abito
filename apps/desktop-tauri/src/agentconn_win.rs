@@ -1,9 +1,12 @@
 //! #306 (Windows, W1) — the connection half of the island-agent client over a
 //! NAMED PIPE. Same contract as `agentconn.rs` (keep in sync), different gate:
 //!
-//! * `session.json` lives under `%LOCALAPPDATA%\Abito\runtime`; before reading it
-//!   the directory's owner and DACL are verified (only the current user, SYSTEM and
-//!   Administrators may have access) — node cannot set ACLs, so we check them.
+//! * `session.json` lives under `%LOCALAPPDATA%\Abito\runtime` (or an
+//!   `ABITO_ISLAND_DIR` override INSIDE that canonical protected root); before
+//!   reading it the island root, the runtime directory AND THE FILE ITSELF are
+//!   verified by owner and DACL — the file must be strictly owner-only (as the
+//!   native `abito-private-session` helper writes it), bounded and a plain
+//!   non-reparse regular file — node cannot set ACLs, so we check them.
 //! * Squat guard: before the token is sent, `GetNamedPipeServerProcessId` must equal
 //!   the pid recorded in `session.json` AND that process must run as OUR user.
 //! * Reads never block inside `ReadFile` (they poll `PeekNamedPipe`): a synchronous
@@ -15,28 +18,21 @@ use crate::winpolicy;
 use serde_json::Value;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{LocalFree, HANDLE, WAIT_TIMEOUT};
-use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
-};
-use windows_sys::Win32::Security::{
-    GetAce, GetAclInformation, GetTokenInformation, AclSizeInformation, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
-    ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, TokenUser, TOKEN_QUERY, TOKEN_USER,
-};
+use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe};
-use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SYNCHRONIZE,
-};
 
 const HELLO_WAIT: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(10);
+/// Windows FILE_ATTRIBUTE_REPARSE_POINT: any name surrogate (symlink,
+/// junction, mount point) is never a plain session file.
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+/// Bounded session file, parity with the daemon's own 4096-byte reader.
+const MAX_SESSION_FILE: u64 = 4096;
 
 pub struct AgentConn {
     state: Arc<Mutex<ClientState>>,
@@ -50,95 +46,16 @@ pub fn session_path(island_root: &Path) -> PathBuf {
     island_root.join("runtime").join("session.json")
 }
 
-/// Island root: `ABITO_ISLAND_DIR` (absolute) or `%LOCALAPPDATA%\Abito`. `home` is unused here.
+/// Island root: an `ABITO_ISLAND_DIR` override INSIDE the canonical protected
+/// `%LOCALAPPDATA%\Abito` root, or that root itself (`winpolicy::island_root`).
+/// `home` is unused here.
 pub fn island_root(env_dir: Option<&str>, _home: Option<&str>) -> Option<PathBuf> {
     winpolicy::island_root(env_dir, std::env::var("LOCALAPPDATA").ok().as_deref())
 }
 
-// ---- tokens / SIDs ------------------------------------------------------------------
+// ---- tokens / SIDs / ACL verdicts: REUSED from `winipc::ffi` (T2) -----------
 
-fn token_user_sid_string(token: HANDLE) -> Option<String> {
-    let mut needed = 0u32;
-    unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed) };
-    if needed == 0 || needed > 4096 { return None }
-    let mut buf = vec![0u8; needed as usize + 8];
-    // The buffer is only read back as a TOKEN_USER (pointer-aligned via Vec<u64> below).
-    let mut aligned = vec![0u64; buf.len() / 8 + 1];
-    let ok = unsafe { GetTokenInformation(token, TokenUser, aligned.as_mut_ptr().cast(), (aligned.len() * 8) as u32, &mut needed) };
-    drop(buf.drain(..));
-    if ok == 0 { return None }
-    let user = unsafe { &*(aligned.as_ptr() as *const TOKEN_USER) };
-    sid_to_string(user.User.Sid)
-}
-
-fn sid_to_string(sid: *mut core::ffi::c_void) -> Option<String> {
-    let mut wide: *mut u16 = std::ptr::null_mut();
-    if unsafe { ConvertSidToStringSidW(sid, &mut wide) } == 0 || wide.is_null() { return None }
-    let mut len = 0;
-    while unsafe { *wide.add(len) } != 0 { len += 1; if len > 256 { unsafe { LocalFree(wide.cast()) }; return None } }
-    let text = String::from_utf16(unsafe { std::slice::from_raw_parts(wide, len) }).ok();
-    unsafe { LocalFree(wide.cast()) };
-    text
-}
-
-fn current_user_sid() -> Option<String> {
-    let mut token: HANDLE = std::ptr::null_mut();
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 { return None }
-    let token = unsafe { OwnedHandle::from_raw_handle(token as _) };
-    token_user_sid_string(token.as_raw_handle() as HANDLE)
-}
-
-/// SID of the user running `pid`, or None if it cannot be opened (fail closed).
-fn process_user_sid(pid: u32) -> Option<String> {
-    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if process.is_null() { return None }
-    let process = unsafe { OwnedHandle::from_raw_handle(process as _) };
-    let mut token: HANDLE = std::ptr::null_mut();
-    if unsafe { OpenProcessToken(process.as_raw_handle() as HANDLE, TOKEN_QUERY, &mut token) } == 0 { return None }
-    let token = unsafe { OwnedHandle::from_raw_handle(token as _) };
-    token_user_sid_string(token.as_raw_handle() as HANDLE)
-}
-
-fn process_alive(pid: u32) -> bool {
-    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if process.is_null() { return false }
-    let process = unsafe { OwnedHandle::from_raw_handle(process as _) };
-    unsafe { WaitForSingleObject(process.as_raw_handle() as HANDLE, 0) == WAIT_TIMEOUT }
-}
-
-/// Owner + DACL of `dir` against the policy. Any API failure refuses.
-fn directory_private(dir: &Path, current: &str) -> bool {
-    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
-    let (mut owner, mut dacl, mut descriptor) = (std::ptr::null_mut(), std::ptr::null_mut::<ACL>(), std::ptr::null_mut());
-    let status = unsafe {
-        GetNamedSecurityInfoW(wide.as_ptr(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            &mut owner, std::ptr::null_mut(), &mut dacl, std::ptr::null_mut(), &mut descriptor)
-    };
-    if status != 0 { return false }
-    let verdict = (|| {
-        let owner = sid_to_string(owner)?;
-        if dacl.is_null() { return Some(winpolicy::dacl_private(&owner, current, None)) }
-        let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
-        if unsafe { GetAclInformation(dacl, (&mut info as *mut ACL_SIZE_INFORMATION).cast(), std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32, AclSizeInformation) } == 0 { return None }
-        let mut allowed = Vec::new();
-        for index in 0..info.AceCount {
-            let mut ace: *mut core::ffi::c_void = std::ptr::null_mut();
-            if unsafe { GetAce(dacl, index, &mut ace) } == 0 || ace.is_null() { return None }
-            let header = unsafe { &*(ace as *const ACE_HEADER) };
-            match header.AceType {
-                0 => { // ACCESS_ALLOWED_ACE_TYPE
-                    let ace = unsafe { &*(ace as *const ACCESS_ALLOWED_ACE) };
-                    allowed.push(sid_to_string((&ace.SidStart as *const u32).cast_mut().cast())?);
-                }
-                1 => {} // ACCESS_DENIED: never widens access
-                _ => return None, // object/callback/unknown ACEs: not understood, refuse
-            }
-        }
-        Some(winpolicy::dacl_private(&owner, current, Some(&allowed)))
-    })().unwrap_or(false);
-    unsafe { LocalFree(descriptor) };
-    verdict
-}
+use crate::winipc::ffi::{current_user_sid, directory_private, process_alive, process_user_sid};
 
 // ---- the pipe ------------------------------------------------------------------------
 
@@ -181,15 +98,32 @@ fn connect_verified(session: &Session) -> Result<Pipe, Reason> {
     Ok(Pipe { file, closed: AtomicBool::new(false) })
 }
 
-/// The session file must sit in a private directory and the recorded daemon must be alive.
+/// The session file must be a bounded regular non-reparse file with an
+/// EXPLICIT owner-only DACL of its own (as the native session helper writes
+/// it), inside a private runtime directory and island root, and the recorded
+/// daemon must be alive. Wider ACLs on our own file are refused, never trusted.
 fn read_session(path: &Path) -> Result<Session, Reason> {
     let meta = std::fs::symlink_metadata(path).map_err(|_| Reason::NoDaemon)?;
-    if !meta.file_type().is_file() || meta.file_type().is_symlink() { return Err(Reason::BadSession) }
+    // symlink_metadata: is_file() is false for symlinks, so links never pass.
+    if !meta.file_type().is_file() { return Err(Reason::BadSession) }
+    if meta.len() > MAX_SESSION_FILE { return Err(Reason::BadSession) }
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(Reason::BadSession);
+        }
+    }
     let me = current_user_sid().ok_or(Reason::BadSession)?;
-    // The island root, the runtime directory and the file's own directory must all be private.
     let runtime = path.parent().ok_or(Reason::BadSession)?;
     let root = runtime.parent().ok_or(Reason::BadSession)?;
-    if !directory_private(runtime, &me) || !directory_private(root, &me) { return Err(Reason::BadSession) }
+    // Island root and runtime directory: private (owner, SYSTEM, Administrators).
+    if !directory_private(runtime, &me, false) || !directory_private(root, &me, false) {
+        return Err(Reason::BadSession);
+    }
+    // The file itself: strictly owner-only (owner + no other ACE at all).
+    if !directory_private(path, &me, true) {
+        return Err(Reason::BadSession);
+    }
     let text = std::fs::read_to_string(path).map_err(|_| Reason::BadSession)?;
     let session = Session::parse(&text).map_err(|_| Reason::BadSession)?;
     if !process_alive(session.pid) { return Err(Reason::NoDaemon) }

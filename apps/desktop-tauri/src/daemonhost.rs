@@ -7,6 +7,9 @@
 mod win;
 #[cfg(windows)]
 pub use win::Host;
+// Windows runtime lookups (T2/S4): re-exported for the integration tests.
+#[cfg(windows)]
+pub use win::{discover_node, discover_pi};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -49,7 +52,7 @@ impl HostSlot {
             Ok(()) => {}
             Err(reason) => {
                 eprintln!("island host: no_daemon ({})", reason.code());
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", windows))]
                 match reason {
                     StartupFailure::NodeMissing => eprintln!("Falta Node.js: instalalo desde nodejs.org."),
                     StartupFailure::PiMissing => eprintln!("Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent."),
@@ -107,47 +110,41 @@ mod mac_discovery;
 /// Session PATH first; only these canonical locations are tried afterwards.
 /// Empty/relative PATH components are ignored: no working-directory execution.
 pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Result<PathBuf, String> {
-    let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
-        .filter(|p| p.is_absolute()).map(|p| p.join(name)).collect();
-    // Finder does not inherit shell npm prefixes. These are bounded, customary
-    // user install locations, not a shell invocation or a recursive disk search.
-    #[cfg(target_os = "macos")]
-    if matches!(name, "node" | "pi") {
-        if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) {
-            candidates.push(home.join(".local/bin").join(name));
-            candidates.push(home.join(".npm-global/bin").join(name));
-            candidates.extend(mac_discovery::candidates(name, home));
-        }
-    }
-    match name {
-        "node" => {
-            #[cfg(target_os = "macos")]
-            candidates.push(PathBuf::from("/opt/homebrew/bin/node"));
-            candidates.extend([PathBuf::from("/usr/local/bin/node"), PathBuf::from("/usr/bin/node")]);
-        }
-        "pi" => {
-            if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) { candidates.push(home.join(".local/bin/pi")); }
-            #[cfg(target_os = "macos")]
-            candidates.push(PathBuf::from("/opt/homebrew/bin/pi"));
-            candidates.extend([PathBuf::from("/usr/local/bin/pi"), PathBuf::from("/usr/bin/pi")]);
-        }
-        _ => {}
-    }
+    // Windows lookup lives entirely in `daemonhost_win.rs` (node.exe and the
+    // npm package CLI JS — never a .cmd shim); the unix/macOS logic below is
+    // untouched.
     #[cfg(windows)]
+    return win::discover(name, path, home);
+    #[cfg(not(windows))]
     {
-        // PATHEXT-free on purpose: only real executables, never a .cmd shim that
-        // would re-resolve through cmd.exe.
-        let exe = format!("{name}.exe");
-        candidates = candidates.into_iter().map(|p| if p.extension().is_some() { p } else { p.with_extension("exe") }).collect();
-        for var in ["ProgramFiles", "LOCALAPPDATA"] {
-            if let Some(base) = std::env::var_os(var).map(PathBuf::from).filter(|b| b.is_absolute()) {
-                match name { "node" => candidates.push(base.join("nodejs").join(&exe)),
-                             "pi" => candidates.push(base.join("pi").join(&exe)), _ => {} }
+        let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
+            .filter(|p| p.is_absolute()).map(|p| p.join(name)).collect();
+        // Finder does not inherit shell npm prefixes. These are bounded, customary
+        // user install locations, not a shell invocation or a recursive disk search.
+        #[cfg(target_os = "macos")]
+        if matches!(name, "node" | "pi") {
+            if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) {
+                candidates.push(home.join(".local/bin").join(name));
+                candidates.push(home.join(".npm-global/bin").join(name));
+                candidates.extend(mac_discovery::candidates(name, home));
             }
         }
-        if let (Some(h), "pi") = (home.map(Path::new).filter(|h| h.is_absolute()), name) { candidates.push(h.join(".local/bin/pi.exe")); }
+        match name {
+            "node" => {
+                #[cfg(target_os = "macos")]
+                candidates.push(PathBuf::from("/opt/homebrew/bin/node"));
+                candidates.extend([PathBuf::from("/usr/local/bin/node"), PathBuf::from("/usr/bin/node")]);
+            }
+            "pi" => {
+                if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) { candidates.push(home.join(".local/bin/pi")); }
+                #[cfg(target_os = "macos")]
+                candidates.push(PathBuf::from("/opt/homebrew/bin/pi"));
+                candidates.extend([PathBuf::from("/usr/local/bin/pi"), PathBuf::from("/usr/bin/pi")]);
+            }
+            _ => {}
+        }
+        candidates.into_iter().find(|p| executable(p)).ok_or_else(|| format!("{name} missing (PATH and canonical locations)"))
     }
-    candidates.into_iter().find(|p| executable(p)).ok_or_else(|| format!("{name} missing (PATH and canonical locations)"))
 }
 fn executable(path: &Path) -> bool {
     let Ok(meta) = std::fs::metadata(path) else { return false };

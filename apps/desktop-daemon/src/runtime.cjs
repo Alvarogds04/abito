@@ -37,6 +37,49 @@ const DEFAULT_TURN_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_TURN_ITERATIONS = 32;
 const DEFAULT_ABORT_GRACE_MS = 2_000;
 
+/** The npm global package that provides Pi on Windows (T2/S4). */
+const PI_PACKAGE_SEGMENTS = ["node_modules", "@earendil-works", "pi-coding-agent"];
+
+/**
+ * Windows (T2): Pi's npm install is a `.cmd` shim backed by JS. A shim is NEVER
+ * executed (no cmd.exe, ever); the engine instead spawns Node with the package's
+ * own CLI JS, resolved from the installed package's `package.json` `bin` map in
+ * the bounded npm global prefixes (`%AppData%\npm`, then this Node's directory).
+ * The entry must be relative, stay inside the package and be a real file —
+ * anything else is refused (`undefined`, fail closed).
+ */
+function windowsPackageCliJs(binName, deps = {}) {
+	const env = deps.env ?? process.env;
+	const execPath = deps.execPath ?? process.execPath;
+	const readFile = deps.readFileSync ?? readFileSync;
+	const stat = deps.statSync ?? lstatSync;
+	const prefixes = [];
+	if (typeof env.AppData === "string" && path.isAbsolute(env.AppData)) prefixes.push(path.join(env.AppData, "npm"));
+	if (typeof execPath === "string" && path.isAbsolute(execPath)) {
+		const nodeDir = path.dirname(execPath);
+		if (!prefixes.includes(nodeDir)) prefixes.push(nodeDir);
+	}
+	for (const prefix of prefixes) {
+		const packageDir = path.join(prefix, ...PI_PACKAGE_SEGMENTS);
+		let bin;
+		try {
+			const manifest = JSON.parse(readFile(path.join(packageDir, "package.json"), "utf8"));
+			bin = manifest?.bin?.[binName];
+		} catch {
+			continue;
+		}
+		if (typeof bin !== "string" || bin.length === 0 || path.isAbsolute(bin)) continue;
+		const resolved = path.resolve(packageDir, bin);
+		const relative = path.relative(packageDir, resolved);
+		if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+		try {
+			const stats = stat(resolved);
+			if (stats.isFile() && !stats.isSymbolicLink()) return resolved;
+		} catch {}
+	}
+	return undefined;
+}
+
 function positiveBudget(value, name, max = 2_147_483_647) {
 	if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new Error(`invalid ${name}`);
 	return value;
@@ -523,6 +566,21 @@ class AgentEngine extends EventEmitter {
 		return initialization.promise;
 	}
 
+	/**
+	 * The argv prefix that starts the engine: the command itself — except on
+	 * Windows with a bare command name, where the default `pi` resolves to Node
+	 * + the npm package's CLI JS (a `.cmd` shim is never executed, and spawn
+	 * without a shell cannot run one). Fails closed when it cannot resolve.
+	 */
+	spawnCommandPrefix() {
+		if (process.platform !== "win32" || path.isAbsolute(this.command)) return [this.command];
+		const cli = windowsPackageCliJs(this.command);
+		if (!cli) {
+			throw new Error(`the "${this.command}" command is not available on Windows; install it with npm install -g @earendil-works/pi-coding-agent`);
+		}
+		return [process.execPath, cli];
+	}
+
 	spawnChild() {
 		if (this.child) throw new Error("agent child is already owned");
 		const cwd = this.cwdOption ?? this.workspacePath ?? this.island.workspace;
@@ -540,7 +598,8 @@ class AgentEngine extends EventEmitter {
 		const env = {
 			...isolatedEnv(this.baseEnv, this.island, { ABITO_MEMORY_PROJECT: MEMORY_PROJECT, ...this.envOverrides }),
 		};
-		const child = spawn(this.command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+		const prefix = this.spawnCommandPrefix();
+		const child = spawn(prefix[0], [...prefix.slice(1), ...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
 		this.child = child;
 		const decoder = new JsonlDecoder(
 			(record) => { if (this.child === child) this.handleRecord(record); },
@@ -661,4 +720,4 @@ class AgentEngine extends EventEmitter {
 	}
 }
 
-module.exports = { AgentEngine, JsonlDecoder, encodeRecord };
+module.exports = { AgentEngine, JsonlDecoder, encodeRecord, windowsPackageCliJs };

@@ -65,14 +65,34 @@ The Node daemon creates its named pipe with Node's **default DACL**
 (SYSTEM, Administrators and Creator Owner full control; Everyone and Anonymous
 read). The island's client (`agentconn_win.rs`) still verifies the server's
 pid + user SID from `session.json` before sending the secret, and the daemon
-answers nothing before the token file check, so no secret crosses the pipe
-unauthenticated. What remains is a **<=2 s unauthenticated denial-of-service
-window**: a same-machine attacker with the default-DACL write access could
-open the pipe first and starve the island's connect attempt (no data
-compromise, availability only). This is accepted for v0.1.x by L6; the
+answers nothing before validating the launch token. Ordinary other local users
+can open a read-only connection under that default DACL; they cannot normally
+write a hello. Each unauthenticated connection is dropped within **2 seconds**,
+but repeated opens can still consume resources or delay legitimate connections.
+This timeout is not a guarantee against denial of service. No application data
+is sent before authentication. This is accepted for v0.1.x by L6; the
 follow-up is a Rust-owned same-user-only broker (the `winipc` helpers here —
 SDDL server creation, pid+SID proof, owner-only file ACLs — are the building
 blocks).
+
+## Daemon token file and runtime discovery
+
+`abito-private-session.exe` receives at most 4097 bytes on stdin and rejects
+payloads over 4096 bytes before parsing or writing. Tokens never appear in its
+arguments, environment, or diagnostics. It writes only `runtime/session.json`
+inside `%LOCALAPPDATA%\Abito` (or an explicitly confined child root), using the
+same creation-time owner-only DACL and atomic replacement as notice metadata.
+The Windows CLI and daemon reject out-of-root overrides before creating state;
+the native writer repeats the check. The island reader checks the session
+file's own owner-only DACL, regular/non-reparse type and 4096-byte size bound,
+then verifies the connected server PID and SID before sending the token.
+
+Windows startup discovers `node.exe` and the installed npm package's validated
+Pi JavaScript entry point. It does not execute `.cmd` shims or launch a shell.
+Missing dependencies use the existing `node_missing` / `pi_missing` codes and
+an actionable stderr message; the installed helpers must sit beside the island
+executable. Native daemon integration proof is pending until its Windows CI
+step passes; passing cross-compilation alone is not that proof.
 
 ## Known limits (honest test surface)
 

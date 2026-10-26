@@ -10,6 +10,7 @@
 //! terminated and the spawn reports an error.
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -77,6 +78,101 @@ fn resume_initial_thread(pid: u32) -> std::io::Result<()> {
         more = unsafe { Thread32Next(snap.raw(), &mut entry) } != 0;
     }
     Err(std::io::Error::other("suspended host thread not found"))
+}
+
+// ---- runtime discovery (T2/S4): standard Node + npm-installed Pi ----------
+
+/// The npm global package that provides Pi. Its Windows install is a `.cmd`
+/// shim backed by JS — the shim is NEVER executed (no cmd.exe, ever); the JS
+/// entry is resolved from the installed package's own `package.json` `bin`
+/// map instead and run with Node.
+const PI_PACKAGE: &str = r"@earendil-works\pi-coding-agent";
+
+/// `node.exe`: absolute PATH entries first, then the customary MSI location
+/// (`%ProgramFiles%\nodejs`). PATHEXT-free on purpose: only the real
+/// executable, never a shim that would re-resolve through cmd.exe.
+pub fn discover_node(
+    path: Option<&std::ffi::OsStr>,
+    program_files: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf, String> {
+    let mut candidates: Vec<PathBuf> = path
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        .filter(|p| p.is_absolute())
+        .map(|p| p.join("node.exe"))
+        .collect();
+    if let Some(base) = program_files.map(PathBuf::from).filter(|b| b.is_absolute()) {
+        candidates.push(base.join("nodejs").join("node.exe"));
+    }
+    candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| "node missing (PATH and canonical locations)".to_owned())
+}
+
+/// Bounded npm global prefixes: `%AppData%\npm` (npm's Windows default) and
+/// the directory of the discovered `node.exe` (prefix = the node install for
+/// version managers). Never a PATH walk, never the working directory.
+fn npm_prefixes(node: Option<&Path>, app_data: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let mut prefixes = Vec::new();
+    if let Some(data) = app_data.map(PathBuf::from).filter(|p| p.is_absolute()) {
+        prefixes.push(data.join("npm"));
+    }
+    if let Some(dir) = node.and_then(Path::parent) {
+        if !prefixes.iter().any(|p| p == dir) {
+            prefixes.push(dir.to_path_buf());
+        }
+    }
+    prefixes
+}
+
+/// The CLI JS of an installed Node package, taken from its own `package.json`
+/// `bin` map and validated: relative, no `..`/root components, existing
+/// regular file. `None` on anything else — never a guessed entry.
+fn package_cli_js(package_dir: &Path, bin_name: &str) -> Option<PathBuf> {
+    let manifest = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(package_dir.join("package.json")).ok()?).ok()?;
+    let bin = manifest.get("bin")?.get(bin_name)?.as_str()?;
+    if bin.is_empty() || std::path::Path::new(bin).is_absolute() {
+        return None;
+    }
+    let mut resolved = package_dir.to_path_buf();
+    for part in std::path::Path::new(bin).components() {
+        match part {
+            std::path::Component::Normal(p) => resolved.push(p),
+            std::path::Component::CurDir => {}
+            _ => return None, // `..`, root/prefix: refused
+        }
+    }
+    resolved.is_file().then_some(resolved)
+}
+
+/// Pi on Windows: the npm-installed package's CLI JS (run with Node by the
+/// daemon runtime). The `.cmd` shim is never executed, and a bare `pi.exe` is
+/// deliberately NOT a discovery target: the gate must match what the daemon
+/// runtime can actually spawn (Node + validated package CLI JS), so a non-npm
+/// install fails closed with the missing-Pi message instead of a spawn error.
+/// All bases are explicit parameters (no ambient environment), so tests can
+/// isolate the lookup from whatever the runner happens to have installed.
+pub fn discover_pi(
+    path: Option<&std::ffi::OsStr>,
+    _home: Option<&std::ffi::OsStr>,
+    program_files: Option<&std::ffi::OsStr>,
+    app_data: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf, String> {
+    let node = discover_node(path, program_files).ok();
+    npm_prefixes(node.as_deref(), app_data)
+        .iter()
+        .filter_map(|prefix| package_cli_js(&prefix.join("node_modules").join(PI_PACKAGE), "pi"))
+        .next()
+        .ok_or_else(|| "pi missing (npm install -g @earendil-works/pi-coding-agent)".to_owned())
+}
+
+/// The Windows lookup behind `daemonhost::discover` (cfg(windows) dispatch):
+/// only the two daemon runtimes have one; anything else refuses.
+pub fn discover(name: &str, path: Option<&std::ffi::OsStr>, home: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+    match name {
+        "node" => discover_node(path, std::env::var_os("ProgramFiles").as_deref()),
+        "pi" => discover_pi(path, home, std::env::var_os("ProgramFiles").as_deref(), std::env::var_os("AppData").as_deref()),
+        _ => Err(format!("{name} has no Windows lookup")),
+    }
 }
 
 impl Host {

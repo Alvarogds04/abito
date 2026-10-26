@@ -21,7 +21,7 @@ const path = require("node:path");
 
 const config = require("./config.cjs");
 const { Daemon, classifySession, isDaemonProcess, pidAlive, pidState, readSession, sessionPath } = require("./daemon.cjs");
-const { ensureIsland, defaultIslandRoot } = require("./isolation.cjs");
+const { ensureIsland, defaultIslandRoot, windowsIslandRootViolation } = require("./isolation.cjs");
 
 const USAGE = "usage: abito-island-daemon run [--app-owned] | status | stop | config get | config set-workspace <absolute-path> | config set-hotkey <combo>|--clear";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -143,6 +143,10 @@ async function stop(root) {
 async function main(argv) {
 	const [command, sub, arg, ...rest] = argv;
 	const root = defaultIslandRoot(process.env);
+	// Windows (B5/S6): no command may create or touch an island outside the
+	// canonical protected root — refused before any ensureIsland/config write.
+	const violation = windowsIslandRootViolation(root);
+	if (violation) return fail(1, `refusing island root: ${violation}`);
 	try {
 		if (command === "run" && (argv.length === 1 || (argv.length === 2 && sub === "--app-owned"))) return await run(root, sub === "--app-owned");
 		if (command === "status" && argv.length === 1) {

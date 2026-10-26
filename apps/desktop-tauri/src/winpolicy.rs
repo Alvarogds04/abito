@@ -23,18 +23,38 @@ pub fn dacl_private(owner: &str, current_user: &str, allowed_entries: Option<&[S
     entries.iter().all(|sid| sid == current_user || sid == SID_SYSTEM || sid == SID_ADMINISTRATORS)
 }
 
-/// Default island root on Windows: `ABITO_ISLAND_DIR` (absolute drive path) or
-/// `%LOCALAPPDATA%\Abito`, which inherits a user-only DACL.
+/// Default island root on Windows: `%LOCALAPPDATA%\Abito`, which inherits a
+/// user-only profile DACL. `ABITO_ISLAND_DIR` is honoured ONLY as a
+/// parallel-island/test seam INSIDE that canonical protected root: an
+/// override pointing anywhere else would bypass the profile ACLs that guard
+/// the token file, so it is refused (`None`), never guessed.
+/// OS-free containment (these verdicts run on Linux CI too): `candidate` is
+/// accepted only when it IS the canonical root or sits inside it, with no
+/// `.`/`..` and no empty path component that could climb out textually.
+fn within_canonical(candidate: &str, canonical: &str) -> bool {
+    let norm = |s: &str| s.replace('\\', "/");
+    let (c, base) = (norm(candidate), norm(canonical));
+    let base = base.trim_end_matches('/');
+    if c == base {
+        return true;
+    }
+    let Some(rest) = c.strip_prefix(base) else { return false };
+    let Some(rest) = rest.strip_prefix('/') else { return false };
+    rest.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
 pub fn island_root(env_dir: Option<&str>, local_app_data: Option<&str>) -> Option<std::path::PathBuf> {
     let absolute = |s: &str| {
         let b = s.as_bytes();
         (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
             && !s.chars().any(char::is_control)
     };
+    let canonical = local_app_data.filter(|d| absolute(d)).map(|d| std::path::Path::new(d).join("Abito"))?;
     if let Some(d) = env_dir.filter(|d| !d.is_empty()) {
-        return absolute(d).then(|| std::path::PathBuf::from(d));
+        return (absolute(d) && within_canonical(d, &canonical.to_string_lossy()))
+            .then(|| std::path::PathBuf::from(d));
     }
-    local_app_data.filter(|d| absolute(d)).map(|d| std::path::Path::new(d).join("Abito"))
+    Some(canonical)
 }
 
 #[cfg(test)]
@@ -66,9 +86,22 @@ mod tests {
     }
     #[test]
     fn island_root_is_absolute_and_defaults_under_local_app_data() {
-        assert_eq!(island_root(None, Some(r"C:\Users\a\AppData\Local")).unwrap(), std::path::Path::new(r"C:\Users\a\AppData\Local").join("Abito"));
-        assert_eq!(island_root(Some(r"D:\x"), Some(r"C:\L")).unwrap(), std::path::PathBuf::from(r"D:\x"));
-        assert!(island_root(Some(r"rel\x"), Some(r"C:\L")).is_none());
+        let local = r"C:\Users\a\AppData\Local";
+        assert_eq!(island_root(None, Some(local)).unwrap(), std::path::Path::new(local).join("Abito"));
+        // An ABITO_ISLAND_DIR override is honoured ONLY inside the canonical
+        // protected root: anything else would bypass the profile ACLs that
+        // guard the token file, so it is refused, never guessed.
+        assert_eq!(
+            island_root(Some(r"C:\Users\a\AppData\Local\Abito\test-island"), Some(local)).unwrap(),
+            std::path::PathBuf::from(r"C:\Users\a\AppData\Local\Abito\test-island")
+        );
+        assert_eq!(
+            island_root(Some(r"C:\Users\a\AppData\Local\Abito"), Some(local)).unwrap(),
+            std::path::PathBuf::from(r"C:\Users\a\AppData\Local\Abito")
+        );
+        for bad in [r"D:\x", r"rel\x", r"C:\Users\a\AppData\Local\AbitoEvil", r"C:\other\Abito", r"C:\Users\a\AppData\Local\Abito\\.."] {
+            assert!(island_root(Some(bad), Some(local)).is_none(), "{bad}");
+        }
         assert!(island_root(None, Some("rel")).is_none());
         assert!(island_root(None, None).is_none());
     }

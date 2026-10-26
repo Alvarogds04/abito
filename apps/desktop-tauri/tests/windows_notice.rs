@@ -510,15 +510,16 @@ fn private_file_refuses_directory_and_reparse_targets() {
 #[test]
 fn inherited_broad_runtime_acl_is_refused() {
     let root = runtime_root("win-inherited-broad-acl");
+    let sid = winipc::ffi::current_user_sid().expect("own sid");
     let grant = Command::new("icacls").arg(&root)
         .args(["/grant", "*S-1-1-0:(OI)(CI)(R)"])
-        .output().expect("grant inheritable Everyone read on fixture");
+        .arg(format!("*{sid}:(OI)(CI)(F)"))
+        .output().expect("grant owner write and inheritable Everyone read on fixture");
     assert!(grant.status.success(), "fixture ACL broadening succeeds");
     let runtime = root.join("inherited");
     std::fs::create_dir(&runtime).expect("child inherits broad ACL");
     let sentinel = runtime.join("untouched.txt");
     std::fs::write(&sentinel, b"unchanged").expect("sentinel");
-    let sid = winipc::ffi::current_user_sid().expect("own sid");
     assert!(!winipc::ffi::directory_private(&runtime, &sid, false));
     let project = protocol::project_id("windows-notice-integration");
     assert!(transport::create_transport(TransportOptions::new(&runtime, &project)).is_err(),

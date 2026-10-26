@@ -75,6 +75,60 @@ function defaultIslandRoot(env = process.env) {
 	return path.join(env.HOME || homedir(), ".abito-island");
 }
 
+/**
+ * Windows (B5/S6): is `root` a forbidden island root? Returns a fixed refusal
+ * reason, or null when the root is acceptable. On Windows the root MUST be the
+ * canonical protected `%LOCALAPPDATA%\\Abito` or sit inside it — the same
+ * policy the Rust reader (`winpolicy::island_root`) and the native session
+ * helper enforce — so a non-canonical, climbing or relative root is refused
+ * BEFORE the daemon creates anything in it. Off Windows: null (Unix behavior
+ * unchanged). Pure and platform-injected: production passes `process.env` and
+ * the real platform; only tests inject them.
+ */
+function windowsIslandRootViolation(root, env = process.env, platform = process.platform) {
+	if (platform !== "win32") return null;
+	const local = env.LOCALAPPDATA;
+	if (typeof local !== "string" || !absoluteDrivePath(local)) {
+		return "LOCALAPPDATA is missing or not an absolute drive path";
+	}
+	if (typeof root !== "string" || !absoluteDrivePath(root)) {
+		return "island root is not an absolute drive path";
+	}
+	const canonical = path.join(local, "Abito");
+	if (!withinCanonicalRoot(root, canonical)) {
+		return "island root bypasses the canonical protected root";
+	}
+	return null;
+}
+
+/** An absolute Windows drive path (no control characters), OS-free by shape. */
+function absoluteDrivePath(s) {
+	return (
+		s.length >= 3 &&
+		/[A-Za-z]/.test(s[0]) &&
+		s[1] === ":" &&
+		(s[2] === "\\" || s[2] === "/") &&
+		!/\p{C}/u.test(s)
+	);
+}
+
+/**
+ * OS-free containment (mirrors the Rust `within_canonical`): true only when
+ * `candidate` IS the canonical root or sits inside it, with no `.`/`..` and no
+ * empty component that could climb out textually.
+ */
+function withinCanonicalRoot(candidate, canonical) {
+	const norm = (s) => s.replaceAll("\\", "/");
+	const c = norm(candidate);
+	const base = norm(canonical).replace(/\/+$/, "");
+	if (c === base) return true;
+	if (!c.startsWith(`${base}/`)) return false;
+	return c
+		.slice(base.length + 1)
+		.split("/")
+		.every((part) => part !== "" && part !== "." && part !== "..");
+}
+
 /** Where everything private lives inside the island. */
 function islandPaths(root) {
 	const absolute = path.resolve(root);
@@ -283,5 +337,6 @@ module.exports = {
 	ensurePrivateDir,
 	islandPaths,
 	isolatedEnv,
+	windowsIslandRootViolation,
 	writePrivateFile,
 };

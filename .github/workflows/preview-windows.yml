@@ -57,6 +57,14 @@ jobs:
           cargo test --locked --test windows_notice -- `
             --test-threads=1 --nocapture
           exit $LASTEXITCODE
+      - name: Native daemon session security and runtime discovery
+        timeout-minutes: 10
+        run: |
+          cargo test --locked --bin abito-private-session
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --test windows_daemon -- `
+            --test-threads=1 --nocapture
+          exit $LASTEXITCODE
       - name: Build native island and relay
         run: |
           cargo build --locked --bins
@@ -70,3 +78,4 @@ jobs:
           path: |
             apps/desktop-tauri/target/debug/abito-island.exe
             apps/desktop-tauri/target/debug/abito-notice-relay.exe
+            apps/desktop-tauri/target/debug/abito-private-session.exe
