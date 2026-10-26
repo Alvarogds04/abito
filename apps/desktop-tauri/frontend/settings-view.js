@@ -56,6 +56,12 @@
     }
     const c = state && state.connection;
     if (c === 'connected') return null;
+    const missing = c === 'no_daemon' && state.last_error && state.last_error.code;
+    if (missing === 'node_missing' || missing === 'pi_missing') {
+      const word = missing === 'node_missing' ? 'Falta Node.js' : 'Falta Pi';
+      const help = missing === 'node_missing' ? 'instalalo desde nodejs.org.' : 'instalalo con npm install -g @earendil-works/pi-coding-agent.';
+      return { kind: c, word, icon: 'plug-off', tone: 'faint', aria: `${word}: ${help}` };
+    }
     const row = Object.prototype.hasOwnProperty.call(CONNECTION, c) ? CONNECTION[c] : CONNECTION.no_daemon;
     return { kind: c in CONNECTION ? c : 'no_daemon', word: row[0], icon: row[1], tone: row[2], aria: `${row[0]}: ${row[3]}` };
   }

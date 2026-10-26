@@ -81,6 +81,8 @@ impl Session {
 
 /// `<runtime>/p-XXXXXX/s`: absolute, normalized, no control bytes, exact leaf shape.
 fn endpoint_ok(e: &str) -> bool {
+    // Windows: the daemon listens on a named pipe, never on a path.
+    if cfg!(windows) { return crate::winpolicy::pipe_endpoint_ok(e) }
     if !e.starts_with('/') || e.len() > 107 || has_control(e) {
         return false;
     }

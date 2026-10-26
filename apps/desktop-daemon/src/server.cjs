@@ -39,6 +39,15 @@ const DEFAULTS = {
 };
 /** sockaddr_un.sun_path holds 108 bytes including the NUL on Linux and 104 on macOS. */
 const MAX_SOCKET_PATH = process.platform === "darwin" ? 103 : 107;
+/**
+ * Windows (W1): the endpoint is a named pipe `\\.\pipe\abito-<32 hex>` (libuv has no AF_UNIX
+ * listener there). Node cannot set a DACL on it and the default pipe DACL lets other local
+ * principals open it, so the gate is: nothing is ever sent before a valid token, and a client
+ * that has not sent one within WIN_HANDSHAKE_MS is dropped. The Rust client additionally
+ * verifies the server pid/SID before sending the token.
+ */
+const WIN = process.platform === "win32";
+const WIN_HANDSHAKE_MS = 2000;
 
 /**
  * #379 global pause: verbs refused with error{paused} while the switch is on —
@@ -65,7 +74,7 @@ function privateDir(dir) {
 	const stat = fs.lstatSync(dir);
 	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Private directory required");
 	if (uid() !== undefined && stat.uid !== uid()) throw new Error("Private directory required");
-	if ((stat.mode & 0o7777) !== 0o700) throw new Error("Private directory required");
+	if (!WIN && (stat.mode & 0o7777) !== 0o700) throw new Error("Private directory required");
 	return stat;
 }
 
@@ -75,6 +84,7 @@ function sameIdentity(a, b) {
 
 /** Removes leftover `p-*` endpoints of dead servers (nobody accepts on the socket). */
 async function removeStale(runtimeDir) {
+	if (WIN) return; // pipes vanish with their server: no leftover endpoints
 	for (const name of fs.readdirSync(runtimeDir)) {
 		if (!/^p-[A-Za-z0-9]{6}$/.test(name)) continue;
 		const dir = path.join(runtimeDir, name);
@@ -199,6 +209,7 @@ class IslandServer {
 		}
 		privateDir(this.runtimeDir);
 		await removeStale(this.runtimeDir);
+		if (WIN) return this.startPipe();
 		const directory = fs.mkdtempSync(path.join(this.runtimeDir, "p-"));
 		this.directory = directory;
 		try {
@@ -226,6 +237,25 @@ class IslandServer {
 		}
 		// R5: read the unconsumed interrupted-work record once per boot; it is
 		// exposed in every ready frame until a client acknowledges it.
+		this.pendingInterrupted = this.interruptedRecord?.() ?? undefined;
+		this.attach();
+		return { endpoint };
+	}
+
+	/** Windows listener: a named pipe, no directory, no socket file. */
+	async startPipe() {
+		const endpoint = `\\\\.\\pipe\\abito-${crypto.randomBytes(16).toString("hex")}`;
+		this.server = net.createServer((socket) => this.onConnection(socket));
+		try {
+			await new Promise((resolve, reject) => {
+				this.server.once("error", reject);
+				this.server.listen(endpoint, resolve);
+			});
+		} catch (error) {
+			await this.close().catch(() => {});
+			throw error;
+		}
+		this.endpoint = endpoint;
 		this.pendingInterrupted = this.interruptedRecord?.() ?? undefined;
 		this.attach();
 		return { endpoint };
@@ -295,7 +325,7 @@ class IslandServer {
 		}
 		const client = { socket, ready: false, seq: 0, pending: Buffer.alloc(0), frames: 0, windowStart: Date.now(), dead: false };
 		this.clients.add(client);
-		client.handshake = setTimeout(() => this.drop(client), this.opts.handshakeMs);
+		client.handshake = setTimeout(() => this.drop(client), WIN ? Math.min(this.opts.handshakeMs, WIN_HANDSHAKE_MS) : this.opts.handshakeMs);
 		socket.on("error", () => this.drop(client));
 		socket.on("close", () => {
 			clearTimeout(client.handshake);
@@ -928,6 +958,7 @@ class IslandServer {
 	}
 
 	cleanup() {
+		if (WIN) return; // no directory or socket file to remove
 		const { directory, directoryStat, socketStat, endpoint } = this;
 		if (!directory || !directoryStat) return;
 		let current;

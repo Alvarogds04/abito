@@ -1,8 +1,8 @@
 //! M4-PRE: where the app's identity comes from. A dev (debug) build derives
 //! its project from the source checkout it was built in (the legacy dev
 //! layout); a release/packaged binary carries NO build-tree path at all and
-//! takes the project root only from an explicit, validated setting — or
-//! refuses, so the transport says "unavailable" instead of pretending.
+//! takes the project root from an explicit, validated setting. macOS/Windows
+//! GUI launches without that setting use the user's home; Linux stays explicit.
 use std::path::PathBuf;
 
 /// Installed identity (tauri.conf.json `identifier`), never the Preview's.
@@ -45,9 +45,31 @@ pub fn project_root_for(manifest: Option<&str>, env_root: Option<&str>) -> Optio
     }
 }
 
+/// GUI installs have no launcher-provided project. Fall back only when the
+/// setting is absent, never when an explicit setting is invalid. Dev and Linux
+/// retain their previous root selection. This root gates notices, not access.
+pub fn project_root_with_home(manifest: Option<&str>, env_root: Option<&str>, _home: Option<&str>) -> Option<PathBuf> {
+    #[cfg(not(target_os = "linux"))]
+    if manifest.is_none() && env_root.is_none() {
+        let home = std::path::Path::new(_home?);
+        if !home.is_absolute() { return None }
+        return std::fs::canonicalize(home).ok().filter(|p| p.is_dir());
+    }
+    project_root_for(manifest, env_root)
+}
+
 /// Project id of this process (sha256 of the canonical root), or `None`.
 pub fn project_id_of_this_process() -> Option<String> {
-    let env_root = std::env::var(PROJECT_ROOT_ENV).ok();
-    let root = project_root_for(dev_manifest_dir(), env_root.as_deref())?;
+    let env_root = match std::env::var(PROJECT_ROOT_ENV) {
+        Ok(root) => Some(root),
+        Err(std::env::VarError::NotPresent) => None,
+        // A present but invalid setting must not activate the home fallback.
+        Err(std::env::VarError::NotUnicode(_)) => Some(String::new()),
+    };
+    #[cfg(target_os = "windows")]
+    let home = std::env::var("USERPROFILE").ok();
+    #[cfg(not(target_os = "windows"))]
+    let home = std::env::var("HOME").ok();
+    let root = project_root_with_home(dev_manifest_dir(), env_root.as_deref(), home.as_deref())?;
     Some(crate::protocol::project_id(root.to_str()?))
 }

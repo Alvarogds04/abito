@@ -1,0 +1,72 @@
+name: Preview Windows runtime
+
+on:
+  push:
+    branches: ['preview/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: apps/desktop-tauri
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-tauri
+          cache-on-failure: true
+      - name: Fetch pinned Windows sherpa static library
+        run: |
+          $text = Get-Content packaging/windows/sherpa-onnx.sha256
+          $pin = $text.Trim() -split '\s+'
+          $archive = Join-Path $env:RUNNER_TEMP $pin[1]
+          $base = 'https://github.com/k2-fsa/sherpa-onnx/releases/download'
+          Invoke-WebRequest "$base/v1.13.8/$($pin[1])" -OutFile $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
+          if ($hash.ToLowerInvariant() -ne $pin[0]) {
+            throw 'sherpa archive SHA256 mismatch'
+          }
+          "SHERPA_ONNX_ARCHIVE_DIR=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+      - name: Windows policy unit tests
+        run: |
+          cargo test --locked --lib winipc::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --lib winpolicy::tests
+          exit $LASTEXITCODE
+      - name: Native receiver and authenticated relay integration
+        timeout-minutes: 10
+        run: |
+          cargo test --locked --test windows_notice -- `
+            --test-threads=1 --nocapture
+          exit $LASTEXITCODE
+      - name: Build native island and relay
+        run: |
+          cargo build --locked --bins
+          exit $LASTEXITCODE
+      - name: Upload Windows debug evidence binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtime-debug
+          retention-days: 3
+          path: |
+            apps/desktop-tauri/target/debug/abito-island.exe
+            apps/desktop-tauri/target/debug/abito-notice-relay.exe

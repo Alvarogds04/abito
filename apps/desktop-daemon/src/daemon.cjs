@@ -51,7 +51,7 @@ function readSession(root) {
 	const file = sessionPath(root);
 	try {
 		const stats = fs.lstatSync(file);
-		if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o077) !== 0 || stats.size > 4096) return undefined;
+		if (!stats.isFile() || stats.isSymbolicLink() || (process.platform !== "win32" && (stats.mode & 0o077) !== 0) || stats.size > 4096) return undefined;
 		if (uid() !== undefined && stats.uid !== uid()) return undefined;
 		const value = JSON.parse(fs.readFileSync(file, "utf8"));
 		if (value?.protocol !== PROTOCOL || typeof value.endpoint !== "string" || typeof value.token !== "string") return undefined;
@@ -91,6 +91,9 @@ function pidState(pid) {
 		const info = runPs(pid);
 		return info === undefined ? "unknown" : info.state === "Z" ? "dead" : "alive";
 	}
+	// Windows has no /proc: a pid that answers signal 0 is alive. Identity is NEVER inferred from it
+	// (isDaemonProcess stays false there), so this cannot authorise signalling a foreign process.
+	if (process.platform === "win32") return "alive";
 	try {
 		// An exited-but-unreaped child (zombie) is not alive for our purposes.
 		const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -112,6 +115,7 @@ function pidAlive(pid) {
  * Fails closed on every missing or unreadable piece (including no /proc).
  */
 function isDaemonProcess(pid, procStart) {
+	if (process.platform === "win32") return false; // no /proc identity: fail closed (never signal on a bare pid)
 	if (typeof procStart !== "string" || !/^[0-9]+$/.test(procStart)) return false;
 	if (!pidAlive(pid)) return false;
 	if (procStartTicks(pid) !== procStart) return false;

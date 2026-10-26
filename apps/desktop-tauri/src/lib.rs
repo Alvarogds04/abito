@@ -16,9 +16,14 @@
 pub mod agentclient;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod agentconn;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+#[path = "agentconn_win.rs"]
+pub mod agentconn;
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 #[path = "agentconn_unavailable.rs"]
 pub mod agentconn;
+pub mod winpolicy;
+pub mod winipc;
 pub mod approval;
 pub mod bridge;
 pub mod card;
@@ -90,11 +95,15 @@ pub mod uploads;
 pub mod voicecmd;
 pub mod voiceintent;
 pub mod voicespeak;
-// The real receiver is Linux-only (UDS + SO_PEERCRED). Windows named pipes
-// and a macOS backend remain separate human decisions with their own cfg arms.
+// The real receiver: Linux/macOS use UDS (transport.rs); Windows uses named
+// pipes with the S6 gate (transport_win.rs). Non-Linux/macOS/Windows targets
+// keep the honest unavailable stub.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod transport;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+#[path = "transport_win.rs"]
+pub mod transport;
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 #[path = "transport_unavailable.rs"]
 pub mod transport;
 pub mod workarea;

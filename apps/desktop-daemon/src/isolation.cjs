@@ -68,7 +68,11 @@ function currentUid() {
 
 /** The island root: `ABITO_ISLAND_DIR` or `~/.abito-island`. */
 function defaultIslandRoot(env = process.env) {
-	return env[ISLAND_ROOT_ENV] || path.join(env.HOME || homedir(), ".abito-island");
+	if (env[ISLAND_ROOT_ENV]) return env[ISLAND_ROOT_ENV];
+	// Windows (W1): %LOCALAPPDATA%\\Abito is user-private by default (inherited ACL), which is the
+	// only privacy node can rely on there; the Rust host verifies owner and DACL before trusting it.
+	if (process.platform === "win32" && env.LOCALAPPDATA) return path.join(env.LOCALAPPDATA, "Abito");
+	return path.join(env.HOME || homedir(), ".abito-island");
 }
 
 /** Where everything private lives inside the island. */
@@ -114,7 +118,8 @@ function assertSecurePath(target, options = {}) {
 			throw error;
 		}
 		if (stats.isSymbolicLink()) throw new Error(`refusing symlink component in island path: ${dir}`);
-		if ((stats.mode & 0o002) !== 0 && (stats.mode & 0o1000) === 0) {
+		// Windows has no POSIX mode bits (lstat reports 0o666/0o777): privacy there comes from the profile ACL.
+		if (process.platform !== "win32" && (stats.mode & 0o002) !== 0 && (stats.mode & 0o1000) === 0) {
 			throw new Error(`refusing world-writable component without the sticky bit: ${dir}`);
 		}
 		if (uid !== undefined && stats.uid !== uid && stats.uid !== 0) {
