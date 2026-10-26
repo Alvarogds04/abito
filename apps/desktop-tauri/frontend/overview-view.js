@@ -335,6 +335,16 @@
   function engineRowView(conn, pi) {
     if (!conn || conn.kind === 'unavailable') return null; // the notice channel is not Pi
     const p = pi && typeof pi === 'object' ? pi : null;
+    if (p && p.connection === 'no_daemon' && p.last_error) {
+      const code = p.last_error.code;
+      if (code === 'node_missing' || code === 'pi_missing') {
+        const label = code === 'node_missing' ? 'Falta Node.js' : 'Falta Pi';
+        const help = code === 'node_missing' ? 'instalalo desde nodejs.org.' : 'instalalo con npm install -g @earendil-works/pi-coding-agent.';
+        const view = row('engine', label, 'Revisar', 'accounts:motor', 'Motor');
+        view.aria = `${label}: ${help} ${view.aria}`;
+        return view;
+      }
+    }
     if (p && Object.prototype.hasOwnProperty.call(ENGINE_BAD, p.connection)) return row('engine', ENGINE_BAD[p.connection], 'Revisar', 'accounts:motor', 'Motor');
     if (p && p.connection === 'connected' && Array.isArray(p.accounts) && !p.accounts.some(a => a && (a.configured === true || a.local === true))) {
       return row('account', 'Sin cuenta', 'Configurar', 'accounts:proveedores', 'Proveedores');

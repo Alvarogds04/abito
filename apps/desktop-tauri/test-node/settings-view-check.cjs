@@ -876,7 +876,7 @@ test('agents: the deadline for the engine to answer is a named constant', () => 
   assert.ok(Number.isInteger(S.AGENTS_WAIT_MS) && S.AGENTS_WAIT_MS >= 2000 && S.AGENTS_WAIT_MS <= 10000);
 });
 
-test('no human-facing string of the settings page asks for a terminal (state JSON AND the fixed strings of the source)', () => {
+test('settings never asks for a terminal except the explicitly requested missing-Pi install advice', () => {
   const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const literals = text => [...strip(text).matchAll(/(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map(m => m[2]).filter(x => /[a-záéíóúñ]{3,}/i.test(x));
   const bad = /\b(terminal|consola|l[ií]nea de comandos|comando|shell|bash|cli|sudo|npm|install)\b/i;
@@ -884,9 +884,12 @@ test('no human-facing string of the settings page asks for a terminal (state JSO
   // draws (Gemini CLI, Copilot CLI), not instructions to open a terminal; the guard keeps
   // watching every other fixed string.
   const CLIENT_NAMES = new Set(['claude-code', 'codex', 'opencode', 'gemini-cli', 'copilot-cli', 'Copilot CLI', 'amp', 'cursor', 'CLI']);
+  // S2: the owner explicitly requests how to install the missing runtime.
+  // Exempt only that exact advice, not arbitrary commands elsewhere.
+  const PI_INSTALL_ADVICE = 'instalalo con npm install -g @earendil-works/pi-coding-agent.';
   const where = [];
   for (const f of ['settings.js', 'settings-view.js']) {
-    for (const lit of literals(fs.readFileSync(path.join(frontend, f), 'utf8'))) if (bad.test(lit) && !/^(agent_|abito:|settings|agents_)/.test(lit) && !CLIENT_NAMES.has(lit)) where.push(`${f}: ${lit}`);
+    for (const lit of literals(fs.readFileSync(path.join(frontend, f), 'utf8'))) if (bad.test(lit) && !/^(agent_|abito:|settings|agents_)/.test(lit) && !CLIENT_NAMES.has(lit) && !(f === 'settings-view.js' && lit === PI_INSTALL_ADVICE)) where.push(`${f}: ${lit}`);
   }
   const html = fs.readFileSync(path.join(frontend, 'index.html'), 'utf8');
   const sect = html.slice(html.indexOf('id="settings"'), html.indexOf('id="chat-live"'));

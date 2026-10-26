@@ -43,6 +43,12 @@ impl HostSlot {
             Ok(()) => {}
             Err(reason) => {
                 eprintln!("island host: no_daemon ({})", reason.code());
+                #[cfg(target_os = "macos")]
+                match reason {
+                    StartupFailure::NodeMissing => eprintln!("Falta Node.js: instalalo desde nodejs.org."),
+                    StartupFailure::PiMissing => eprintln!("Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent."),
+                    _ => {}
+                }
                 crate::failure::report("daemon", "daemon-start", crate::failure::Reason::DaemonStartFailed, None);
                 *self.failure.lock().expect("host failure lock") = Some(reason);
             }
@@ -93,6 +99,15 @@ impl HostSlot {
 pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
         .filter(|p| p.is_absolute()).map(|p| p.join(name)).collect();
+    // Finder does not inherit shell npm prefixes. These are bounded, customary
+    // user install locations, not a shell invocation or a recursive disk search.
+    #[cfg(target_os = "macos")]
+    if matches!(name, "node" | "pi") {
+        if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) {
+            candidates.push(home.join(".local/bin").join(name));
+            candidates.push(home.join(".npm-global/bin").join(name));
+        }
+    }
     match name {
         "node" => {
             #[cfg(target_os = "macos")]
@@ -128,13 +143,22 @@ pub fn runtime_path(path: Option<&OsStr>, node: &Path, pi: &Path) -> Result<std:
     std::env::join_paths(dirs)
 }
 
+/// Release layout: Tauri puts resources beside MacOS/, not beside the binary.
+/// Other platforms retain their adjacent desktop-daemon layout.
+pub fn installed_daemon_cli(exe: &Path) -> Option<PathBuf> {
+    let directory = exe.parent()?;
+    #[cfg(target_os = "macos")]
+    let directory = directory.parent()?.join("Resources");
+    Some(directory.join("desktop-daemon/src/cli.cjs"))
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn start() -> Result<Host, StartupFailure> {
     let path = std::env::var_os("PATH"); let home = std::env::var_os("HOME");
     let node = discover("node", path.as_deref(), home.as_deref()).map_err(|_| StartupFailure::NodeMissing)?;
     let pi = discover("pi", path.as_deref(), home.as_deref()).map_err(|_| StartupFailure::PiMissing)?;
     let exe = std::env::current_exe().map_err(|_| StartupFailure::HostMissing)?;
-    let mut cli = exe.parent().ok_or(StartupFailure::HostMissing)?.join("desktop-daemon/src/cli.cjs");
+    let mut cli = installed_daemon_cli(&exe).ok_or(StartupFailure::HostMissing)?;
     #[cfg(debug_assertions)]
     if !cli.is_file() { cli = Path::new(env!("CARGO_MANIFEST_DIR")).join("../desktop-daemon/src/cli.cjs"); }
     if !cli.is_file() { return Err(StartupFailure::HostMissing) }

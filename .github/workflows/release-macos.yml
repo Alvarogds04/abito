@@ -24,37 +24,48 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       SHERPA_VERSION: "1.13.8"
-      SHERPA_SHA256: "9091bf160dc7fdacedbc906b212badf53c2993f4e5277a0e03998e96c31d60da"
+      SHERPA_SHA256: >-
+        9091bf160dc7fdacedbc906b212badf53c2993f4e5277a0e03998e96c31d60da
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
+        with:
+          node-version: 22
       - name: Fetch sherpa-onnx static libs (pinned sha256)
         run: |
           set -euo pipefail
           A="sherpa-onnx-v${SHERPA_VERSION}-osx-arm64-static-lib.tar.bz2"
-          curl -fsSL -o "$RUNNER_TEMP/$A" "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/$A"
+          URL="https://github.com/k2-fsa/sherpa-onnx/releases/download"
+          curl -fsSL -o "$RUNNER_TEMP/$A" "$URL/v${SHERPA_VERSION}/$A"
           echo "${SHERPA_SHA256}  $RUNNER_TEMP/$A" | shasum -a 256 -c -
           tar -xjf "$RUNNER_TEMP/$A" -C "$RUNNER_TEMP"
-          echo "SHERPA_ONNX_LIB_DIR=$RUNNER_TEMP/sherpa-onnx-v${SHERPA_VERSION}-osx-arm64-static-lib/lib" >> "$GITHUB_ENV"
-      - name: macOS unit tests (host lifetime, getpeereid transport, runtime root)
-        run: cargo test --lib --locked -- daemonhost transport agentconn
+          LIB="$RUNNER_TEMP/sherpa-onnx-v${SHERPA_VERSION}-osx-arm64-static-lib"
+          echo "SHERPA_ONNX_LIB_DIR=$LIB/lib" >> "$GITHUB_ENV"
+      - name: macOS unit tests and installed runtime lookup
+        run: |
+          cargo test --lib --locked -- daemonhost transport agentconn
+          cargo test --locked --test platform_runtime
       - name: Build .app and .dmg (unsigned)
         run: |
           npx --yes @tauri-apps/cli@2 build --ci --bundles app,dmg \
-            --config '{"bundle":{"active":true,"icon":["icons/icon-macos.png"],"category":"Productivity","macOS":{"minimumSystemVersion":"12.0"}}}' \
+            --config "$(node packaging/macos-config.cjs)" \
             -- --locked
       - name: Package
         run: |
           set -euo pipefail
           out="$GITHUB_WORKSPACE/out"; mkdir -p "$out"
-          (cd target/release/bundle/macos && ditto -c -k --keepParent *.app "$out/Abito-macos-arm64.zip")
+          (cd target/release/bundle/macos
+           ditto -c -k --keepParent *.app "$out/Abito-macos-arm64.zip")
           cp target/release/bundle/dmg/*.dmg "$out/Abito-macos-arm64.dmg"
-          (cd "$out" && shasum -a 256 Abito-macos-arm64.* > SHA256SUMS-macos.txt && cat SHA256SUMS-macos.txt)
+          (cd "$out"
+           shasum -a 256 Abito-macos-arm64.* > SHA256SUMS-macos.txt
+           cat SHA256SUMS-macos.txt)
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$GITHUB_WORKSPACE"/out/* --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release upload "$TAG" "$GITHUB_WORKSPACE"/out/* \
+            --clobber --repo "$GITHUB_REPOSITORY"

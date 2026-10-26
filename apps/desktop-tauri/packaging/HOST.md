@@ -29,9 +29,9 @@ Kernel SIGKILL cannot remove
 `session.json`; the next daemon validates whether the recorded process is alive
 before using it. A stale handoff is not a live connection.
 
-**Linux only:** no equivalent crash lifetime guarantee is verified on Windows or
-other targets. This host startup fails closed there with
-`host_platform_unsupported`; no portable guarantee is claimed.
+macOS uses the existing stdin lease, kqueue sentinel, and daemon parent-pid
+watch instead of Linux's parent-death signal. This change does not modify those
+lifetime mechanisms. Windows support is maintained separately.
 
 ## Runtime discovery
 
@@ -53,11 +53,45 @@ Startup failures reach stderr and the existing `agent:state` channel as
 `connection: "no_daemon"` plus `last_error: {code, n: 1}`. Closed local codes are
 `node_missing`, `pi_missing`, `host_missing`, `host_spawn_failed`, and
 `host_platform_unsupported`. No paths, raw exceptions or secrets enter this state.
-Frontend rendering is a separate lane; no frontend files change here.
+The settings and island views name missing Node or Pi and show installation
+advice (`nodejs.org` or `npm install -g @earendil-works/pi-coding-agent`). Unknown
+startup errors retain the existing generic disconnected state.
 
 This unsandboxed user-local installation intentionally does not bundle Node or Pi.
 A hermetic runtime bundle becomes necessary if distribution is sandboxed: a
 Flatpak cannot execute the host's Node. The other Abito Flatpak is not modified.
+
+## macOS app bundle
+
+Build from `apps/desktop-tauri` with:
+
+```sh
+npx --yes @tauri-apps/cli@2 build --ci --bundles app,dmg \
+  --config "$(node packaging/macos-config.cjs)" -- --locked
+```
+
+The config generator uses `DAEMON_FILES` and `HARNESS_FILES` from `lib.cjs` as
+an exact source-to-resource map. Tauri copies them into
+`Contents/Resources/desktop-daemon` and `Contents/Resources/desktop-harness`.
+The host looks there before the debug-only source fallback. The daemon's existing
+sibling lookup also finds the hook installer there; no separate hook override is
+needed. Linux still uses the directories adjacent to the executable.
+
+Finder's minimal PATH is supported: macOS checks the user's `.local/bin` and
+`.npm-global/bin`, then Homebrew `/opt/homebrew/bin` and the existing system
+locations. Absolute inherited PATH entries still win. Node/Pi are not bundled.
+GUI installs on macOS/Windows use the canonical home directory only when
+`ABITO_PROJECT_ROOT` is absent (HOME on macOS, USERPROFILE on Windows). Explicit
+invalid settings still fail, debug roots remain unchanged, and Linux still
+requires its launcher-provided setting.
+
+`ci/public/preview-macos.yml` tests on standard `macos-26`, builds the unsigned
+app/dmg, and runs `smoke-macos.py` with a minimal OS-only environment. It verifies
+both daemon readiness and notice transport startup, then missing-Pi advice with
+notices still available. The smoke script refuses non-CI hosts and installs no
+hooks. Logs and bundles are uploaded even on a failed smoke. The matching
+`release-macos.yml` uses the identical bundle config. CI execution does not prove
+Finder interaction, Gatekeeper acceptance, or a human-installed Mac launch.
 
 ## Recursive verification envelope
 
