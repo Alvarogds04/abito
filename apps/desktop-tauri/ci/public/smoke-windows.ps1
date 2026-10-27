@@ -65,6 +65,31 @@ function Stop-Island {
         $script:process = $null
     }
 }
+function Show-NodeDiscovery {
+    Write-Host "no-node parent PATH=$env:PATH"
+    Write-Host "no-node parent ProgramFiles=$env:ProgramFiles"
+    Get-Command node -All -ErrorAction SilentlyContinue | Select-Object Name,CommandType,Source | Format-Table | Out-String | Write-Host
+    $systemNode = $false
+    foreach ($directory in @($env:PATH -split ';')) {
+        if (-not [IO.Path]::IsPathFullyQualified($directory)) { continue }
+        $candidate = Join-Path $directory 'node.exe'
+        $exists = Test-Path -LiteralPath $candidate -PathType Leaf
+        Write-Host "discover_node candidate: $candidate exists=$exists"
+        if ($exists -and ($directory -eq "$env:SystemRoot\System32" -or $directory -eq $env:SystemRoot)) { $systemNode = $true }
+    }
+    $candidate = Join-Path $env:ProgramFiles 'nodejs/node.exe'
+    Write-Host "discover_node candidate: $candidate exists=$(Test-Path -LiteralPath $candidate -PathType Leaf)"
+    if ($systemNode) {
+        $env:PATH = $empty
+        Write-Host 'Runner has Node in a Windows system directory; no-node PATH now contains only the empty smoke directory.'
+    }
+    # Never dump all environment variables: only discovery-relevant path names.
+    $diagnostic = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/cmd.exe') -WorkingDirectory $workspace `
+        -ArgumentList @('/d', '/c', 'set PATH&set ProgramFiles') -PassThru -Wait `
+        -RedirectStandardOutput (Join-Path $root 'no-node.environment.log') -RedirectStandardError (Join-Path $root 'no-node.environment.stderr.log')
+    if ($diagnostic.ExitCode -ne 0) { throw 'Child discovery environment diagnostic failed' }
+    Get-Content -LiteralPath (Join-Path $root 'no-node.environment.log') | ForEach-Object { Write-Host $_ }
+}
 function Start-Island([string]$Mode) {
     # The ready scenario must prove the real default profile ACL works. Never
     # rewrite it to make the test pass. Missing-runtime scenarios use fresh roots.
@@ -89,6 +114,7 @@ function Start-Island([string]$Mode) {
     else { Remove-Item Env:ABITO_PROJECT_ROOT -ErrorAction SilentlyContinue }
     Remove-Item Env:ABITO_ISLAND_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:ABITO_DESKTOP_SOCKET -ErrorAction SilentlyContinue
+    if ($Mode -eq 'no-node') { Show-NodeDiscovery }
     $script:process = Start-Process -FilePath (Join-Path $install 'abito-island.exe') -WorkingDirectory $workspace -PassThru `
         -RedirectStandardOutput (Join-Path $root "$Mode.stdout.log") -RedirectStandardError (Join-Path $root "$Mode.stderr.log")
     # A forced stop can leave the previous process's metadata. Wait for this
@@ -142,15 +168,20 @@ try {
     Wait-For { (Get-Content -Raw -LiteralPath (Join-Path $root 'explicit-root.stderr.log')) -match 'abito-island-daemon: running' } 'explicit Windows root daemon startup'
     Write-Host 'PASS installed receiver and daemon with explicit Windows project root'
     Stop-Island
+    $runtimeFailures = [System.Collections.Generic.List[string]]::new()
     foreach ($case in @(
         @{ mode = 'no-pi'; message = 'Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent.' },
         @{ mode = 'no-node'; message = 'Falta Node.js: instalalo desde nodejs.org.' }
     )) {
-        Start-Island $case.mode
-        Wait-For { (Get-Content -Raw -LiteralPath (Join-Path $root "$($case.mode).stderr.log")) -like "*$($case.message)*" } $case.message
-        if ((Get-Content -Raw -LiteralPath (Join-Path $root "$($case.mode).stderr.log")) -match 'abito-island-daemon: running') { throw 'Daemon unexpectedly started without runtime' }
-        Write-Host "PASS installed missing-runtime diagnostic: $($case.message)"
-        Stop-Island
+        try {
+            Start-Island $case.mode
+            Wait-For { (Get-Content -Raw -LiteralPath (Join-Path $root "$($case.mode).stderr.log")) -like "*$($case.message)*" } $case.message
+            if ((Get-Content -Raw -LiteralPath (Join-Path $root "$($case.mode).stderr.log")) -match 'abito-island-daemon: running') { throw 'Daemon unexpectedly started without runtime' }
+            Write-Host "PASS installed missing-runtime diagnostic: $($case.message)"
+        } catch {
+            $runtimeFailures.Add("$($case.mode): $($_.Exception.Message)")
+            Show-SmokeDiagnostics
+        } finally { Stop-Island }
     }
     $unrelated = Join-Path $install 'desktop-daemon/src/user-note.txt'
     [IO.File]::WriteAllText($unrelated, 'must survive uninstall')
@@ -161,6 +192,8 @@ try {
     foreach ($file in $expected) { if (Test-Path -LiteralPath (Join-Path $install $file)) { throw "Uninstall left shipped file: $file" } }
     if ([IO.File]::ReadAllText($unrelated) -ne 'must survive uninstall') { throw 'Uninstall changed unrelated file' }
     if ((Get-FileHash -LiteralPath $script:acceptedRecap).Hash -ne $recapHash) { throw 'Uninstall changed island user data' }
+    Write-Host 'PASS preserving uninstall: shipped files removed, unrelated fixture and recap unchanged'
+    if ($runtimeFailures.Count -gt 0) { throw ($runtimeFailures -join '; ') }
     Write-Host 'PASS full install, native runtime, missing runtimes and exact preserving uninstall'
 } catch {
     Show-SmokeDiagnostics
