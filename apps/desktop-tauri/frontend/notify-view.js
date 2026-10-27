@@ -307,6 +307,8 @@
     if (c.question && c.phase === 'expanded') return c.view === 'chat' ? 'leave-chat' : 'show-question';
     if (c.phase !== 'compact') return 'none';
     if (c.state === 'expanded') return 'none';
+    // HU-006 S4: a notice is shown inside a visible compact pill; growing it is the human's action (S6).
+    if (c.notice && !c.question) return 'none';
     return 'expand';
   }
 

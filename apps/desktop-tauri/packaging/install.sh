@@ -134,7 +134,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
     if [ -e "$PREFIX/$f" ] || [ -L "$PREFIX/$f" ]; then rm -f "$PREFIX/$f"; removed="$removed $f"; fi
   done
   if [ -e "$APPS/$DESKTOP" ] || [ -L "$APPS/$DESKTOP" ]; then rm -f "$APPS/$DESKTOP"; removed="$removed $DESKTOP(applications)"; fi
-  rmdir "$PREFIX/desktop-daemon/src" "$PREFIX/desktop-daemon" "$PREFIX/desktop-harness/bin" "$PREFIX/desktop-harness/src" "$PREFIX/desktop-harness" "$PREFIX" 2>/dev/null || true
+  rmdir "$PREFIX/desktop-daemon/src" "$PREFIX/desktop-daemon" "$PREFIX/desktop-harness/bin" "$PREFIX/desktop-harness/src" "$PREFIX/desktop-harness" "$PREFIX/desktop-pi" "$PREFIX" 2>/dev/null || true
   refresh_desktop_db
   if [ -n "$removed" ]; then note "Removed:$removed"; else note "Nothing to remove (not installed under $PREFIX)."; fi
   if [ -d "$PREFIX" ]; then note "Kept $PREFIX: it still holds files that are not ours."; fi

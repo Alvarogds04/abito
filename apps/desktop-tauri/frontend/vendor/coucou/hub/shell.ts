@@ -43,8 +43,9 @@ export const NOTCH_PAGES: PageDef[] = [
 ];
 
 const ALL = [...FLOW_PAGES, ...NOTCH_PAGES];
-// abito-pausa S1-S2 (human: «Visibles en gris y apagadas»): this version works on Chat and Agentes. Every other feature stays in the
-// menu, grey and disabled with «En pausa · próxima versión», and is never opened (click, hub-page, abito:hub-select, initialPage).
+// abito-pausa (human 0.1.2: «vale todo lo que este en pausa se puede ocultar?» → yes; supersedes 26-oct «Visibles en gris y apagadas»):
+// this version works on Chat and Agentes. Every other page is HIDDEN from the menu and never opened; a request for one
+// (hub-page, abito:hub-select, initialPage) lands on General. This list stays the single source of truth.
 export const ACTIVE_PAGES: readonly string[] = Object.freeze(["general", "agents", "chat", "shortcuts", "privacy"]);
 export const PAUSED_PAGES: readonly string[] = Object.freeze(ALL.map((p) => p.id).filter((id) => !ACTIVE_PAGES.includes(id)));
 export const PAUSED_LABEL = "En pausa · próxima versión";
@@ -94,6 +95,8 @@ export async function startHub(root: HTMLElement, opts: HubOptions) {
   const firstStatus = FlowBridge.status().then((real) => { if (real) status = real; statusKnown = true; drawStatus(); });
   const items = new Map<PageId, HTMLElement>();
   const statusLine = h("div", { class: "hub-status" });
+  // abito-pausa 0.1.2: the sidebar line is dictation's own status; while dictation is paused it is hidden (it still tracks the real status)
+  statusLine.hidden = isPaused("dictation");
   const scroll = h("div", { class: "hub-scroll" });
   let rendering = 0;
   let saving: Promise<any> = Promise.resolve();
@@ -146,7 +149,7 @@ export async function startHub(root: HTMLElement, opts: HubOptions) {
     statusLine.append(h("i", { class: "dot", style: `background:${color}` }), h("span", { text }));
   }
   async function show(page: PageId) {
-    if (isPaused(page)) return; // paused: never opened, whatever asked for it
+    if (isPaused(page)) page = "general" as PageId; // paused: never opened; whatever asked for it lands on General
     const def = ALL.find((p) => p.id === page) ?? NOTCH_PAGES[0];
     ctx.onLeave?.();
     ctx.onLeave = undefined;
@@ -185,17 +188,12 @@ export async function startHub(root: HTMLElement, opts: HubOptions) {
   side.append(h("div", { class: "hub-brand" }, logo, h("span", { text: "Abito" })));
   liveMochi(logo);
   const group = (title: string, pages: PageDef[]) => {
+    const shown = pages.filter((p) => !isPaused(p.id)); // paused pages are hidden, not greyed
+    if (!shown.length) return;
     side.append(h("div", { class: "hub-group", text: title }));
-    for (const p of pages) {
-      const paused = isPaused(p.id);
-      const b = h("button", { class: paused ? "hub-item paused" : "hub-item", onclick: () => void show(p.id) }) as HTMLButtonElement;
+    for (const p of shown) {
+      const b = h("button", { class: "hub-item", "data-page": p.id, onclick: () => void show(p.id) }) as HTMLButtonElement;
       b.append(icon(p.icon), h("span", { text: p.title() }));
-      if (paused) {
-        b.disabled = true;
-        b.setAttribute("aria-disabled", "true");
-        b.setAttribute("title", PAUSED_LABEL);
-        b.append(h("span", { class: "hub-paused", text: "En pausa" }));
-      }
       items.set(p.id, b);
       side.append(b);
     }

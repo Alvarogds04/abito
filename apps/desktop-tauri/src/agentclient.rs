@@ -362,10 +362,23 @@ fn plan_summary_ok(s: &str) -> bool {
     !s.is_empty() && s.chars().count() <= 400 && !s.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | '`'))
 }
 
+/// HU-015: folds the two frames the daemon-free route prints (`agents-direct.cjs`) through the SAME closed rules as
+/// the engine's own frames (`ClientState::apply`), and publishes them under their OWN keys so a frame pushed by the
+/// daemon (`agents`/`hooks`) can never overwrite them. `None` when either frame does not fold into a list.
+pub fn fold_direct(output: &Value) -> Option<Value> {
+    let mut state = ClientState::connected();
+    state.apply(output.get("agents")?).ok()?;
+    state.apply(output.get("hooks")?).ok()?;
+    if !state.agents.is_array() || !state.hooks.is_array() {
+        return None;
+    }
+    Some(json!({"agentsRuntime": "ok", "directAgents": state.agents, "directHooks": state.hooks}))
+}
+
 /// The code agents the island can connect (the installers exist for these).
 /// `recap` (weekly-recap hooks) and `statusline` (plan-usage relay) are the two notify-only Claude Code integrations the
 /// daemon installs with the same preview / hash / backup flow (L32e).
-pub const AGENT_IDS: [&str; 6] = ["claude-code", "codex", "copilot-cli", "opencode", "recap", "statusline"];
+pub const AGENT_IDS: [&str; 7] = ["pi", "claude-code", "codex", "copilot-cli", "opencode", "recap", "statusline"];
 
 /// #436 T6.5: the six hook clients the daemon's `hooks` frame may name (its own closed
 /// list). Wider than AGENT_IDS on purpose: the page shows their state, and installs
@@ -507,7 +520,7 @@ impl ClientState {
                         _ => "error",
                     };
                     let detail = match a.get("detail").and_then(Value::as_str) {
-                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed")) => json!(d),
+                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform")) => json!(d),
                         _ => Value::Null,
                     };
                     // the plan exists only for a state that offers a button, and only when BOTH parts look like ours

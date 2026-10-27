@@ -833,6 +833,18 @@ class IslandServer {
 					reply(P.accountFrame(await this.accounts.setLocalEndpoint(input)));
 					this.broadcast(P.accountsFrame(this.accounts.listAccounts()));
 				});
+			case "custom_account_create":
+			case "custom_endpoint_set":
+			case "custom_models_refresh": {
+				const method = { custom_account_create: "createCustomAccount", custom_endpoint_set: "setCustomEndpoint", custom_models_refresh: "refreshCustomModels" }[frame.type];
+				if (!this.accounts?.[method]) return fail("unavailable");
+				// Configuration only: never touches the live agent files, and the account cannot be activated.
+				return run(async () => {
+					const { type: _type, ...input } = frame;
+					reply(P.accountFrame(await this.accounts[method](input)));
+					this.broadcast(P.accountsFrame(this.accounts.listAccounts()));
+				});
+			}
 			case "account_remove":
 			case "account_logout":
 				if (!this.accounts) return fail("unavailable");

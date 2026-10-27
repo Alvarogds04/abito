@@ -392,6 +392,12 @@ pub async fn agent_action(
             })?;
             return Ok(json!({"ownedAccounts":saved}));
         }
+        // HU-015: every Ajustes → Agentes hook read and change takes the daemon-free route, whether the engine is up
+        // or down (one owner, no daemon/direct race). It never touches the engine slot below.
+        if let Some(op) = abito_island::agents_direct::parse(&payload) {
+            let op = op.map_err(|_| err("invalid_schema"))?;
+            return Ok(abito_island::agents_direct::perform(&op));
+        }
         let mut guard = state.settings.agent.lock().expect("agent lock");
         let conn = guard.get_or_insert_with(|| {
             let emitter = handle.clone();

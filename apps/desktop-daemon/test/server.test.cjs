@@ -1539,3 +1539,71 @@ test("set_paused: a persistence failure answers failed, keeps the previous state
 	a.send({ type: "send", text: "hi" });
 	await waitFor(() => a.frames.some((f) => f.type === "agent_state" && f.busy === true));
 });
+
+// ----- HU-041 T6a-1: custom provider account frames, end to end (real manager + store) -----
+
+test("custom provider: create -> key via auth_start/auth_reply -> discovery; inert for inference; nothing secret on the wire", async (t) => {
+	const http = require("node:http");
+	const { AccountManager, helperEnv } = require("../src/auth.cjs");
+	const { ProfileStore } = require("../src/profiles.cjs");
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "abito-srv-custom-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const KEY = "sk-fake-SECRET-2468-DO-NOT-LEAK";
+	const hits = [];
+	const gateway = http.createServer((req, res) => {
+		hits.push(req.headers.authorization);
+		res.writeHead(200, { "content-type": "application/json" });
+		res.end(JSON.stringify({ data: [{ id: "model-a" }] }));
+	});
+	await new Promise((r) => gateway.listen(0, "127.0.0.1", r));
+	t.after(() => gateway.close());
+	const baseUrl = `http://127.0.0.1:${gateway.address().port}/v1`;
+	const accountsRoot = path.join(root, "island", "accounts");
+	const manager = new AccountManager({
+		accountsRoot,
+		helper: { command: process.execPath, args: [path.join(__dirname, "fixtures", "fake-auth.cjs"), "--accounts-root", accountsRoot], env: helperEnv(process.env, { home: root, tmp: root }) },
+	});
+	t.after(() => manager.close());
+	const engine = { status: "ready", async request() { return { success: true }; }, async stop() {}, async start() {} };
+	const profiles = new ProfileStore({ islandRoot: path.join(root, "island"), agentDir: path.join(root, "island", "agent"), accounts: () => new Map(manager.listAccounts().map((a) => [a.accountId, a])), engine, restart: async () => {} });
+	fs.mkdirSync(path.join(root, "island", "agent"), { recursive: true, mode: 0o700 });
+	const server = new IslandServer({ runtimeDir: tmpRuntime(t), token: TOKEN, engine: new FakeEngine(), accounts: manager, profiles });
+	const { endpoint } = await server.start();
+	t.after(() => server.close().catch(() => {}));
+	const c = await login(t, endpoint);
+
+	for (const bad of [{ baseUrl: "http://gateway.example/v1" }, { baseUrl: "https://u:p@gateway.example/v1" }]) c.send({ type: "custom_account_create", label: "GW", ...bad });
+	await waitFor(() => c.frames.filter((f) => f.type === "error" && f.code === "bad_request").length === 2);
+	assert.deepEqual(manager.listAccounts(), []);
+
+	c.send({ type: "custom_account_create", label: "Gateway", baseUrl });
+	assert.deepEqual((await c.wait((f) => f.type === "account")).account, { accountId: "gateway", label: "Gateway", provider: "custom-gateway", authMethod: "none", configured: false, custom: true });
+	c.send({ type: "custom_models_refresh", accountId: "gateway" });
+	await c.wait((f) => f.type === "error" && f.code === "failed");
+	assert.equal(hits.length, 0, "no key: nothing is contacted");
+
+	c.send({ type: "auth_start", accountId: "gateway", method: "api_key" });
+	const started = await c.wait((f) => f.type === "auth_started");
+	const prompt = await c.wait((f) => f.type === "auth_prompt");
+	assert.equal(prompt.secret, true);
+	c.send({ type: "auth_reply", flowId: started.flowId, promptId: prompt.promptId, value: KEY });
+	assert.equal((await c.wait((f) => f.type === "auth_done")).ok, true);
+	c.send({ type: "custom_models_refresh", accountId: "gateway" });
+	await waitFor(() => types(c, "account").length === 2);
+	assert.equal(hits.at(-1), `Bearer ${KEY}`);
+	c.send({ type: "models_list", providerId: "custom-gateway", accountId: "gateway" });
+	await c.wait((f) => f.type === "models");
+
+	// Inert: no profile can be saved or selected for it through any public frame.
+	c.send({ type: "profile_save", id: "gw", label: "G", role: "main", accountId: "gateway", provider: "custom-gateway", modelId: "model-a" });
+	await c.wait((f) => f.type === "error" && f.code === "failed" && f.seq > prompt.seq);
+	c.send({ type: "profile_select", id: "gw" });
+	await waitFor(() => c.frames.filter((f) => f.type === "error" && f.code === "failed").length >= 3);
+	assert.deepEqual(profiles.list().profiles, []);
+	assert.equal(fs.existsSync(path.join(root, "island", "agent", "auth.json")), false);
+
+	c.send({ type: "accounts_list" });
+	await c.wait((f) => f.type === "accounts" && f.accounts.length === 1 && f.accounts[0].configured === true);
+	const wire = JSON.stringify(c.frames);
+	for (const banned of [KEY, "sk-fake", "127.0.0.1", "baseUrl", "model-a"]) assert.equal(wire.includes(banned), false, banned);
+});

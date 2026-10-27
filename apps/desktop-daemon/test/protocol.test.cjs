@@ -471,3 +471,27 @@ test("sessionsFrame carries the total only when truncated, and only a sane integ
 	assert.equal("total" in P.sessionsFrame({ sessions: many, truncated: true }), false, "truncated without a total: honest, absent");
 	for (const bad of [63, 4097, -1, 70.5, "70", NaN, null]) assert.throws(() => P.sessionsFrame({ sessions: many, truncated: true, total: bad }), /sessions frame invalid/, String(bad));
 });
+
+test("custom_account_create / custom_endpoint_set / custom_models_refresh frames are rebuilt from an allowlist", () => {
+	const good = { type: "custom_account_create", label: "Gateway", baseUrl: "https://Gateway.example/v1/", junk: 1, apiKey: "sk-x" };
+	assert.deepEqual(P.validateClientFrame(good), { type: "custom_account_create", label: "Gateway", baseUrl: "https://gateway.example/v1" });
+	assert.equal(P.validateClientFrame({ ...good, accountId: "gw" }).accountId, "gw");
+	for (const bad of [{ ...good, accountId: "Bad Id" }, { ...good, label: "a\nb" }, { ...good, baseUrl: "http://gateway.example/v1" }, { ...good, baseUrl: "https://u:p@gateway.example/v1" }, { ...good, baseUrl: undefined }]) {
+		assert.equal(P.validateClientFrame(bad), undefined);
+	}
+	const set = { type: "custom_endpoint_set", accountId: "gw", baseUrl: "http://127.0.0.1:4000/v1" };
+	assert.deepEqual(P.validateClientFrame(set), set);
+	for (const bad of [{ ...set, accountId: "../x" }, { ...set, baseUrl: "https://gateway.example/v1?x=1" }, { ...set, accountId: undefined }]) {
+		assert.equal(P.validateClientFrame(bad), undefined);
+	}
+	assert.deepEqual(P.validateClientFrame({ type: "custom_models_refresh", accountId: "gw", baseUrl: "https://evil.example/v1" }), { type: "custom_models_refresh", accountId: "gw" });
+	assert.equal(P.validateClientFrame({ type: "custom_models_refresh", accountId: "../x" }), undefined);
+});
+
+test("account DTO adds custom:true only for custom accounts and never a Base URL or key", () => {
+	const dto = P.accountDto({ accountId: "a", label: "A", provider: "custom-a", configured: true, custom: true, baseUrl: "https://gateway.example/v1", apiKey: "sk-x" });
+	assert.deepEqual(Object.keys(dto).sort(), ["accountId", "authMethod", "configured", "custom", "label", "provider"]);
+	assert.equal(JSON.stringify(dto).includes("gateway.example"), false);
+	assert.equal("custom" in P.accountDto({ accountId: "a", label: "A", provider: "p", configured: true }), false);
+	assert.equal("custom" in P.accountDto({ accountId: "a", label: "A", provider: "p", configured: true, custom: "yes" }), false);
+});

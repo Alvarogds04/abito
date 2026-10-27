@@ -63,6 +63,12 @@ for (const name of L.HARNESS_FILES) {
   fs.chmodSync(dest, 0o644);
 }
 
+for (const name of L.PI_FILES) {
+  const dest = path.join(stage, 'desktop-pi', name);
+  fs.mkdirSync(path.dirname(dest), { recursive:true, mode:0o755 });
+  fs.copyFileSync(path.join(crate, '..', 'desktop-pi', name), dest); fs.chmodSync(dest, 0o644);
+}
+
 const rustc = cp.spawnSync('rustc', ['--version'], { encoding: 'utf8' }).stdout.trim();
 const files = {};
 for (const name of L.STAGED) files[name] = L.sha256File(path.join(stage, name));

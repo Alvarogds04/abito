@@ -56,6 +56,9 @@ if (require.main === module) (async () => {
   click('Reiniciar'); await ui.settled(); assert.deepEqual(calls[0], ['daemon_action', { action: 'restart' }]);
   calls.length = 0; click('Configurar proveedor');
   const field = id => all(ui).find(e => e.attrs.id === id);
+  const providerValues = () => all(field('account-provider')).filter(e => e.tagName === 'option').map(e => e.attrs.value ?? e.value);
+  assert(!providerValues().includes('custom'), 'HU-041 deferred: a new account offers no custom endpoint preset');
+  assert(providerValues().includes('openai'));
   field('account-credential').value = 'set'; field('account-credential').fire('change');
   field('account-secret').value = 'test-only-placeholder';
   field('account-form').fire('submit', false); await ui.settled(); assert.deepEqual(calls, []);
@@ -76,6 +79,10 @@ if (require.main === module) (async () => {
   click('Editar');field('account-form').fire('submit');await ui.settled();assert.deepEqual(calls.pop(),['agent_action',{action:'abito_account_save',accountId:'saved-one',provider:'openai',config:saved.config}]);
   click('Editar');click('Guardar endpoint');await ui.settled();assert.deepEqual(calls.pop(),['agent_action',{action:'abito_account_endpoint_set',accountId:'saved-one',provider:'openai',config:saved.config}]);
   click('Quitar conexión',false);await ui.settled();assert.deepEqual(calls,[]);click('Quitar conexión');await ui.settled();assert.deepEqual(calls.pop(),['agent_action',{action:'abito_account_remove',accountId:'saved-one'}]);
+  const custom={accountId:'mine',provider:'custom',hasCredential:false,config:{nombre:'Mio',baseUrl:'https://llm.example/v1',api:'openai-completions',compat:{},models:[],defaultModel:''}};
+  state.ownedAccounts={accounts:[custom]};events['agent:state']({payload:structuredClone(state)});
+  click('Editar');assert(providerValues().includes('custom'),'a saved custom account still renders its provider');assert.equal(field('account-provider').value,'custom');
+  click('Cancelar');await ui.settled();
   assert(!text(ui).includes('Conectores'));
   assert(text(ui).includes('Claves'));
   ui.dispose(); assert.equal(Object.keys(events).length, 0);

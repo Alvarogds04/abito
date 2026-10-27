@@ -8,6 +8,19 @@ const assert = require('node:assert/strict');
 const H = require('./settings-layout-harness.cjs');
 if (!H.findPlaywright()) { console.log('SKIPPED settings-layout-check: playwright is not installed here (no real layout engine) — NOT a pass'); process.exit(0); }
 const tests = []; const test = (name, fn) => tests.push([name, fn]);
+// 0.1.2 (human: «vale todo lo que este en pausa se puede ocultar?» → yes): paused pages are HIDDEN from the menu. The paused list comes
+// from the single source of truth (hub/shell.js PAUSED_PAGES, pinned by paused-features-check); a page's own layout test runs again
+// by itself the day its page is active again, and until then it checks that the page is not in the menu.
+const PAGE_IDS = { Dictado: 'dictation', Notetaker: 'notes', 'Estadísticas': 'insights', Diccionario: 'dictionary', Fragmentos: 'snippets', Estilos: 'styles', Ajustes: 'flowsettings',
+  General: 'general', Integraciones: 'integrations', Agentes: 'agents', Chat: 'chat', 'OK Abito': 'voice', 'Teléfono': 'phone', 'Teléfono Android': 'phone', Atajos: 'shortcuts', Privacidad: 'privacy' };
+let PAUSED = null;
+const isPaused = title => { assert(PAGE_IDS[title], title); return PAUSED.includes(PAGE_IDS[title]); };
+const navTitles = page => page.evaluate(() => [...document.querySelectorAll('.hub-side .hub-item')].map(e => e.textContent.trim()));
+const pageTest = (title, name, fn) => test(name, async r => {
+  if (!isPaused(title)) return fn(r);
+  const items = await navTitles(r.page);
+  assert(!items.some(t => t === title || t.startsWith(title + ' ')), `paused «${title}» must not be in the menu: ${JSON.stringify(items)}`);
+});
 
 test('S18 General: «Tema» is three segmented pills Oscuro / Claro / Sistema, one selected, never a dropdown', async r => {
   await r.go('General');
@@ -101,7 +114,7 @@ test('S1 Chat: no long paragraph on the provider cards (explanations are tooltip
   assert.deepEqual(long, [], `long text on the cards: ${JSON.stringify(long)}`);
 });
 
-test('S23 Integraciones: state and actions form COLUMNS shared by every card (a row without «¿Dónde?» no longer shifts «Conectar»), off the card border', async r => {
+pageTest('Integraciones', 'S23 Integraciones: state and actions form COLUMNS shared by every card (a row without «¿Dónde?» no longer shifts «Conectar»), off the card border', async r => {
   await r.go('Integraciones');
   const rows = await r.page.evaluate(() => [...document.querySelectorAll('.int-card')].map(c => { const cb = c.getBoundingClientRect();
     const vis = sel => [...c.querySelectorAll(sel)].filter(b => b.offsetParent);
@@ -116,7 +129,7 @@ test('S23 Integraciones: state and actions form COLUMNS shared by every card (a 
   assert.equal(col('help').length, 1, `«¿Dónde?» is not in one column: ${JSON.stringify(rows.filter(x => x.help !== null).map(x => [x.id, x.help]))}`);
 });
 
-test('S24 Teléfono: no line of the hero ends in a hyphen that splits a word («Wi-/Fi.»)', async r => {
+pageTest('Teléfono', 'S24 Teléfono: no line of the hero ends in a hyphen that splits a word («Wi-/Fi.»)', async r => {
   await r.go('Teléfono');
   const breaks = await r.page.evaluate(() => { const out = [];
     for (const el of document.querySelectorAll('.hub-hero h1, .hub-hero p')) { const node = el.firstChild; if (!node || node.nodeType !== 3) continue; const text = node.textContent; let lastTop = null;
@@ -159,6 +172,7 @@ test('Ajustes opens without waiting for the dictation status: the sidebar is the
     // the page that needs the status still gets it when it arrives
     await slow.page.waitForTimeout(3300);
     assert.match(await slow.text('.hub-status'), /Listo|Dictado|modelo|micr/i, 'the status line is filled in once the real answer lands');
+    assert.equal(await slow.page.locator('.hub-status').isVisible(), false, '0.1.2: dictation is paused, its status line is not shown');
   } finally { await slow.close(); }
 });
 
@@ -188,7 +202,7 @@ test('S25 Atajos: after a capture that SAW the host\'s pause pushes, the rows ar
   assert(calls.lastIndexOf('view') > calls.lastIndexOf('resume'), 'the state was read AGAIN after resume (the pushes during the pause were not trusted)');
 });
 
-test('S27 Ajustes (dictado): the microphone meter moves with the host\'s levels and reads «sin señal» when none arrive', async r => {
+pageTest('Ajustes', 'S27 Ajustes (dictado): the microphone meter moves with the host\'s levels and reads «sin señal» when none arrive', async r => {
   await r.go('Ajustes'); await r.page.waitForTimeout(300);
   const read = () => r.page.evaluate(() => { const m = document.querySelector('#dictation-mic-meter'); return m && { state: m.dataset.state, now: m.getAttribute('aria-valuenow'), lit: m.querySelectorAll('.mic-seg.on').length, text: m.textContent.replace(/\s+/g, ' ').trim(), box: m.getBoundingClientRect().width };});
   const idle = await read(); assert(idle, 'the meter exists on the page'); assert(idle.box > 60, 'it is drawn');
@@ -204,16 +218,24 @@ test('S27 Ajustes (dictado): the microphone meter moves with the host\'s levels 
   const calls = (await r.calls()).map(([c]) => c); assert(!calls.some(c => /mic|record|level/i.test(c)), 'the page only listens: no command was sent for the meter');
 });
 
+test('0.1.2 paused pages are hidden: the sidebar lists exactly the active pages, no grey «En pausa» row (visual check: hub-side screenshot)', async r => {
+  const items = await navTitles(r.page);
+  const want = Object.keys(PAGE_IDS).filter(t => !['Teléfono', 'Ajustes'].includes(t) && !isPaused(t));
+  assert.deepEqual([...items].sort(), [...want].sort(), JSON.stringify(items));
+  assert.equal(await r.page.locator('.hub-side .hub-paused, .hub-side .hub-item.paused, .hub-side [disabled]').count(), 0, 'nothing greyed out');
+  if (process.env.ABITO_SHOT_DIR) await r.page.locator('.hub-side').screenshot({ path: require('node:path').join(process.env.ABITO_SHOT_DIR, 'hub-side.png') });
+});
+
 test('0.2.1 S1 (option B): «Integraciones» and «Agentes» are two sidebar entries; «Pestañas activas» and the combined entry are gone', async r => {
-  const items = await r.page.evaluate(() => [...document.querySelectorAll('.hub-side .hub-item')].map(e => e.textContent.trim()));
-  assert.equal(items.filter(t => t === 'Integraciones').length, 1, JSON.stringify(items));
+  const items = await navTitles(r.page);
+  assert.equal(items.filter(t => t === 'Integraciones').length, isPaused('Integraciones') ? 0 : 1, JSON.stringify(items));
   assert.equal(items.filter(t => t === 'Agentes').length, 1, JSON.stringify(items));
   for (const gone of ['Pestañas activas', 'Integraciones y agentes']) assert(!items.includes(gone), `«${gone}» is not a sidebar entry any more: ${JSON.stringify(items)}`);
 });
 
 test('S32 gate: every Ajustes page that reads the host at load stays under the host\'s 30-calls-per-second limiter (no «No se pudo completar» on load)', async r => {
   await r.close();
-  for (const title of ['Integraciones', 'Agentes', 'Chat', 'General', 'Atajos']) {
+  for (const title of ['Integraciones', 'Agentes', 'Chat', 'General', 'Atajos'].filter(t => !isPaused(t))) {
     const f = await H.open({ width: 960, height: 680 });
     try {
       await f.go(title); await f.page.waitForTimeout(1500);
@@ -229,7 +251,7 @@ test('S32 gate: «Integraciones» and «Agentes» load with NO error notice when
   for (const [label, scenario] of [['no keys stored', {}], ['keychain unreachable', { keychainDown: true }], ['keychain unreachable and agents not reported', { keychainDown: true, agentsOk: false }]]) {
     const f = await H.open({ width: 960, height: 680, ...scenario });
     try {
-      for (const title of ['Integraciones', 'Agentes']) {
+      for (const title of ['Integraciones', 'Agentes'].filter(t => !isPaused(t))) {
         await f.go(title); await f.page.waitForTimeout(900);
         const page = await f.page.evaluate(() => document.querySelector('.hub-page').textContent.replace(/\s+/g, ' '));
         assert.doesNotMatch(page, /No se pudo completar/, `${label}: ${title} shows a failure notice at load`);
@@ -260,7 +282,7 @@ test('0.2.4 Agentes: unavailable main tool, CLI table and island switches; no AI
   assert.match(page.text, /No disponible en esta versión/);
 });
 
-test('0.2.1 Integraciones: the services only, with the keychain explanation in an ⓘ', async r => {
+pageTest('Integraciones', '0.2.1 Integraciones: the services only, with the keychain explanation in an ⓘ', async r => {
   await r.go('Integraciones');
   const page = await r.page.evaluate(() => { const root = document.querySelector('.hub-page'); return { cards: root.querySelectorAll('.int-card').length, agentRows: root.querySelectorAll('.agent-row').length, tips: root.querySelectorAll('.hub-info').length, text: root.textContent }; });
   assert(page.cards >= 6, `services (${page.cards})`); assert.equal(page.agentRows, 0); assert(page.tips >= 1, 'the ⓘ is there');
@@ -300,7 +322,7 @@ test('0.2.1 Chat (L2 A): provider cards fold from their title row; the key field
   await fold.click(); assert.equal(await field.isVisible(), true);
 });
 
-test('0.2.1 OK Abito (L2 A): the shared model, language and training are inside the Avanzado fold', async r => {
+pageTest('OK Abito', '0.2.1 OK Abito (L2 A): the shared model, language and training are inside the Avanzado fold', async r => {
   await r.go('OK Abito');
   const adv = r.page.locator('#voice-advanced'); assert.equal(await adv.count(), 1);
   assert.equal(await adv.evaluate(d => d.open), false, 'closed by default');
@@ -349,7 +371,7 @@ test('S26 deep link: an unknown or hostile page name falls back to the default p
     const f = await H.open({ width: 960, height: 680, page: bad });
     try { await f.shellAfter(); await f.page.waitForTimeout(500);
       const on = await f.page.evaluate(() => [...document.querySelectorAll('.hub-side .hub-item.on')].map(e => e.textContent.trim()));
-      assert.deepEqual(on, ['Dictado'], `${JSON.stringify(bad)} -> ${JSON.stringify(on)}`); }
+      assert.deepEqual(on, ['General'], `${JSON.stringify(bad)} -> ${JSON.stringify(on)}`); }
     finally { await f.close(); }
   }
 });
@@ -371,13 +393,14 @@ for (const [label, scenario] of [['a normal host', {}], ['a fresh install (no ac
     const f = await H.open({ width: 960, height: 680, ...scenario });
     try {
       const bad = [];
-      for (const title of PAGES) { await f.go(title); await f.page.waitForTimeout(250); const found = await f.page.evaluate(EMPTY_BOXES); for (const x of found) bad.push(`[${title}] ${x}`); }
+      for (const title of PAGES.filter(t => !isPaused(t))) { await f.go(title); await f.page.waitForTimeout(250); const found = await f.page.evaluate(EMPTY_BOXES); for (const x of found) bad.push(`[${title}] ${x}`); }
       assert.deepEqual(bad, [], `empty boxes: ${JSON.stringify(bad, null, 1)}`);
     } finally { await f.close(); }
   });
 }
 
 (async () => {
+  PAUSED = [...(await import(require('node:url').pathToFileURL(require('node:path').join(__dirname, '../frontend/vendor/coucou/hub/shell.js')))).PAUSED_PAGES];
   let failed = 0;
   for (const [name, fn] of tests) {
     const r = await H.open({ width: 960, height: 680 });

@@ -42,7 +42,7 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 /** Any control character (tabs and newlines included) is refused in short labels/ids. */
 const CONTROL = /[\u0000-\u001f\u007f]/;
 /** Hook-managed agents (agents.cjs); the closed set of agent_connect/agent_disconnect targets. */
-const AGENT_IDS = Object.freeze(["claude-code", "codex", "recap", "statusline", "copilot-cli", "opencode"]);
+const AGENT_IDS = Object.freeze(["pi", "claude-code", "codex", "recap", "statusline", "copilot-cli", "opencode"]);
 const PLAN_HASH = /^[0-9a-f]{64}$/;
 /** #361 agent hooks catalogue: harness-driven (claude-code, codex) plus native adapters. */
 const HOOK_CLIENT_IDS = Object.freeze(["claude-code", "codex", "recap", "statusline", "gemini-cli", "copilot-cli", "opencode", "amp", "cursor"]);
@@ -103,6 +103,39 @@ function validateLocalBaseUrl(value) {
 	if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") return undefined;
 	if (url.hostname !== host || url.pathname !== pathPart) return undefined;
 	return url.href;
+}
+
+// ----- custom OpenAI-compatible provider (HU-041) -----------------------------------------
+
+const CUSTOM_URL_SHAPE = /^(https?):\/\/(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::(\d{1,5}))?((?:\/[A-Za-z0-9._~-]+)*)\/?$/;
+
+/**
+ * Base URL policy of a custom (LiteLLM / OpenAI-compatible) provider: https, or http only for a
+ * LITERAL loopback address (127.0.0.0/8 canonical, [::1]; the name `localhost` is not a literal).
+ * No userinfo, query, fragment (even empty), percent-escapes, empty or dot path segments. The host
+ * must survive WHATWG parsing unchanged, so decimal/hex/octal IPv4 tricks are refused. Returns the
+ * normalized URL without a trailing slash, or undefined.
+ */
+function validateCustomBaseUrl(value) {
+	if (!isString(value, LOCAL_URL_MAX)) return undefined;
+	const m = CUSTOM_URL_SHAPE.exec(value);
+	if (!m) return undefined;
+	const scheme = m[1].toLowerCase();
+	const host = m[2].toLowerCase();
+	if (m[3] !== undefined && !(Number(m[3]) >= 1 && Number(m[3]) <= 65535)) return undefined;
+	if (m[4].split("/").some((seg) => seg === "." || seg === "..")) return undefined;
+	if (scheme === "http") {
+		const loopback = host === "[::1]" || (/^127(\.\d{1,3}){3}$/.test(host) && host.split(".").every((p) => DOTTED_BYTE.test(p) && Number(p) <= 255));
+		if (!loopback) return undefined;
+	}
+	let url;
+	try {
+		url = new URL(value);
+	} catch {
+		return undefined;
+	}
+	if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "" || url.hostname !== host) return undefined;
+	return `${url.origin}${url.pathname}`.replace(/\/$/, "");
 }
 
 /** 1..32 unique model ids (exact-match duplicates rejected) of 1..200 chars: no control characters, not whitespace-only. */
@@ -270,6 +303,24 @@ function validateClientFrame(raw) {
 			if (!baseUrl || !modelIds) return undefined;
 			return { type: "local_endpoint_set", accountId: raw.accountId, baseUrl, modelIds };
 		}
+		case "custom_account_create": {
+			if (!safeLabel(raw.label)) return undefined;
+			const baseUrl = validateCustomBaseUrl(raw.baseUrl);
+			if (!baseUrl) return undefined;
+			const frame = { type: "custom_account_create", label: raw.label, baseUrl };
+			if (raw.accountId !== undefined) {
+				if (!strictId(raw.accountId)) return undefined;
+				frame.accountId = raw.accountId;
+			}
+			return frame;
+		}
+		case "custom_endpoint_set": {
+			if (!strictId(raw.accountId)) return undefined;
+			const baseUrl = validateCustomBaseUrl(raw.baseUrl);
+			if (!baseUrl) return undefined;
+			return { type: "custom_endpoint_set", accountId: raw.accountId, baseUrl };
+		}
+		case "custom_models_refresh":
 		case "account_remove":
 		case "account_logout":
 		case "account_status":
@@ -365,6 +416,8 @@ function accountDto(a) {
 		configured: a?.configured === true,
 		// Present (true) only for local-endpoint accounts; never the endpoint itself.
 		...(a?.local === true ? { local: true } : {}),
+		// Present (true) only for custom-provider accounts; never the Base URL. Not selectable for inference yet.
+		...(a?.custom === true ? { custom: true } : {}),
 	};
 }
 
@@ -521,9 +574,9 @@ function pendingFrame(data) {
 }
 
 /** Fixed agent table: names never come from the dependency. */
-const AGENT_NAMES = Object.freeze({ "claude-code": "Claude Code", codex: "Codex", recap: "Resumen semanal", statusline: "Uso del plan (relay)", "copilot-cli": "Copilot CLI", opencode: "OpenCode" });
+const AGENT_NAMES = Object.freeze({ pi: "Pi", "claude-code": "Claude Code", codex: "Codex", recap: "Resumen semanal", statusline: "Uso del plan (relay)", "copilot-cli": "Copilot CLI", opencode: "OpenCode" });
 const AGENT_STATES = new Set(["not_connected", "connected", "outdated", "working", "unavailable", "error"]);
-const AGENT_DETAILS = new Set(["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed"]);
+const AGENT_DETAILS = new Set(["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform"]);
 const AGENT_SUMMARY_MAX = 400;
 /**
  * Reply/broadcast `agents`: rebuilt field by field from closed vocabularies. THROWS on invalid data
@@ -812,6 +865,7 @@ module.exports = {
 	LIMITS,
 	validateClientFrame,
 	validateLocalBaseUrl,
+	validateCustomBaseUrl,
 	validateLocalModelIds,
 	decodeClientLine,
 	encodeServerFrame,

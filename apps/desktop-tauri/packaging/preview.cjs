@@ -41,7 +41,7 @@ async function main(args = process.argv.slice(2)) {
     fs.chmodSync(path.join(out,'abito-island'),0o700);
     fs.copyFileSync(path.join(crate,'icons/icon.png'),path.join(out,'abito-island.png'));
     fs.writeFileSync(path.join(out,'abito-island-launcher'),L.launcherText(),{mode:0o700});
-    for (const [dir,files] of [['desktop-daemon',L.DAEMON_FILES],['desktop-harness',L.HARNESS_FILES]]) for (const file of files) {
+    for (const [dir,files] of [['desktop-daemon',L.DAEMON_FILES],['desktop-harness',L.HARNESS_FILES], ['desktop-pi', L.PI_FILES]]) for (const file of files) {
       const dest = path.join(out,dir,file); fs.mkdirSync(path.dirname(dest),{recursive:true,mode:0o700}); fs.copyFileSync(path.join(crate,'..',dir,file),dest);
     }
     fs.writeFileSync(path.join(out,'preview.json'),JSON.stringify({provenance:before,sha256:L.sha256File(binary),features:'tauri/custom-protocol (no probe)',inputs:fingerprint,validated:true},null,2));

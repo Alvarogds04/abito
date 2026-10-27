@@ -178,8 +178,8 @@ StartupWMClass=Abito-island
 
 // ---- receipt verification (no launch) -------------------------------------
 const DAEMON_FILES = ['package.json', 'identity.md', 'THIRD-PARTY-NOTICES.md',
-  'src/agent-hooks.cjs', 'src/agents.cjs', 'src/auth.cjs', 'src/cli.cjs', 'src/config.cjs',
-  'src/connectors.cjs', 'src/connector-host.cjs', 'src/connector-host-client.cjs',
+  'src/agent-hooks.cjs', 'src/agents-direct.cjs', 'src/agents.cjs', 'src/auth.cjs', 'src/cli.cjs', 'src/config.cjs',
+  'src/connectors.cjs', 'src/connector-host.cjs', 'src/connector-host-client.cjs', 'src/custom-provider.cjs',
   'src/daemon.cjs', 'src/interrupt.cjs', 'src/isolation.cjs', 'src/mcp-import.cjs', 'src/profiles.cjs',
   'src/protocol.cjs', 'src/rotation.cjs', 'src/runtime.cjs', 'src/sdk-helper.mjs', 'src/server.cjs',
   'src/sessions.cjs', 'src/procinfo.cjs', 'src/spaces.cjs'];
@@ -188,11 +188,13 @@ const DAEMON_FILES = ['package.json', 'identity.md', 'THIRD-PARTY-NOTICES.md',
 // install the Claude/Codex/recap/status-line hooks. Closed under require(): packaging-check pins that.
 const HARNESS_FILES = ['bin/abito-hook.cjs', 'bin/abito-recap-hook.cjs', 'bin/abito-statusline.cjs', 'package.json',
   'src/claude-ask.cjs', 'src/claude-suggestions.cjs', 'src/claude.cjs', 'src/client.cjs', 'src/codex.cjs', 'src/config.cjs', 'src/copilot.cjs', 'src/deadline.cjs', 'src/file-permission.cjs', 'src/hook-common.cjs', 'src/identity.cjs',
-  'src/install-claude.cjs', 'src/install-codex.cjs', 'src/install-copilot.cjs', 'src/install-opencode.cjs', 'src/install-recap.cjs', 'src/install-statusline.cjs', 'src/install-ui.cjs',
+  'src/install-claude.cjs', 'src/install-codex.cjs', 'src/install-copilot.cjs', 'src/install-opencode.cjs', 'src/install-pi.cjs', 'src/install-recap.cjs', 'src/install-statusline.cjs', 'src/install-ui.cjs', 'src/installer-platform.cjs',
   'src/opencode.cjs', 'src/projection.cjs', 'src/recap-hook.cjs', 'src/redact.cjs', 'src/security.cjs', 'src/statusline.cjs', 'src/title-cache.cjs', 'src/windows-transport.cjs'];
+// Host modules come from Pi; no npm payload or dependency installation.
+const PI_FILES = ['pi-extension.ts', 'adapter.cjs', 'ask-tool.cjs', 'config.cjs', 'native-ask.cjs', 'questions.cjs', 'security.cjs', 'windows-transport.cjs'];
 const STAGED = ['abito-island', 'abito-island-launcher', 'abito-island.png', `${IDENTIFIER}.desktop`,
-  ...DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...HARNESS_FILES.map(f => `desktop-harness/${f}`)];
-const STAGED_DIRS = ['desktop-daemon', 'desktop-daemon/src', 'desktop-harness', 'desktop-harness/bin', 'desktop-harness/src'];
+  ...DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...HARNESS_FILES.map(f => `desktop-harness/${f}`), ...PI_FILES.map(f => `desktop-pi/${f}`)];
+const STAGED_DIRS = ['desktop-pi', 'desktop-daemon', 'desktop-daemon/src', 'desktop-harness', 'desktop-harness/bin', 'desktop-harness/src'];
 // Enumerate the complete tree without following links, including empty directories.
 function stageEntries(dir, problems, prefix = '') {
   const files = [], dirs = [];
@@ -285,5 +287,5 @@ function requireClean(crate) {
   return p;
 }
 
-module.exports = { provenance, requireClean, FORBIDDEN_ENV_PATTERN, ALLOWED_ABITO, R6_PREFIX, IDENTIFIER, FRONTEND_FILES, EXPECTED_PERMISSIONS, DAEMON_FILES, HARNESS_FILES, STAGED, STAGED_DIRS, checkInstalledLayout, sha256, sha256File,
+module.exports = { provenance, requireClean, FORBIDDEN_ENV_PATTERN, ALLOWED_ABITO, R6_PREFIX, IDENTIFIER, FRONTEND_FILES, EXPECTED_PERMISSIONS, DAEMON_FILES, HARNESS_FILES, PI_FILES, STAGED, STAGED_DIRS, checkInstalledLayout, sha256, sha256File,
   checkR6, checkFrontend, checkConfig, launcherText, desktopText, verifyStage };

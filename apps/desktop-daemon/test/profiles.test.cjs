@@ -720,3 +720,36 @@ test("a local account (created by AccountManager) saves, selects and copies its 
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+// ----- HU-041 T6a-1: custom-provider accounts are inert for inference ---------------------
+
+test("custom-provider account cannot back a profile or be activated (no agent file is touched)", async () => {
+	const root = tempRoot();
+	try {
+		const { store, accountsRoot, agentDir } = setup(root);
+		mkdirSync(path.join(accountsRoot, "gw"), { mode: 0o700 });
+		writeFileSync(path.join(accountsRoot, "gw", "auth.json"), JSON.stringify({ "custom-gw": { type: "api_key", key: "sk-fake-SECRET-2468" } }), { mode: 0o600 });
+		writeFileSync(path.join(accountsRoot, "gw", "models.json"), JSON.stringify({ providers: { "custom-gw": { baseUrl: "https://gateway.example/v1", api: "openai-completions", models: [{ id: "model-a" }] } } }));
+		const accounts = new Map([["gw", { accountId: "gw", provider: "custom-gw", configured: true, custom: true }]]);
+		const custom = new ProfileStore({ islandRoot: path.join(root, "island"), agentDir, accounts: () => accounts, engine: defaultEngine(), restart: async () => {} });
+		await assert.rejects(custom.save({ id: "gw1", label: "G", role: "main", accountId: "gw", provider: "custom-gw", modelId: "model-a" }), /not available for inference/);
+		assert.deepEqual(custom.list().profiles, []);
+		// A profile that already exists (e.g. hand-edited store) still cannot be activated.
+		writeFileSync(path.join(root, "island", "profiles.json"), JSON.stringify({ profiles: [{ id: "gw1", label: "G", role: "main", accountId: "gw", provider: "custom-gw", modelId: "model-a", thinkingLevel: "off" }] }));
+		await assert.rejects(custom.select("gw1"), /not available for inference/);
+		await assert.rejects(custom.selectForRole("main"), /not available for inference/);
+		assert.equal(custom.list().active, undefined);
+		assert.equal(existsSync(path.join(agentDir, "auth.json")), false);
+		assert.equal(existsSync(path.join(agentDir, "models.json")), false);
+		assert.equal(existsSync(path.join(root, "island", "active-account.json")), false);
+		// Existing static and local accounts behave exactly as before.
+		await store.save({ id: "main", label: "Main", role: "orchestrator", accountId: "cloud", provider: "anthropic", modelId: "claude-sonnet-5" });
+		await store.select("main");
+		assert.ok(JSON.parse(readFileSync(path.join(agentDir, "auth.json"), "utf8")).anthropic);
+		await store.save({ id: "loc", label: "Loc", role: "local", accountId: "local", provider: "abito-local", modelId: "qwen2.5-coder:7b" });
+		await store.select("loc");
+		assert.equal(JSON.parse(readFileSync(path.join(agentDir, "models.json"), "utf8")).providers["abito-local"].models[0].id, "qwen2.5-coder:7b");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

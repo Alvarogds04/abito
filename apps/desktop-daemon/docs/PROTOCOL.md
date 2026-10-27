@@ -264,7 +264,7 @@ the last outcome (frame or failure) is served from memory, so clients cannot mak
 ```
 
 - `state` ∈ `not_connected, connected, outdated, working, unavailable, error`. `detail` is `null` or the CLOSED set
-  `config_invalid, not_writable, backup_failed, plan_changed, audit_unavailable, install_failed`. **Tauri lane: `plan_changed`,
+  `config_invalid, not_writable, backup_failed, plan_changed, audit_unavailable, install_failed, unsupported_platform`. Windows automatic hook installation returns `unavailable` with `unsupported_platform` without spawning the installer; this is not evidence that hooks are installed. **Tauri lane: `plan_changed`,
   `audit_unavailable` and `install_failed` are new members of that set and must render.** Extra fields are additive.
 - Ids/names are a fixed table (`claude-code` "Claude Code", `codex` "Codex", `recap` "Resumen semanal", `statusline` "Uso del plan (relay)", `opencode` "OpenCode"). `opencode` is ALWAYS `unavailable`
   (not installable yet) and never spawns anything. Without `hookInstallerBin` every agent is `unavailable` (`detail: null`).

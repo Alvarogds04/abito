@@ -321,7 +321,9 @@
           destroyAll(listClays);
           add.disabled = o.saving === true || !ui.catalogPick;
           const q = ui.catalogSearch.trim().toLowerCase();
-          const defs = C.available().filter(d => (ui.catalogCat === 'all' || d.category === ui.catalogCat) && (!q || d.name.toLowerCase().includes(q)));
+          // abito-pausa 0.1.2: paused services are hidden from the chooser (listing only; stored declarations and offered() are untouched)
+          const P = window.AbitoPaused, pausedPill = id => !!P && ((id === 'integration_spotify' && P.paused('spotify')) || (/^integration_/.test(id) && id !== 'integration_claude' && id !== 'integration_spotify' && C.definition(id)?.category === 'service' && P.paused('integrations')));
+          const defs = C.available().filter(d => !pausedPill(d.id) && (ui.catalogCat === 'all' || d.category === ui.catalogCat) && (!q || d.name.toLowerCase().includes(q)));
           list.textContent = '';
           if (!defs.length) { list.append(el('span', 'pill-catalog-empty', 'Sin resultados')); return; }
           for (const d of defs) {

@@ -65,7 +65,10 @@
     return 0;
   }
   /** `dictation_action status` → whether the pill exists at all: only with the feature on. */
-  const enabledOf = s => isObject(s) && isObject(s.prefs) && s.prefs.enabled === true;
+  const enabledIgnoringPause = s => isObject(s) && isObject(s.prefs) && s.prefs.enabled === true;
+  // abito-pausa 0.1.2: a paused dictation has no pill (hidden, not grey); the stored preference is never rewritten.
+  const pausedNow = () => { const P = typeof module === 'object' && module.exports ? require('./paused.js') : (typeof window !== 'undefined' ? window.AbitoPaused : null); return !!(P && P.paused('dictation')); };
+  const enabledOf = s => !pausedNow() && enabledIgnoringPause(s);
   const LIVE = Object.freeze(['listening', 'locked', 'thinking']);
   /** #479: should this phase change open the island? Only the START of a dictation (idle/copied/failed → listening or locked)
       on a folded or hidden island, with dictation on. Same closed host verb as the notice reveal (`expand`). */
@@ -85,7 +88,7 @@
   }
   /** The verbs the pill sends (closed). */
   const VERBS = Object.freeze({ handsFree: 'hands_free', finish: 'finish', cancel: 'cancel', status: 'status' });
-  return { revealPlan, restorePlan, BANDS, PHASES, NOTES, NOTE_MS, VERBS, phaseOf, noteOf, bandsOf, lookOf, messageOf, lengthOf, barSize, dotGoal, enabledOf };
+  return { revealPlan, restorePlan, BANDS, PHASES, NOTES, NOTE_MS, VERBS, phaseOf, noteOf, bandsOf, lookOf, messageOf, lengthOf, barSize, dotGoal, enabledOf, enabledIgnoringPause };
 });
 
 function mount(api) {

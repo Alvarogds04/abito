@@ -12,10 +12,11 @@ const recap = require('./install-recap.cjs');
 const statusline = require('./install-statusline.cjs');
 const copilot = require('./install-copilot.cjs');
 const opencode = require('./install-opencode.cjs');
+const pi = require('./install-pi.cjs');
 
 const INSTALLER_VERSION = 'abito-hook-installer/1';
 const SCHEMA = 'abito-hook-install/1';
-const HARNESSES = ['claude', 'codex', 'copilot', 'opencode', 'recap', 'statusline'];
+const HARNESSES = ['claude', 'codex', 'copilot', 'opencode', 'recap', 'statusline', 'pi'];
 const AUDIT_FILE = 'hook-installs.jsonl';
 const DIFF_MAX_LINES = 200;
 const DIFF_MAX_LINE_LEN = 300;
@@ -42,6 +43,7 @@ function canonical(v) {
 function computePlanHash(plan, harness, action, version = INSTALLER_VERSION) {
   const doc = {
     schema: SCHEMA, harness, action, target: plan.settingsPath,
+    ...(plan.backupRoot ? {backupRoot:plan.backupRoot} : {}),
     original: { exists: plan.exists, sha256: plan.sig ? plan.sig.sha256 : '', size: plan.sig ? plan.sig.size : 0 },
     result_sha256: plan.changed ? sha256(Buffer.from(plan.after, 'utf8')) : '',
     timeoutSec: plan.timeoutSec, execPath: plan.execPath, binPath: plan.binPath, installerVersion: version,
@@ -54,8 +56,16 @@ function hashEqual(a, b) {
 }
 
 // ---- island guards (exit 77) ----
-function defaultReadExe(pid) { return fs.realpathSync(`/proc/${pid}/exe`); }
-// true only when the parent process is the island executable AND no agent marker is in the environment. Fails closed.
+function defaultReadExe(pid) {
+  // Preserve Linux's existing guard exactly; never substitute ps or environment claims for /proc.
+  if (process.platform === 'linux') return fs.realpathSync(`/proc/${pid}/exe`);
+  const platform = require('./installer-platform.cjs');
+  const executable = process.platform === 'darwin' ? platform.darwinParentExecutable(pid)
+    : process.platform === 'win32' ? platform.windowsParentExecutable(pid) : undefined;
+  return executable ? fs.realpathSync(executable) : undefined;
+}
+// The actual parent is the app-owned Node adapter/daemon, not the Tauri executable.
+// Canonical executable identity AND no agent marker are required. Non-Linux probes also require own uid/SID.
 function checkIslandGuards(env, ppid, readExe = defaultReadExe) {
   try {
     const exe = env.ABITO_ISLAND_EXE;
@@ -174,6 +184,7 @@ function parseUiArgs(argv) {
   }
   const o = core.parseInstallArgs(rest, harness);
   if (!o || o.apply) return null;
+  if (harness === 'pi' && (!o.user || o.timeoutSec !== null)) return null;
   if (['recap', 'statusline'].includes(harness) && o.timeoutSec !== null) return null;
   if (applyPlan !== null && (!json || auditDir === null)) return null;
   if (applyPlan === null && auditDir !== null) return null;
@@ -203,6 +214,14 @@ function buildPlan(parsed, opts) {
   const profile = parsed.harness === 'codex' ? codex.CODEX_PROFILE : parsed.harness === 'copilot' ? copilot.COPILOT_PROFILE : parsed.harness === 'opencode' ? opencode.OPENCODE_PROFILE : parsed.harness === 'recap' ? recap.PROFILE : core.CLAUDE_PROFILE;
   const env = opts.env || process.env;
   const o = parsed.o;
+  if (parsed.harness === 'pi') {
+    const target = core.resolveUserSettings(env, opts.homedir || os.homedir, ['.pi', 'agent', 'extensions', 'abito-island']);
+    const plan = pi.planPi({home:env.HOME, uid:opts.uid === undefined ? process.getuid() : opts.uid, remove:o.remove,
+      execPath:opts.execPath || process.execPath, binPath:opts.binPath || core.BIN_PATH});
+    if (plan.settingsPath !== target) throw new core.InstallError(65, 'Pi default path mismatch');
+    const action = o.remove ? 'remove' : 'install';
+    return {plan, action, hash:computePlanHash(plan, parsed.harness, action), trust:false};
+  }
   const settingsPath = o.user ? core.resolveUserSettings(env, opts.homedir || os.homedir, profile.defaultFile) : o.settings;
   const common = {
     settingsPath, remove: o.remove, execPath: opts.execPath || process.execPath,
@@ -238,10 +257,13 @@ async function runInstallUi(argv, opts = {}) {
   try {
     const parsed = parseUiArgs(argv);
     if (!parsed) return fail(64, 'usage', fixedMessage.usage);
+    // Native peer/target probes do not establish audit, side-file, or bundled-script trust.
+    // Refuse BEFORE getuid, reads or writes; never present a Windows preview as installable.
+    if (!['linux', 'darwin'].includes(process.platform)) return fail(77, 'unsupported_platform', 'Automatic hook installation is not available on this platform yet.');
     if (parsed.applyPlan !== null) { refuseHash = parsed.applyPlan; opts = { ...opts, auditDir: parsed.auditDir }; }
     if (parsed.applyPlan === null) {
       const { plan, action, hash, trust } = buildPlan(parsed, opts);
-      const backupPath = plan.changed && plan.exists ? core.backupPathFor(plan.settingsPath, (opts.now || (() => new Date()))()) : null;
+      const backupPath = plan.changed && plan.exists ? core.backupPathFor(plan.backupTarget || plan.settingsPath, (opts.now || (() => new Date()))()) : null;
       const notes = [...NOTES_BASE]; if (trust) notes.push(NOTE_TRUST);
       emit({
         schema: SCHEMA, ok: true, mode: 'preview', harness: parsed.harness, action, target: plan.settingsPath, exists: plan.exists, changed: plan.changed,
@@ -266,7 +288,7 @@ async function applyPlanned(parsed, opts, emit, fail) {
   // 2) recompute from scratch and compare in constant time (cheap pre-check, then again under the lock)
   const first = buildPlan(parsed, opts);
   if (!hashEqual(first.hash, parsed.applyPlan)) return fail(70, 'plan_changed', 'the settings or arguments differ from the previewed plan; nothing was written');
-  const lock = acquireLock(first.plan.settingsPath, opts.lockWaitMs === undefined ? LOCK_WAIT_MS : opts.lockWaitMs);
+  const lock = acquireLock(first.plan.lockTarget || first.plan.settingsPath, opts.lockWaitMs === undefined ? LOCK_WAIT_MS : opts.lockWaitMs);
   if (!lock) return fail(70, 'busy', 'another apply is in progress; nothing was written');
   try {
     const { plan, action, hash, trust } = buildPlan(parsed, opts);
@@ -278,13 +300,13 @@ async function applyPlanned(parsed, opts, emit, fail) {
     // 4) apply with the shared machinery, no TTY and no prompt
     let rc = 0, code = plan.changed ? 'applied' : 'noop', backupPath = null;
     if (plan.changed) {
-      backupPath = plan.exists ? freeBackupPath(plan.settingsPath, now()) : null;
+      backupPath = plan.exists ? freeBackupPath(plan.backupTarget || plan.settingsPath, now()) : null;
       let msg = '', previousSaved = false;
       if (parsed.harness === 'statusline' && plan.savePrevious) {
         try { statusline.writeSaved(plan.home, plan.savePrevious); previousSaved = true; }
         catch { rc = 70; }
       }
-      if (rc === 0) rc = await core.applyPlan(plan, { backupPath,
+      if (rc === 0) rc = await (parsed.harness === 'pi' ? pi.applyPi : core.applyPlan)(plan, { backupPath,
         verify: parsed.harness === 'statusline' ? statusline.verify(plan) : (plan.profile && plan.profile.verify ? plan.profile.verify(plan) : undefined),
         out: () => {}, err: s => { msg += s; } });
       if (parsed.harness === 'statusline' && ((rc !== 0 && previousSaved) || (rc === 0 && plan.restorePrevious))) {
@@ -303,7 +325,7 @@ async function applyPlanned(parsed, opts, emit, fail) {
       return 70;
     }
     // 6) one JSON line
-    const rollback = !plan.changed ? null : backupMade ? `cp -p ${core.shq(backupMade)} ${core.shq(plan.settingsPath)}` : `rm -- ${core.shq(plan.settingsPath)}`;
+    const rollback = parsed.harness === 'pi' || !plan.changed ? null : backupMade ? `cp -p ${core.shq(backupMade)} ${core.shq(plan.settingsPath)}` : `rm -- ${core.shq(plan.settingsPath)}`;
     const res = {
       schema: SCHEMA, ok: true, mode: 'applied', harness: parsed.harness, action, target: plan.settingsPath, plan_hash: hash, changed: plan.changed,
       backup: backupMade, rollback, entries: entriesOf(plan), requires_trust_review: trust,

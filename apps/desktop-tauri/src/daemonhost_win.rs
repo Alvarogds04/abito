@@ -27,7 +27,7 @@ use windows_sys::Win32::System::Threading::{
 };
 
 /// Owned kernel handle, stored as an integer so `Host` stays `Send`.
-struct Owned(isize);
+pub(crate) struct Owned(isize);
 impl Owned {
     fn new(h: HANDLE) -> Option<Self> {
         (!h.is_null() && h != INVALID_HANDLE_VALUE).then_some(Self(h as isize))
@@ -175,25 +175,37 @@ pub fn discover(name: &str, path: Option<&std::ffi::OsStr>, home: Option<&std::f
     }
 }
 
+/// Shared suspended-create → assign → resume boundary. Caller owns stdio and lifetime policy;
+/// dropping the returned job handle kills descendants even after the direct child exits.
+pub(crate) fn spawn_in_job(mut command: Command) -> std::io::Result<(Child, Owned)> {
+    let job = kill_job_object()?;
+    command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    let mut child = command.spawn()?;
+    let attach = (|| {
+        if unsafe { AssignProcessToJobObject(job.raw(), child.as_raw_handle() as HANDLE) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        resume_initial_thread(child.id())
+    })();
+    if let Err(error) = attach {
+        // Never resume an uncontained child; cleanup must not block the caller indefinitely.
+        drop(job);
+        let _ = child.kill();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if child.try_wait().ok().flatten().is_some() { break; }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        return Err(error);
+    }
+    Ok((child, job))
+}
+
 impl Host {
     /// Suspended create -> assign to a kill-on-close job -> resume. No shell.
     pub fn spawn_command(mut command: Command) -> std::io::Result<Self> {
-        let job = kill_job_object()?;
         command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::inherit());
-        command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
-        let mut child = command.spawn()?;
-        let attach = (|| {
-            if unsafe { AssignProcessToJobObject(job.raw(), child.as_raw_handle() as HANDLE) } == 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            resume_initial_thread(child.id())
-        })();
-        if let Err(error) = attach {
-            // Fail closed: a host outside the lifetime guarantee never runs.
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
+        let (child, job) = spawn_in_job(command)?;
         Ok(Self { child, job })
     }
     pub fn pid(&self) -> u32 { self.child.id() }

@@ -249,4 +249,177 @@ function createNativeAskHandler({ controller, env = process.env } = {}) {
   };
 }
 
-module.exports = { createNativeAskHandler, isSensitive, planChoice, planQuestionnaire };
+// ---- HU-042: Pi's yes/no confirmations (ctx.ui.confirm) --------------------------------------------------
+// Human decision (verbatim option chosen): «Cualquier confirmación sí/no que no sea sensible». Any ctx.ui.confirm
+// (e.g. gentle-pi's «Allow guarded forced git branch deletion?») is answerable from Abito OR the terminal; the first
+// answer wins and the other side is withdrawn. Only confirm (two answers) is wrapped, never select/input/editor.
+// SECURITY: the sensitive side is a DENYLIST that fails closed. A match, or a title/preview that cannot be bounded
+// and decoded cleanly, means the original terminal confirm runs UNCHANGED and nothing leaves Pi. There is no
+// redaction: what is sent is the title + preview verbatim, so the human sees exactly what they approve.
+// Abito returns true ONLY on an explicit «Sí» answer; expiry, busy, disconnect or any error never decides.
+// SECURITY (hardened after independent verification mvqtg5jk-9-9dt9): two layers, both fail closed.
+// 1) SHOWABLE: a text is only sent if every character can be shown honestly — printable ASCII, a closed punctuation set,
+//    or a letter that is canonically an ASCII letter plus accents (á, ñ, ü…). This refuses homoglyphs (Cyrillic, fullwidth,
+//    ŧ/ø/ı), invisible/format characters (soft hyphen, ZW*, variation selectors, U+FFF9), combining marks, NBSP, tabs and
+//    C0/C1 controls, NEL and line/paragraph separators. Refused text means terminal-only, never redaction.
+// 2) DENYLIST on a normalised form: accents stripped, lowercased, leetspeak folded (0→o, 1→i/l, 3→e, 4→a, 5→s, 7→t,
+//    @→a, $→s, !→i, |→i), separators removed, so «pass word», «log_in», «t0ken» or «ReviewRDD» still match. Plus
+//    userinfo, known secret shapes and opaque-token rules on the raw text. False positives only mean the terminal asks.
+const CONFIRM_PUNCT = new Set(['¡', '¿', '«', '»', '·', '°', '–', '—', '‘', '’', '“', '”', '…']);
+const showableChar = (c, newline) => (c >= ' ' && c <= '~') || (newline && c === '\n') || CONFIRM_PUNCT.has(c) ||
+  /^[A-Za-z]\p{M}+$/u.test(c.normalize('NFD'));
+const showable = (v, newline) => { for (const c of v) if (!showableChar(c, newline)) return false; return true; };
+
+const CONFIRM_WORDS = ['credential', 'credencial', 'creds', 'token', 'secret', 'password', 'passwd', 'pwd', 'passphrase', 'passcode', 'passkey',
+  'contrasena', 'apikey', 'keychain', 'keyring', 'llave', 'login', 'logon', 'loggingin', 'loggedin', 'signin', 'signon', 'sesion',
+  'oauth', 'authori', 'authent', 'autoriz', 'autentic', 'consent', 'grant', 'conced', 'permission', 'permiso', 'provider', 'proveedor',
+  'review', 'revision', 'binding', 'envelope', 'lineage', 'receipt', 'maintenance', 'mantenimiento', 'reclaim', 'cookie'];
+const CONFIRM_SHORT = new Set(['key', 'keys', 'clave', 'claves', 'rdd', 'otp', 'totp', 'mfa', 'auth', 'reauth', 'sso', 'pin']);
+// Multi-valued look-alikes: a letter may be written with any of these («6rant», «lo9in», «8inding», «+oken», «(redential»).
+const LOOKALIKE = { a: '4@', b: '68', c: '(<{[', d: ')', e: '3', g: '69', h: '#', i: '1!|', l: '1|', o: '0', p: '>*', s: '5$', t: '7+', z: '2' };
+const esc = s => s.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&');
+const wordPattern = w => [...w].map(ch => `[${esc(ch)}${esc(LOOKALIKE[ch] || '')}]`).join('');
+const CONFIRM_WORD_RE = new RegExp(CONFIRM_WORDS.map(wordPattern).join('|'));
+// A run of 1-3 symbols inside a word may stand for ONE letter nobody listed («secre|2», «gr4n|2», «0a#th»): for every
+// word of 5+ letters, each position may also be such a run. Matched on a form that keeps every symbol.
+const SYMBOL_RUN = '[^a-z0-9\\s]{1,3}';
+const CONFIRM_WILD_RE = new RegExp(CONFIRM_WORDS.filter(w => w.length >= 5).flatMap(w => [...w].map((_, i) =>
+  [...w].map((ch, j) => (j === i ? SYMBOL_RUN : `[${esc(ch)}${esc(LOOKALIKE[ch] || '')}]`)).join(''))).join('|'));
+// «key» inside a compound (privatekey, keystore, keyfile, keygen, sshkey…); only «keyboard» is let through.
+const CONFIRM_KEY_RE = new RegExp(`${wordPattern('key')}(?!${wordPattern('board')})`);
+const LEET = { 0: 'o', 2: 'z', 3: 'e', 4: 'a', 5: 's', 6: 'g', 7: 't', 8: 'b', 9: 'g', '@': 'a', $: 's', '!': 'i', '|': 'i', '+': 't', '(': 'c', '<': 'c' };
+const stripMarks = v => v.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+// Encoded text is read as what it encodes: %XX (repeatedly, so %2540 → %40 → @), HTML numeric entities, \uXXXX / \xXX.
+function decoded(v) {
+  let out = v;
+  for (let i = 0; i < 3; i++) {
+    const next = out.replace(/%([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/&#x([0-9a-f]{1,6});?/gi, (_, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10ffff)))
+      .replace(/&#([0-9]{1,7});?/g, (_, d) => String.fromCodePoint(Math.min(Number(d), 0x10ffff)))
+      .replace(/\\u\{?([0-9a-f]{4,6})\}?|\\x([0-9a-f]{2})/gi, (_, u, x) => String.fromCodePoint(Math.min(parseInt(u || x, 16), 0x10ffff)));
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+// Letters drawn with several symbols («|<» k, «|2» r, «|\|» n, «|v|» m, «\/» v, «|>» p) become the letter BEFORE separators are
+// removed, and every remaining single symbol that stands for a letter is kept for the look-alike patterns.
+const ASCII_ART = [[/\|v\||\/\\\/\\|\|\\\/\|/g, 'm'], [/\|\\\|/g, 'n'], [/\\\/\\\//g, 'w'], [/\\\//g, 'v'], [/\|</g, 'k'],
+  [/\|2/g, 'r'], [/\|[>*°o]/g, 'p'], [/\|-\|/g, 'h'], [/\|\)/g, 'd']];
+const artFold = v => ASCII_ART.reduce((s, [re, ch]) => s.replace(re, ch), v);
+const folds = v => {
+  const base = stripMarks(v);
+  return ['i', 'l'].map(one => base.replace(/[0-9@$!|+(<]/g, c => (c === '1' ? one : LEET[c] ?? c)));
+};
+const SENSITIVE_RAW = [
+  /:\S*@/, /\/\/[^\s/]*@/, /%(?:40|3a)/i,                                        // userinfo (user:token@host, //token@host, %40/%3A)
+  /(?:^|[^a-z0-9])(?:sk|pk|rk)[-_][a-z0-9]|gh[pousr]_|github_pat_|xox[abprs]-|AKIA[0-9A-Z]{12}|bearer\s/i, // known secret shapes
+  /(?:^|[^a-z0-9])2fa(?:[^a-z0-9]|$)/i,
+];
+const mixedCase = s => /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s);
+const opaqueWord = word => {
+  for (const run of word.match(/[A-Za-z0-9]+/g) || []) {
+    if (run.length >= 12 && mixedCase(run)) return true;                                // mixed-case id
+    if (run.length >= 16 && /[0-9]/.test(run) && /[A-Za-z]/.test(run)) return true;     // letter+digit id
+    if (run.length >= 12 && /^[0-9a-f]+$/i.test(run) && /[0-9]/.test(run)) return true; // hex / long digits
+    if (run.length >= 20) return true;                                                   // letters-only blob
+  }
+  const joined = word.replace(/[^A-Za-z0-9]/g, '');                                      // split by - _ / + = . ~ :
+  return joined.length >= 12 && mixedCase(joined);
+};
+function sensitiveText(raw) {
+  const v = decoded(raw);
+  if (SENSITIVE_RAW.some(re => re.test(v)) || v.split(/\s+/).some(opaqueWord)) return true;
+  // compact: decoded, ASCII-art letters folded, accents stripped, lower case, separators removed; every symbol that can
+  // stand for a letter (LOOKALIKE) is kept, so nothing that reads as a letter is dropped unread.
+  const compact = stripMarks(artFold(v)).replace(/[^a-z0-9@$!|+(<{[)#>*]/g, '');
+  if (CONFIRM_WORD_RE.test(compact) || CONFIRM_KEY_RE.test(compact)) return true;
+  if (CONFIRM_WILD_RE.test(stripMarks(v).replace(/\s+/g, ''))) return true;
+  return folds(v).some(f => f.split(/[^a-z]+/).some(t => CONFIRM_SHORT.has(t)));
+}
+const isSensitiveConfirm = (title, message) =>
+  typeof title !== 'string' || typeof message !== 'string' || !showable(title, false) || !showable(message, true) ||
+  sensitiveText(title) || sensitiveText(message);
+
+const CONFIRM_TITLE_MAX = 200, CONFIRM_PREVIEW_MAX = 1200, CONFIRM_PREVIEW_LINES = 12;
+const YES_NO = [{ value: 'yes', label: 'Sí', description: '' }, { value: 'no', label: 'No', description: '' }];
+
+// The Abito request for one confirm, or null when it must stay terminal-only.
+function confirmRequest(title, message, structured) {
+  if (typeof title !== 'string' || typeof message !== 'string') return null;
+  if (!title.trim() || [...title].length > CONFIRM_TITLE_MAX) return null;
+  if ([...message].length > CONFIRM_PREVIEW_MAX || message.split('\n').length > CONFIRM_PREVIEW_LINES) return null;
+  if (isSensitiveConfirm(title, message)) return null; // also refuses anything that is not showable verbatim
+  const request = { kind: 'approval', text: message.trim() ? `${title}\n${message}` : title, options: YES_NO.map(o => ({ ...o })), allowFreeText: false };
+  try { normalizeRequest(request, undefined, structured); } catch { return null; } // Abito's own size/shape rules
+  return request;
+}
+
+function raceConfirm({ controller, ctx, ui, original, request, title, message, opts }) {
+  return new Promise(resolve => {
+    let decided = false;
+    const abito = new AbortController(), terminal = new AbortController(), outer = opts?.signal;
+    const finish = (value, winner) => {
+      if (decided) return;
+      decided = true;
+      outer?.removeEventListener('abort', onOuterAbort);
+      if (winner !== 'abito') abito.abort();
+      if (winner !== 'terminal') terminal.abort();
+      if (winner === 'abito') tell(ctx, `Respondido en Abito: ${value ? 'Sí' : 'No'}`);
+      resolve(value === true);
+    };
+    const onOuterAbort = () => finish(false, null); // the caller withdrew: both sides go, never approval
+    if (outer?.aborted) { resolve(false); return; }
+    outer?.addEventListener('abort', onOuterAbort, { once: true });
+
+    let asked;
+    try { asked = controller.ask(request, ctx, abito.signal); } catch { asked = undefined; }
+    Promise.resolve(asked).then(result => {
+      if (decided || !isObject(result)) return;
+      if (result.status === 'human_cancelled') { finish(false, 'abito'); return; }
+      if (result.status !== 'answered' || !isObject(result.answer) || result.answer.type !== 'option') return; // no decision
+      if (result.answer.value === 'yes') finish(true, 'abito');
+      else if (result.answer.value === 'no') finish(false, 'abito');
+    }, () => {});
+
+    Promise.resolve()
+      .then(() => original.call(ui, title, message, { ...(opts || {}), signal: terminal.signal }))
+      .then(value => { if (!decided) finish(value === true, 'terminal'); },
+        () => { if (!decided) finish(false, 'terminal'); }); // a failing terminal dialog is never approval
+  });
+}
+
+const CONFIRM_ROUTERS = new WeakMap();
+/**
+ * Wrap ctx.ui.confirm once per ui object (Pi shares one ui object across extensions until it is rebound).
+ * @param {{ ctx?: any, controller?: any, env?: Record<string, string | undefined> }} [options]
+ * @returns {() => void} uninstall: restores the original confirm (or turns the wrapper into a pass-through).
+ */
+function installConfirmRouter({ ctx, controller, env = process.env } = {}) {
+  try {
+    const ui = ctx?.ui;
+    if (env.ABITO_NATIVE_CONFIRM === '0' || !isObject(ui) || typeof ui.confirm !== 'function' || CONFIRM_ROUTERS.has(ui)) return () => {};
+    const original = ui.confirm;
+    const state = { active: true };
+    const wrapper = function confirm(title, message, opts) {
+      let request = null;
+      try {
+        if (state.active && ctx.hasUI === true && controller && typeof controller.canAsk === 'function' && controller.canAsk() === true) {
+          request = confirmRequest(title, message, typeof controller.structured === 'function' && controller.structured() === true);
+        }
+      } catch { request = null; }
+      if (!request) return original.call(this ?? ui, title, message, opts); // terminal only, untouched
+      return raceConfirm({ controller, ctx, ui, original, request, title, message, opts });
+    };
+    ui.confirm = wrapper;
+    CONFIRM_ROUTERS.set(ui, state);
+    return () => {
+      if (!state.active) return;
+      state.active = false;
+      CONFIRM_ROUTERS.delete(ui);
+      if (ui.confirm === wrapper) ui.confirm = original;
+    };
+  } catch { return () => {}; }
+}
+
+module.exports = { createNativeAskHandler, isSensitive, planChoice, planQuestionnaire, installConfirmRouter, isSensitiveConfirm, confirmRequest };

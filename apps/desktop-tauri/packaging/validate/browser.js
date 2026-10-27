@@ -402,12 +402,14 @@
   async function snapshot() {
     return {prefs:await invoke('prefs_action',{action:'view'}),dictation:(await invoke('dictation_action',{action:'status'})).prefs,voice:(await invoke('voice_action',{action:'status'})).prefs};
   }
-  async function hub(index, page) {
-    const buttons=[...document.querySelectorAll('.hub-side .hub-item')];
-    if (!buttons[index]) throw new Error(`falta página ${page}`);
+  // 0.1.2: paused pages are hidden from the menu, so a page is found by its own data-page, never by position.
+  const hubButton=page=>document.querySelector(`.hub-side .hub-item[data-page="${page}"]`);
+  async function hub(_index, page) { // probe.rs still passes the catalog position; the page id is what finds the button
+    const button=hubButton(page);
+    if (!button) return {ok:true,hidden:true,page,input:'página en pausa: oculta en el menú'};
     const previous=document.querySelector('.hub-page');
-    await click(buttons[index]);
-    await wait(()=>buttons[index].classList.contains('on') && document.querySelector('.hub-page')!==previous,'página '+page);
+    await click(button);
+    await wait(()=>button.classList.contains('on') && document.querySelector('.hub-page')!==previous,'página '+page);
     const root=document.querySelector('.hub-page');
     await wait(()=>root.textContent.trim().length>20 && root.querySelector('button,input,select,textarea'), 'contenido y controles '+page);
     const text=root.textContent;
@@ -670,7 +672,7 @@
     return {ok:value===true && info.onDesktop===on,info};
   }
   async function hotkeys() {
-    await click(document.querySelectorAll('.hub-side .hub-item')[window.__validatePages.indexOf('shortcuts')]);
+    await click(hubButton('shortcuts'));
     const ids=['toggleIsland','openChat','goToAlert','jumpToTerminal','nextPill','prevPill','muteToggle','desktopToggle','wardrobeToggle'];
     const payload=(id,action)=>id==='toggleIsland'?{action}:{id,action};
     await wait(()=>ids.every(id=>byId(`shortcut-${id}`)?.querySelector('button')?.disabled===false),'nueve atajos disponibles');
@@ -719,7 +721,8 @@
     return {ok:suspended.status!=='active' && rebound.combo==='Ctrl+F8' && !cleared.enabled && cleared.combo==='' && other.combo===chat.combo,before,suspended,rebound,cleared,other,coverage:'trusted recording/Backspace and native readback; old-combo dispatch not exercised from settings'};
   }
   async function dictationNavigate(id) {
-    const button=[...document.querySelectorAll('.hub-side .hub-item')][window.__validatePages.indexOf(id)];
+    const button=hubButton(id);
+    if (!button) throw Error(`página en pausa u oculta: ${id}`);
     const previous=document.querySelector('.hub-page');
     await click(button);
     await wait(()=>document.querySelector('.hub-page')!==previous,'navegar a '+id);
@@ -750,10 +753,10 @@
     return {ok:true,copied:true,deleted:true};
   }
   async function noModel(page) {
-    const index=window.__validatePages.indexOf(page);
-    if(index < 0) throw Error(`página desconocida: ${page}`);
-    const buttons=[...document.querySelectorAll('.hub-side .hub-item')];
-    await click(buttons[index]);
+    if(!window.__validatePages.includes(page)) throw Error(`página desconocida: ${page}`);
+    const button=hubButton(page);
+    if(!button) return {ok:true,hidden:true,page,input:'página en pausa: oculta en el menú'};
+    await click(button);
     await wait(()=>document.querySelector('.hub-page')?.textContent.includes('Descargar'),`aviso de modelo ausente ${page}`);
     const status=await invoke(page==='voice'?'voice_action':'dictation_action',{action:'status'});
     const text=document.querySelector('.hub-page').textContent;

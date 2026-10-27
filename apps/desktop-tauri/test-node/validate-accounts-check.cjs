@@ -27,7 +27,7 @@ async function scene({ host = {}, page = {}, buttons } = {}) {
       if (cmd === 'agent_action') return structuredClone(state); if (cmd === 'prefs_action') return {}; if (cmd === 'dictation_action') return { prefs: {} }; if (cmd === 'voice_action') return { prefs: {} }; return {}; } },
     event: { emit: async (_e, payload) => { clicks.push(payload); current = root; } } } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../packaging/validate/browser.js'), 'utf8'), {
-    window, document: { querySelector: sel => (sel === '.hub-page' ? current : null), querySelectorAll: () => [tab], getElementById: id => (id === 'engine-status' ? engine : null) },
+    window, document: { querySelector: sel => (sel === '.hub-page' ? current : sel === '.hub-side .hub-item[data-page="chat"]' ? tab : null), querySelectorAll: () => [tab], getElementById: id => (id === 'engine-status' ? engine : null) },
     addEventListener() {}, console: { error() {} }, performance, setTimeout: fn => { fn(); return 1; }, requestAnimationFrame: fn => fn(),
     getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) });
   const result = await window.AbitoValidate.hub(0, 'chat');

@@ -9,8 +9,8 @@ const PRESETS = [
   ["openai", "OpenAI", "https://api.openai.com/v1", "openai-completions"],
   ["openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai-completions"],
   ["ollama", "Ollama (local)", "http://127.0.0.1:11434/v1", "openai-completions"],
-  ["lmstudio", "LM Studio (local)", "http://127.0.0.1:1234/v1", "openai-completions"],
-  ["custom", "Endpoint personalizado (HTTPS)", "", "openai-completions"]
+  ["lmstudio", "LM Studio (local)", "http://127.0.0.1:1234/v1", "openai-completions"]
+  // HU-041 (deferred to after 0.1.2): no new custom endpoint; saved custom accounts still render via the fallback option.
 ];
 async function renderAccounts({ invoke, V, listen, timers, page = "all", keys: showKeys = true, slotFor }) {
   const s = session(invoke, listen, timers), { root, call, work, watch, later, message } = s;

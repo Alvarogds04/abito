@@ -46,39 +46,39 @@ const text = e => [e.textContent || '', ...e.children.map(text)].join(' ');
   const pages = [], host = new Element('div');
   await startHub(host, { version: 'test', flowPages: {}, renderNotch: async p => { pages.push(p); } });
   const items = all(host).filter(e => e.className.split(' ').includes('hub-item'));
-  assert.equal(items.length, 15, 'every page stays in the menu');
-  assert.deepEqual(items.map(e => e.children[1].textContent), ['Dictado','Notetaker','Estadísticas','Diccionario','Fragmentos','Estilos','Ajustes de dictado','General','Integraciones','Agentes','Chat','OK Abito','Teléfono Android','Atajos','Privacidad']);
-  // abito-pausa S1-S2 (human: «Visibles en gris y apagadas»): everything but Chat, Agentes, General, Atajos and Privacidad is paused —
-  // grey, disabled, labelled «En pausa · próxima versión», and never opened (not by click, hub-page, abito:hub-select or initialPage)
+  // 0.1.2 (human: «vale todo lo que este en pausa se puede ocultar?» → yes; supersedes 26-oct «Visibles en gris y apagadas»):
+  // only Chat, Agentes, General, Atajos and Privacidad are in the menu; every paused page is HIDDEN and never opened
+  // (not by click, hub-page, abito:hub-select or initialPage: those land on General)
   const ACTIVE = ['general', 'agents', 'chat', 'shortcuts', 'privacy'];
   const PAUSED = [...FLOW_PAGES, ...NOTCH_PAGES].map(p => p.id).filter(id => !ACTIVE.includes(id));
+  assert.deepEqual(items.map(e => e.children[1].textContent), ['General','Agentes','Chat','Atajos','Privacidad'], 'paused pages are not in the menu');
+  assert.deepEqual(items.map(e => e.attrs?.['data-page']), ['general','agents','chat','shortcuts','privacy'], 'each entry names its page');
+  assert(!all(host).some(e => e.className === 'hub-paused' || (e.className || '').split(' ').includes('paused')), 'no grey «En pausa» rows');
   const { PAUSED_PAGES } = await import(pathToFileURL(path.join(base, 'shell.js')));
-  assert.deepEqual([...PAUSED_PAGES].sort(), [...PAUSED].sort());
+  assert.deepEqual([...PAUSED_PAGES].sort(), [...PAUSED].sort(), 'the single source of truth is unchanged');
   assert.deepEqual(pages, ['general'], 'the window opens on General, never on a paused page');
-  const byId = id => items[[...FLOW_PAGES, ...NOTCH_PAGES].findIndex(p => p.id === id)];
-  for (const id of PAUSED) {
-    const b = byId(id);
-    assert.equal(b.disabled, true, id); assert(b.className.split(' ').includes('paused'), id);
-    assert.equal(b.attrs?.['aria-disabled'], 'true', id);
-    assert.match(b.attrs?.title || '', /^En pausa · próxima versión$/, id);
-    assert(b.children.some(c => c.className === 'hub-paused' && c.textContent === 'En pausa'), id);
-  }
-  for (const id of ACTIVE) assert.notEqual(byId(id).disabled, true, id);
   for (const item of items) { item.fire('click'); await Promise.resolve(); }
-  assert.deepEqual(pages.slice(1), [...FLOW_PAGES, ...NOTCH_PAGES].map(p => p.id).filter(id => ACTIVE.includes(id)), 'a click on a paused item opens nothing');
-  const before = pages.length;
-  events['hub-page']({ payload: 'dictation' }); events['hub-page']({ payload: 'settings' }); events['hub-page']({ payload: 'voice' }); await Promise.resolve();
-  assert.equal(pages.length, before, 'hub-page cannot open a paused page');
+  assert.deepEqual(pages.slice(1), ACTIVE, 'every entry opens its page');
+  events['hub-page']({ payload: 'dictation' }); await Promise.resolve(); await Promise.resolve();
+  assert.equal(pages.at(-1), 'general', 'hub-page to a paused page lands on General, not a blank');
+  events['hub-page']({ payload: 'chat' }); await Promise.resolve();
+  events['hub-page']({ payload: 'settings' }); await Promise.resolve(); await Promise.resolve();
+  assert.equal(pages.at(-1), 'general', 'the legacy settings alias (flowsettings, paused) lands on General');
+  events['hub-page']({ payload: 'chat' }); await Promise.resolve();
   events['hub-page']({ payload: 'future-page' }); await Promise.resolve();
+  assert.equal(pages.at(-1), 'chat', 'an unknown id never moves the window');
+  events['hub-page']({ payload: 'privacy' }); await Promise.resolve();
   assert.equal(pages.at(-1), 'privacy');
   const hostB = new Element('div'), pagesB = [];
   await startHub(hostB, { version: 'test', initialPage: 'voice', flowPages: {}, renderNotch: async p => { pagesB.push(p); } });
   assert.deepEqual(pagesB, ['general'], 'a paused initialPage falls back to General');
   const pausedCss = fs.readFileSync(path.join(base, 'abito.css'), 'utf8');
-  assert.match(pausedCss, /\.hub-item\.paused\s*\{[^}]*opacity:\s*0?\.4\d*;[^}]*cursor:\s*not-allowed/, 'paused items are grey and not clickable');
-  assert.match(pausedCss, /\.hub-paused\s*\{[^}]*margin-left:\s*auto/, 'the «En pausa» tag sits at the end of the row');
-  assert.deepEqual(all(host).filter(e => e.className === 'hub-group').map(e => e.textContent), ['Flow', 'Notch']);
+  assert(!/\.hub-item\.paused|\.hub-paused/.test(pausedCss), 'the grey paused styles are gone');
+  assert.deepEqual(all(host).filter(e => e.className === 'hub-group').map(e => e.textContent), ['Notch'], 'a group with no active page has no header');
   const status = all(host).find(e => e.className === 'hub-status');
+  // 0.1.2: dictation is paused, so its status line is hidden from the sidebar (the line itself still tracks the real status)
+  assert.equal(status.hidden, true, 'the paused dictation status line is not shown');
+  assert.match(pausedCss, /\.hub-status\[hidden\]\s*\{[^}]*display:\s*none/, 'hidden really hides it (hub.css gives .hub-status its own display)');
   assert(['Comprobando el dictado…', 'Dictado desactivado'].includes(status.children[1].textContent), 'until the real status lands the line says it is checking, never a made-up «off»');
   // the window no longer waits for the dictation status (#503): the real answer repaints the same line
   for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));

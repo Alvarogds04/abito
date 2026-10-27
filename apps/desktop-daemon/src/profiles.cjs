@@ -32,6 +32,12 @@ const MAX_PROFILES = 64;
 const isStrictProfileId = (value) => typeof value === "string" && STRICT_ID.test(value);
 const fail = (message) => new Error(message);
 
+/**
+ * HU-041: custom-provider accounts hold configuration only. Until the guarded Pi transport
+ * extension (T6a-2) is installed by activation, no profile may reference one and none can be activated.
+ */
+const CUSTOM_INERT = "Account is not available for inference yet";
+
 function profileDto(p) {
 	return {
 		id: p.id,
@@ -162,6 +168,7 @@ class ProfileStore {
 		const account = this.options.accounts().get(accountId);
 		if (!account) throw fail("Unknown account");
 		if (provider !== account.provider) throw fail("Provider does not match the account");
+		if (account.custom === true) throw fail(CUSTOM_INERT);
 		return this.mutate(async () => {
 			const state = this.load();
 			const next = { id, label: label.trim(), role, accountId, provider, modelId, thinkingLevel };
@@ -282,6 +289,7 @@ class ProfileStore {
 		const account = this.options.accounts().get(profile.accountId);
 		if (!account) throw fail("Unknown account");
 		if (account.provider !== profile.provider) throw fail("Provider does not match the account");
+		if (account.custom === true) throw fail(CUSTOM_INERT);
 		if (account.configured !== true) throw fail("Account is not signed in");
 		if (await this.isBusy()) throw fail("Engine busy: finish or abort the current turn first");
 

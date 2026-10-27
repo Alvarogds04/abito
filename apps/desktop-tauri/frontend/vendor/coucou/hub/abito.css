@@ -145,6 +145,8 @@ section.abito-card > h2 { gap: 8px; }
 .voice-advanced > summary { cursor: pointer; font: 600 13px var(--font); padding: 8px 0; }
 
 section.abito-card > [hidden] { display: none !important; }
+/* abito-pausa 0.1.2: dictation is paused, so its sidebar status line is hidden (hub.css gives .hub-status its own display) */
+.hub-status[hidden] { display: none !important; }
 /* Indeterminate: one install has no percentage, so a bar slides until it finishes. */
 .hub-progress.indeterminate > i {
   width: 40%;
@@ -165,9 +167,3 @@ section.abito-card > [hidden] { display: none !important; }
   align-items: center;
   gap: 8px;
 }
-
-/* abito-pausa S1-S2: features paused for this version stay in the menu, grey and not clickable, with a small «En pausa» tag */
-.hub-item.paused { opacity: 0.42; cursor: not-allowed; }
-.hub-item.paused:hover { background: transparent; }
-.hub-paused { margin-left: auto; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; font: 500 10.5px var(--font); white-space: nowrap; }
-.hub-item.paused > span:not(.hub-paused) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

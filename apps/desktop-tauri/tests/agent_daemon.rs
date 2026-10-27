@@ -374,9 +374,11 @@ fn a_daemon_that_does_not_know_agents_list_ends_the_wait_with_a_readable_error()
         v["agents"].is_array() || v["last_error"]["n"].as_u64().unwrap_or(0) > n0
     });
     if after["agents"].is_array() {
-        // an engine that implements it: the closed view, every entry from the allowlist
+        // an engine that implements it: the closed view, every entry from the allowlist. HU-015 (human: «Pi: instalador con
+        // un clic ya») added Pi's own extension row; from a source checkout it reads `error` because the installer refuses
+        // the group-writable payload (packaged files are 0644), which is the intended trust rule, not a fault of this route.
         for a in after["agents"].as_array().unwrap() {
-            assert!(["claude-code", "codex", "copilot-cli", "opencode", "recap", "statusline"].contains(&a["id"].as_str().unwrap()), "{a}");
+            assert!(["claude-code", "codex", "copilot-cli", "opencode", "recap", "statusline", "pi"].contains(&a["id"].as_str().unwrap()), "{a}");
         }
     } else {
         let code = after["last_error"]["code"].as_str().unwrap();

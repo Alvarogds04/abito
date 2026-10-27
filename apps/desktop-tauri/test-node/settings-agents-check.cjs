@@ -45,7 +45,7 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   assert(hookList, 'only host-reported agents belong in the expanded upstream list');
   assert.deepEqual(hookList.children.map(e=>e.attrs.id),['agent-row-pi','agent-row-hermes','agent-row-claude-code','agent-row-codex','agent-row-gemini-cli','agent-row-copilot-cli','agent-row-muse','agent-row-antigravity','agent-row-cursor','agent-row-opencode','agent-row-amp'], '0.2.1 S2: Pi, Hermes, Claude Code, Codex, Gemini CLI, then the not-in-this-version rows');
   // 0.2.1 S2: the other agents are visible but disabled, say «No disponible en esta versión» and offer NO install button
-  for(const id of ['copilot-cli','muse','antigravity','cursor','opencode','amp']) {
+  for(const id of ['muse','antigravity','cursor','amp']) {
     const row=all(ui).find(e=>e.attrs.id===`agent-row-${id}`);
     assert(text(row).includes('No disponible en esta versión'),id);
     assert.equal(all(row).filter(e=>e.tagName==='button'&&!String(e.className).includes('switch')).length,0,`${id}: no install button`);
@@ -112,6 +112,34 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   assert(text(all(ui).find(e=>e.attrs.id==='agent-row-claude-code')).includes('No disponible todavía'),'an unreported agent says so');
   assert(!text(ui.children[0]).includes('No disponible todavía No disponible todavía'));
   ui.dispose();
+  // HU-015: real rendered rows, daemon down, independent of Pi and engine pushes.
+  {
+    const previous = state;
+    state = { connection:'no_daemon', last_error:{code:'pi_missing'}, agentsRuntime:'ok', directHooks:[], directAgents:[
+      {id:'claude-code',state:'not_connected',plan_hash:hash,summary:'Add managed hooks',reviewable:true},
+      {id:'codex',state:'connected',backup:true},
+      {id:'copilot-cli',state:'not_connected',plan_hash:hash2,summary:'Add managed hooks',reviewable:true},
+      {id:'opencode',state:'not_connected',plan_hash:hash3,summary:'Add managed hooks',reviewable:true},
+    ] };
+    const P = { normalize:() => ({mainPill:'clock',declaredPills:['integration_claude','agent_codex','agent_copilot','agent_opencode']}), toggle:() => true };
+    ui=await renderAgentSettings({...opts,P});await ui.settled();
+    for (const id of ['claude-code','copilot-cli','opencode']) {
+      const row=all(ui).find(e=>e.attrs.id===`agent-row-${id}`);
+      assert.equal(button(row,'Instalar…').disabled,false,`${id}: install without Pi/daemon`);
+      const sw=all(row).find(e=>String(e.className).includes('switch'));
+      assert.equal(sw.disabled,true,`${id}: absent hooks disable its own switch`);
+      assert.equal(sw.attrs['aria-pressed'],'false');
+    }
+    const codex=all(ui).find(e=>e.attrs.id==='agent-row-codex');
+    assert.equal(all(codex).find(e=>String(e.className).includes('switch')).disabled,false);
+    assert(!text(ui).includes('Falta Pi'));
+    calls.length=0;
+    button(all(ui).find(e=>e.attrs.id==='agent-row-copilot-cli'),'Instalar…').fire('click');await ui.settled();
+    assert.deepEqual(calls,[['agent_action',{action:'agent_connect',agentId:'copilot-cli',plan_hash:hash2}]]);
+    events['agent:state']({payload:{connection:'no_daemon',last_error:{code:'pi_missing'},agents:[]}});
+    assert.equal(button(all(ui).find(e=>e.attrs.id==='agent-row-opencode'),'Instalar…').disabled,false);
+    ui.dispose();state=previous;
+  }
   ui=await renderChatSettings(opts);await ui.settled();
   assert.deepEqual(heads().map(h=>h.replace(/ [▾▸]$/,'').replace(/ [✓✗·].*$/,'').replace(/\s*ⓘ.*$/,'')),['Claude','Google AI','OpenAI','OpenRouter','NaN','OpenCode Go','Modelos locales','Contexto de la ventana activa']); // #503 S21: one card per provider
   assert.deepEqual(calls.filter(([c,p])=>c==='secret_action'&&p.action==='present').map(([,p])=>p.key),['anthropic-api-key','google-api-key','openai-api-key','openrouter-api-key','nan-api-key','opencode-go-api-key']);
@@ -177,6 +205,15 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   const urls=all(local).filter(e=>e.tagName==='input'&&e.type==='text');assert.equal(urls.length,3);
   urls[2].value='http://example.com';urls[2].fire('input');assert(text(local).includes('sin cifrar'));
   anthKey.value='discard-on-navigation';ui.dispose();assert.equal(anthKey.value,'');assert.equal(Object.keys(events).length,0);
+  state = {agentsRuntime:'ok', directAgents:[{id:'claude-code', state:'unavailable',detail:'unsupported_platform',backup:false}],directHooks:[]};
+  calls.length = 0;
+  ui = await renderAgentSettings(opts); await ui.settled();
+  const unavailable = all(ui).find(e => e.attrs.id === 'agent-row-claude-code');
+  assert(text(unavailable).includes('No disponible en esta plataforma todavía'));
+  assert(text(unavailable).includes('La instalación automática todavía no está disponible en Windows.'));
+  assert(text(unavailable).includes('README · https://github.com/Alvarogds04/abito#windows-limitations'));
+  assert(!calls.some(([cmd]) => cmd === 'open_chat_url'), 'settings cannot invoke the main-window-only Linux opener');
+  ui.dispose();
   for(const name of ['agents.ts','chat.ts']) {const src=fs.readFileSync(path.join(base,name),'utf8');assert(!/innerHTML|setAttribute\(['"]style/.test(src));}
   console.log('PASS settings-agents: exact section order, closed hook review, four key payloads, trust, lifecycle and disabled missing backends');
 })().catch(e=>{console.error(e);process.exitCode=1;});

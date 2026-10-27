@@ -31,7 +31,7 @@ function inputs() {
     else hash.update(path.relative(crate, file)).update(fs.readFileSync(file));
   }
   for (const name of ['src', 'frontend', 'packaging/validate', 'packaging/validate.cjs', 'packaging/preview.cjs', 'capabilities', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'tauri.conf.json']) visit(path.join(crate, name));
-  for (const [dir, files] of [['desktop-daemon', L.DAEMON_FILES], ['desktop-harness', L.HARNESS_FILES]]) for (const file of files) visit(path.join(crate, '..', dir, file));
+  for (const [dir, files] of [['desktop-daemon', L.DAEMON_FILES], ['desktop-harness', L.HARNESS_FILES], ['desktop-pi', L.PI_FILES]]) for (const file of files) visit(path.join(crate, '..', dir, file));
   return hash.digest('hex');
 }
 async function main(args = process.argv.slice(2)) {
@@ -148,7 +148,7 @@ async function main(args = process.argv.slice(2)) {
     // current_exe; never let it see an installed daemon or the user's HOME.
     const candidate = path.join(out, 'abito-island');
     fs.copyFileSync(binary, candidate); fs.chmodSync(candidate, 0o700);
-    for (const [dir, files] of [['desktop-daemon', L.DAEMON_FILES], ['desktop-harness', L.HARNESS_FILES]]) {
+    for (const [dir, files] of [['desktop-daemon', L.DAEMON_FILES], ['desktop-harness', L.HARNESS_FILES], ['desktop-pi', L.PI_FILES]]) {
       for (const file of files) {
         const dest = path.join(out, dir, file);
         require('./validate/layout.cjs').copyRuntimeFile(path.join(crate, '..', dir, file), dest);

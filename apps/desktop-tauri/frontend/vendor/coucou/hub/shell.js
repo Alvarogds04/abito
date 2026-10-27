@@ -65,6 +65,7 @@ async function startHub(root, opts) {
   });
   const items = /* @__PURE__ */ new Map();
   const statusLine = h("div", { class: "hub-status" });
+  statusLine.hidden = isPaused("dictation");
   const scroll = h("div", { class: "hub-scroll" });
   let rendering = 0;
   let saving = Promise.resolve();
@@ -127,7 +128,7 @@ async function startHub(root, opts) {
     statusLine.append(h("i", { class: "dot", style: `background:${color}` }), h("span", { text }));
   }
   async function show(page) {
-    if (isPaused(page)) return;
+    if (isPaused(page)) page = "general";
     const def = ALL.find((p) => p.id === page) ?? NOTCH_PAGES[0];
     ctx.onLeave?.();
     ctx.onLeave = void 0;
@@ -178,17 +179,12 @@ async function startHub(root, opts) {
   side.append(h("div", { class: "hub-brand" }, logo, h("span", { text: "Abito" })));
   liveMochi(logo);
   const group = (title, pages) => {
+    const shown = pages.filter((p) => !isPaused(p.id));
+    if (!shown.length) return;
     side.append(h("div", { class: "hub-group", text: title }));
-    for (const p of pages) {
-      const paused = isPaused(p.id);
-      const b = h("button", { class: paused ? "hub-item paused" : "hub-item", onclick: () => void show(p.id) });
+    for (const p of shown) {
+      const b = h("button", { class: "hub-item", "data-page": p.id, onclick: () => void show(p.id) });
       b.append(icon(p.icon), h("span", { text: p.title() }));
-      if (paused) {
-        b.disabled = true;
-        b.setAttribute("aria-disabled", "true");
-        b.setAttribute("title", PAUSED_LABEL);
-        b.append(h("span", { class: "hub-paused", text: "En pausa" }));
-      }
       items.set(p.id, b);
       side.append(b);
     }
