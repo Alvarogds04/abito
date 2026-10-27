@@ -50,7 +50,9 @@ function Remove-OwnedAccount {
     if ($account) {
         # Description is written AT account creation. An intent record alone
         # never grants permission to remove a pre-existing/unrelated account.
-        $description = 'Abito CI ' + $record.run + ' ' + $record.nonce
+        # Account name and intent bind the run. The 41-character description
+        # binds ownership without exceeding New-LocalUser's 48-character limit.
+        $description = 'Abito CI ' + $record.nonce
         if ($account.Description -cne $description) {
             throw 'Refusing cleanup of an account not created by this script.'
         }
@@ -104,7 +106,7 @@ if ($mode -eq 'setup') {
         $password = 'Aa1!' + [Convert]::ToBase64String($random)
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
         $password = $null
-        $description = 'Abito CI ' + $record.run + ' ' + $record.nonce
+        $description = 'Abito CI ' + $record.nonce
         $setupStage = 'create-account'
         $account = New-LocalUser -Name $name -Password $secure `
             -Description $description -PasswordNeverExpires -AccountNeverExpires
@@ -137,7 +139,7 @@ if ($args.Count -lt 4 -or $args[2] -ne '--') {
 $record = Read-Intent
 $account = Get-LocalUser -Name $name -ErrorAction Stop
 if ($null -eq $record -or
-    $account.Description -cne ('Abito CI ' + $record.run + ' ' + $record.nonce)) {
+    $account.Description -cne ('Abito CI ' + $record.nonce)) {
     throw 'Run requires the account owned by this script.'
 }
 $blob = Get-Item -LiteralPath $credPath -Force
