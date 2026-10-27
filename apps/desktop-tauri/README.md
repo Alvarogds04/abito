@@ -220,6 +220,22 @@ Un fallo real del producto permanece rojo con PNG y motivo; no se rebaja a
 «no verificable» para entregar la preview. Por ejemplo, una pill declarada que no
 aparece pese a recibir datos del servicio falso bloquea la puerta.
 
+## HU-015 — Ajustes → Agentes without the engine (daemon-free hook route)
+
+Each agent row (Claude Code, Codex, OpenCode, Copilot CLI, recap, status-line relay) depends only on **its own hooks**.
+Pi and the daemon are not involved: with no Pi (or no daemon) Claude Code and Codex are listed, installable and removable.
+
+- `agent_action` takes `agents_list`, `hooks_preview`, `agent_connect`, `agent_disconnect` in `src/agents_direct.rs`
+  (the page never asks the daemon for these; one owner, no daemon/direct race). Validation is the existing closed grammar
+  (`agentclient::parse_ui_command`: allowlisted id, 64-hex plan hash).
+- Rust runs the bundled `desktop-daemon/src/agents-direct.cjs` with node (`daemonhost::discover("node")`; script beside the
+  installed daemon; never PATH/CWD/page paths; no shell; cleared environment). It drives the same `AgentsManager`
+  (preview → human confirm → plan-hash check → backup → apply → audit) and prints two closed frames, folded by
+  `agentclient::fold_direct` into `directAgents` / `directHooks` / `agentsRuntime`.
+- Bounds: 60 s, 512 KiB of stdout, whole process tree killed on timeout, oversize, or a descendant keeping stdout open.
+- Missing Node.js reads «Falta Node.js» on each row (hooks are Node scripts); a failed run reads «No se pudo». Never «Falta Pi»
+  on this screen. The chat/engine diagnostics (`connectionView`) are unchanged.
+
 ## Run
 
 ```sh

@@ -738,8 +738,8 @@ test('accounts: the connected list shows only signed-in accounts, with «Salir»
 
 // ---- Conectores: agents (one click, no terminal) + services ----------------------------------------
 const agentsState = (list, extra = {}) => state({ agents: list, ...extra });
-test('agents: three known agents, names from OUR table, never from the engine payload', () => {
-  assert.deepEqual(S.AGENT_IDS, ['claude-code', 'codex', 'copilot-cli', 'opencode', 'recap', 'statusline']);
+test('agents: known agents, names from OUR table, never from the engine payload', () => {
+  assert.deepEqual(S.AGENT_IDS, ['pi', 'claude-code', 'codex', 'copilot-cli', 'opencode', 'recap', 'statusline']);
   const v = S.agentsView(agentsState([{ id: 'claude-code', name: '<b>pwn</b>', state: 'not_connected', backup: false, detail: null }]));
   assert.equal(v.kind, 'ready');
   assert.equal(v.rows[0].name, 'Claude Code');
@@ -800,8 +800,8 @@ test('agents: all SIX clients render, in our closed order, with names derived fr
   assert.equal(v.kind, 'ready');
   assert.deepEqual(v.rows.map(r => r.id), ['claude-code', 'codex', 'gemini-cli', 'copilot-cli', 'opencode', 'amp', 'cursor']);
   assert.deepEqual(v.rows.map(r => r.name), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI', 'OpenCode', 'Amp', 'Cursor']);
-  // the connect allowlist is untouched: the three extra rows never offer a button
-  assert.deepEqual(S.AGENT_IDS, ['claude-code', 'codex', 'copilot-cli', 'opencode', 'recap', 'statusline']);
+  // Pi adds an installable row; unsupported hook-only rows still have no button.
+  assert.deepEqual(S.AGENT_IDS, ['pi', 'claude-code', 'codex', 'copilot-cli', 'opencode', 'recap', 'statusline']);
   const extras = v.rows.filter(r => !S.AGENT_IDS.includes(r.id));
   assert.ok(extras.every(r => r.primary === null && r.secondary === null), 'state-only rows, no dead buttons');
 });
@@ -986,6 +986,24 @@ test('Copilot CLI and OpenCode are connectable rows with their own Spanish plan 
   assert.equal(by('copilot-cli').summary, 'Agrega los hooks de Abito (permissionRequest, sessionEnd) a ~/.copilot/hooks/abito-island.json. Antes se hace un respaldo.');
   assert.deepEqual(by('opencode').primary.command, { action: 'agent_connect', agentId: 'opencode', plan_hash: 'd'.repeat(64) });
   assert.equal(by('opencode').summary, 'Agrega el plugin de Abito a ~/.config/opencode/plugins/abito-island.js. Antes se hace un respaldo.');
+});
+
+test('Pi row depends on extension installation and always names the default directory limitation', () => {
+  const view = S.agentsView(agentsState([{id:'pi',state:'connected',backup:false,detail:null}]));
+  const r = view.rows.find(row => row.id === 'pi');
+  assert(r);
+  assert.equal(r.word, 'Instalado en carpeta predeterminada');
+  assert.match(r.note, /PI_CODING_AGENT_DIR/);
+  assert.deepEqual(r.secondary.command,{action:'agent_disconnect',agentId:'pi'});
+});
+
+test('Windows unavailable installer has an explicit state and help, never an action', () => {
+  const r = rowOf(plan({state:'unavailable', detail:'unsupported_platform', plan_hash:null, summary:null}));
+  assert.equal(r.word, 'No disponible en esta plataforma todavía');
+  assert.equal(r.note, 'La instalación automática todavía no está disponible en Windows.');
+  assert.equal(r.primary, null);
+  assert.equal(r.secondary, null);
+  assert.equal(r.helpUrl, 'https://github.com/Alvarogds04/abito#windows-limitations');
 });
 
 test('plan: the sentence is OURS — an English template becomes Spanish, an unknown one is never shown as engine text', () => {
@@ -1707,4 +1725,67 @@ test('R16 cancel plan: binds to the flow this row started; no flow yet means a l
   assert.deepEqual(S.cancelPlan({ providerId: 'openai', phase: 'active', sawFlow: true, flowId: '' }), { kind: 'local' });
   assert.deepEqual(S.cancelPlan({ providerId: 'openai', phase: 'active', sawFlow: true, flowId: 'f-7' }), { kind: 'send', flowId: 'f-7' });
   assert.deepEqual(S.cancelPlan(null), { kind: 'local' });
+});
+
+// ---- HU-015: Agentes rows come from the daemon-free host route; the chat engine plays no part ----------------
+const HU15_HASH = 'a'.repeat(64);
+const HU15_SUMMARY = 'Adds the Abito hooks (PermissionRequest, Stop) to ~/.claude/settings.json. A backup is made first.';
+const direct = (agents, extra = {}) => ({ agentsRuntime: 'ok', directAgents: agents, directHooks: [], ...extra });
+test('HU-015 S2: engine down, Pi missing — Claude Code and Codex are still installable, and nothing says «Falta Pi»', () => {
+  const st = { connection: 'no_daemon', last_error: { code: 'pi_missing', n: 1 }, ...direct([
+    { id: 'claude-code', state: 'not_connected', backup: false, detail: null, plan_hash: HU15_HASH, summary: HU15_SUMMARY, reviewable: true },
+    { id: 'codex', state: 'not_connected', backup: false, detail: null, plan_hash: 'b'.repeat(64), summary: HU15_SUMMARY, reviewable: true }]) };
+  const v = S.agentsView(st);
+  assert.equal(v.kind, 'ready', 'rows render although the engine is down');
+  const by = Object.fromEntries(v.rows.map(r => [r.id, r]));
+  assert.equal(by['claude-code'].primary.label, 'Agregar hooks');
+  assert.deepEqual(by['claude-code'].primary.command, { action: 'agent_connect', agentId: 'claude-code', plan_hash: HU15_HASH });
+  assert.equal(by['codex'].primary.label, 'Agregar hooks');
+  assert.ok(!JSON.stringify(v).includes('Falta Pi') && !JSON.stringify(v).includes('Sin motor'));
+});
+test('HU-015 S1/S3: each row depends only on its own hooks; an uninstalled agent reads disabled with the install action', () => {
+  const v = S.agentsView(direct([
+    { id: 'claude-code', state: 'connected', backup: true, detail: null },
+    { id: 'codex', state: 'not_connected', backup: false, detail: null, plan_hash: HU15_HASH, summary: HU15_SUMMARY, reviewable: true },
+    { id: 'opencode', state: 'error', backup: false, detail: 'config_invalid' }]));
+  const by = Object.fromEntries(v.rows.map(r => [r.id, r]));
+  assert.equal(by['claude-code'].word, 'Conectado');
+  assert.equal(by['claude-code'].secondary.label, 'Desconectar');
+  assert.equal(by['codex'].word, 'Sin conectar');
+  assert.equal(by['codex'].tone, 'faint');
+  assert.ok(by['codex'].primary && by['codex'].primary.label === 'Agregar hooks');
+  assert.equal(by['opencode'].state, 'error');
+  assert.equal(by['claude-code'].primary, null, 'a broken neighbour never changes a connected row');
+});
+test('HU-015: Pi missing never alters another row, whatever the engine connection says', () => {
+  const list = [{ id: 'claude-code', state: 'connected', backup: false, detail: null }];
+  const base = JSON.stringify(S.agentsView(direct(list)));
+  for (const connection of ['connected', 'connecting', 'no_daemon', 'lost', 'refused', 'bad_session'])
+    for (const last_error of [null, { code: 'pi_missing', n: 1 }, { code: 'node_missing', n: 2 }])
+      assert.equal(JSON.stringify(S.agentsView({ ...direct(list), connection, last_error })), base, `${connection}/${last_error && last_error.code}`);
+});
+test('HU-015: missing Node.js is said per row (the only runtime message), never as Pi or as a whole-screen engine error', () => {
+  const v = S.agentsView({ connection: 'no_daemon', agentsRuntime: 'node_missing', directAgents: [], directHooks: [] });
+  assert.equal(v.kind, 'ready');
+  assert.ok(v.rows.length >= 6 && v.rows.every(r => r.word === 'Falta Node.js' && !r.primary && !r.secondary));
+  assert.ok(!/Falta Pi/.test(JSON.stringify(v))); // Pi's own NAME is now a valid independent row.
+  const failed = S.agentsView({ agentsRuntime: 'failed' });
+  assert.ok(failed.rows.every(r => r.word === 'No se pudo'));
+});
+test('HU-015: the existing engine path (no direct answer yet) is unchanged — the chat diagnostics still say «Falta Pi»', () => {
+  assert.equal(S.agentsView(state({ connection: 'no_daemon', agents: null })).kind, 'no_engine');
+  const missing = S.connectionView({ connection: 'no_daemon', last_error: { code: 'pi_missing', n: 1 } });
+  assert.equal(missing.word, 'Falta Pi');
+});
+test('HU-015: a direct retry without a shown plan only refreshes the preview', () => {
+  const row = S.agentsView(direct([{ id: 'codex', state: 'error', detail: 'install_failed' }])).rows.find(r => r.id === 'codex');
+  assert.deepEqual(row.primary.command, { action: 'agents_list' });
+});
+test('HU-015: directOutcome reports only the host answer for THAT agent', () => {
+  assert.equal(S.directOutcome(direct([{ id: 'codex', state: 'connected' }]), 'codex', 'ok').ok, true);
+  assert.equal(S.directOutcome(direct([{ id: 'codex', state: 'error', detail: 'plan_changed' }]), 'codex', 'ok').ok, false);
+  assert.equal(S.directOutcome(direct([{ id: 'claude-code', state: 'connected' }]), 'codex', 'ok').ok, false);
+  assert.equal(S.directOutcome({ agentsRuntime: 'failed' }, 'codex', 'ok').ok, false);
+  assert.match(S.directOutcome({ agentsRuntime: 'node_missing' }, 'codex', 'ok').say, /Node\.js/);
+  assert.equal(S.directOutcome(null, 'codex', 'ok').ok, false);
 });

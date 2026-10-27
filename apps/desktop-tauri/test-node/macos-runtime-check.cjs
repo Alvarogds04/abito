@@ -35,6 +35,7 @@ try {
   const expected = Object.fromEntries([
     ...L.DAEMON_FILES.map(f => [`../desktop-daemon/${f}`, `desktop-daemon/${f}`]),
     ...L.HARNESS_FILES.map(f => [`../desktop-harness/${f}`, `desktop-harness/${f}`]),
+    ...L.PI_FILES.map(f => [`../desktop-pi/${f}`, `desktop-pi/${f}`]),
   ]);
   assert.deepEqual(config.bundle.resources, expected);
   assert.equal(config.bundle.active, true);

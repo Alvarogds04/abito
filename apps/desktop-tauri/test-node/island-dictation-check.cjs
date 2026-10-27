@@ -49,8 +49,11 @@ test('dots: the voice while listening or locked, a slow wave while thinking, not
 });
 
 test('the pill exists only with dictation on: status.prefs.enabled === true; the verbs are the closed ones', () => {
-  assert.equal(D.enabledOf({ prefs: { enabled: true } }), true);
-  for (const bad of [null, [], {}, { prefs: {} }, { prefs: { enabled: 'yes' } }, { prefs: { enabled: false } }, { prefs: [] }]) assert.equal(D.enabledOf(bad), false, JSON.stringify(bad));
+  // abito-pausa 0.1.2: while dictation is paused the pill is hidden even with the stored preference on (the preference is untouched)
+  assert.equal(require(path.join(frontend, 'paused.js')).paused('dictation'), true, 'this version pauses dictation');
+  assert.equal(D.enabledOf({ prefs: { enabled: true } }), false, 'paused: no dictation pill, whatever the stored preference says');
+  assert.equal(D.enabledIgnoringPause({ prefs: { enabled: true } }), true, 'the previous rule survives for the next version');
+  for (const bad of [null, [], {}, { prefs: {} }, { prefs: { enabled: 'yes' } }, { prefs: { enabled: false } }, { prefs: [] }]) assert.equal(D.enabledIgnoringPause(bad), false, JSON.stringify(bad));
   assert.deepEqual(D.VERBS, { handsFree: 'hands_free', finish: 'finish', cancel: 'cancel', status: 'status' });
   for (const v of Object.values(D.VERBS)) assert.ok(rust.includes(`"${v}"`), v + ' is a verb of dictation_action');
 });

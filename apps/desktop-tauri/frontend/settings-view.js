@@ -513,7 +513,7 @@
   // ---- agents: connect Claude Code / Codex / OpenCode with ONE click (no terminal) -------------------------------------
   // The state comes from the engine's `agents` frame. Names and sentences are OURS: nothing the engine sends is
   // shown as text, only chosen from these closed tables.
-  const AGENT_NAMES = Object.freeze({ 'claude-code': 'Claude Code', codex: 'Codex', 'copilot-cli': 'Copilot CLI', opencode: 'OpenCode', recap: 'Resumen semanal', statusline: 'Uso del plan (relay)' });
+  const AGENT_NAMES = Object.freeze({ pi: 'Pi', 'claude-code': 'Claude Code', codex: 'Codex', 'copilot-cli': 'Copilot CLI', opencode: 'OpenCode', recap: 'Resumen semanal', statusline: 'Uso del plan (relay)' });
   const AGENT_IDS = Object.freeze(Object.keys(AGENT_NAMES));
   // #436 T6.5 (D7): all SEVEN hook clients the daemon's `hooks` frame may name. The three extra
   // ones are DISPLAY-ONLY (no install/remove exists for them; a dead button would be a lie),
@@ -556,7 +556,7 @@
   // the hooks frame fills the rest with honest state, and what nobody knows stays unknown.
   const mergeSix = (rows, hooks) => {
     const byId = new Map(rows.map(r => [r.id, r]));
-    const extra = rows.filter(r => r.id === 'recap' || r.id === 'statusline'); // L32e: engine-only integrations, after the six
+    const extra = rows.filter(r => r.id === 'recap' || r.id === 'statusline' || r.id === 'pi'); // L32e: engine-only integrations, after the six
     return [...HOOK_IDS, ...extra.map(r => r.id)].map(id => byId.get(id) || (hooks && hooks.get(id) ? hookRowOf(hooks.get(id)) : unknownRow(id)));
   };
   const AGENT_STATES = Object.freeze({
@@ -579,6 +579,8 @@
   // L32e: the two notify-only integrations have their own closed summaries (daemon agents.cjs); only these exact
   // sentences (optionally followed by the one large-change line) are shown, in Spanish. Anything else falls back.
   const NOTIFY_PLANS = Object.freeze({
+    'Installs the Abito Pi extension in the default ~/.pi/agent directory. A backup is made first.':
+      'Instala la extensión de Abito en ~/.pi/agent. Antes se hace un respaldo. Reiniciá Pi para cargarla.',
     'Adds notify-only hooks that only count activity for the weekly recap. No command text, path or prompt is kept. A backup is made first.':
       'Agrega ganchos que solo cuentan tu actividad para el resumen semanal; no guardan comandos, rutas ni prompts. Antes se hace un respaldo.',
     'Adds the status-line relay in ~/.claude/settings.json. An existing status line keeps working (the relay prints it). A backup is made first.':
@@ -602,8 +604,27 @@
   const LOGOUT_WORD = 'Cerrar sesión'; // gentle-dot's «Sign out»
   const errorSeqOf = st => (st && st.last_error && Number.isInteger(st.last_error.n) ? st.last_error.n : 0);
   // opts.askedAtError: the engine error counter when `agents_list` was sent; opts.timedOut: the wait ran out.
+  // HU-015: Ajustes → Agentes is read and written through the daemon-free host route, whose answer carries
+  // `agentsRuntime` ('ok' | 'node_missing' | 'failed') + `directAgents` / `directHooks`. The chat engine's connection
+  // (Pi, daemon) plays NO part in these rows: each row's state is its own hooks, never «Falta Pi» / «Sin motor».
+  const directRuntimeRow = (id, word, tone, icon) => displayRow(id, 'unknown', word, icon, tone, '');
+  function directAgentsView(state) {
+    const kind = state.agentsRuntime;
+    if (kind === 'node_missing' || kind === 'failed') {
+      const [word, icon, tone] = kind === 'node_missing' ? ['Falta Node.js', 'plug-off', 'faint'] : ['No se pudo', 'triangle', 'red'];
+      return { kind: 'ready', rows: [...HOOK_IDS, 'recap', 'statusline', 'pi'].map(id => directRuntimeRow(id, word, tone, icon)) };
+    }
+    const own = { agents: state.directAgents, hooks: state.directHooks };
+    const view = agentsView(Object.assign({ connection: 'connected' }, own, { last_error: null }), {});
+    for (const row of view.rows || []) {
+      if (row.primary?.command?.action === 'agent_connect' && !row.primary.command.plan_hash)
+        row.primary = { label: 'Reintentar', command: { action: 'agents_list' } };
+    }
+    return view;
+  }
   function agentsView(state, opts) {
     const o = opts || {};
+    if (state && typeof state.agentsRuntime === 'string') return directAgentsView(state);
     if (state && state.connection && state.connection !== 'connected' && state.connection !== 'connecting') {
       const cv = connectionView(state);
       if (cv) return { kind: 'no_engine', word: cv.word, icon: cv.icon, tone: cv.tone, aria: cv.aria };
@@ -625,7 +646,9 @@
       if (!a || typeof a !== 'object' || !AGENT_IDS.includes(a.id) || seen.has(a.id)) continue;
       seen.add(a.id);
       const st = Object.prototype.hasOwnProperty.call(AGENT_STATES, a.state) ? a.state : 'error';
-      const [word, icon, tone] = AGENT_STATES[st];
+      const [defaultWord, icon, tone] = AGENT_STATES[st];
+      const platformUnavailable = st === 'unavailable' && a.detail === 'unsupported_platform';
+      const word = platformUnavailable ? 'No disponible en esta plataforma todavía' : a.id === 'pi' && st === 'connected' ? 'Instalado en carpeta predeterminada' : defaultWord;
       const cmd = action => ({ action, agentId: a.id });
       const hash = typeof a.plan_hash === 'string' && PLAN_HASH.test(a.plan_hash) ? a.plan_hash : null;
       const reviewable = a.reviewable !== false;
@@ -645,17 +668,30 @@
         secondary = { label: 'Desconectar', command: cmd('agent_disconnect') };
         if (a.backup === true) note = 'Con respaldo.'; // #436 design: the design's own subtitle
       }
-      if (st === 'unavailable') note = 'No está instalado en esta computadora.';
+      if (st === 'unavailable') note = platformUnavailable ? 'La instalación automática todavía no está disponible en Windows.' : 'No está instalado en esta computadora.';
       if (st === 'error') {
         primary = { label: 'Reintentar', command: hash ? connectCmd() : cmd('agent_connect') };
         note = Object.prototype.hasOwnProperty.call(AGENT_ERRORS, a.detail) ? AGENT_ERRORS[a.detail] : 'No se pudo completar; no se tocó nada.';
       }
+      if (a.id === 'pi' && !platformUnavailable) note += `${note ? ' ' : ''}Solo ~/.pi/agent. Si usás otro PI_CODING_AGENT_DIR, esa sesión no carga esta instalación. Reiniciá Pi después de cambiar los hooks.`;
       const trust = a.trust_review === true;
       if (trust) note = `${note ? note + ' ' : ''}Ahora confiá en los hooks desde /hooks dentro de ${AGENT_NAMES[a.id]}: hasta entonces no se activan.`;
       rows.push({ id: a.id, name: AGENT_NAMES[a.id], state: st, word, icon, tone, primary, secondary, note, summary, reviewable, trust, busy: st === 'working',
+        ...(platformUnavailable ? { helpUrl: 'https://github.com/Alvarogds04/abito#windows-limitations' } : {}),
         aria: `${AGENT_NAMES[a.id]}: ${word}${summary ? '. ' + summary : ''}${note ? '. ' + note : ''}` });
     }
     return { kind: 'ready', rows: mergeSix(rows, hookRows(state)) };
+  }
+
+  // HU-015: what to say after a connect/disconnect that went through the daemon-free route. Only the host's own answer
+  // counts (never the chat engine's connection): a runtime failure, or THAT agent's row in `error`, is a failure.
+  function directOutcome(next, agentId, okSay) {
+    const fail = { ok: false, say: agentActionFailure(agentId) };
+    if (!next || typeof next !== 'object' || next.agentsRuntime === 'failed') return fail;
+    if (next.agentsRuntime === 'node_missing') return { ok: false, say: 'Falta Node.js para cambiar los hooks.' };
+    const row = Array.isArray(next.directAgents) ? next.directAgents.find(a => a && a.id === agentId) : null;
+    if (!row || row.state === 'error' || row.state === 'unavailable') return fail;
+    return { ok: true, say: okSay };
   }
 
   // #503 S20: the sentence for a FAILED ACTION on one agent. It is said once, at the moment the action failed; a standing `error`
@@ -815,7 +851,7 @@
     return '';
   }
 
-  return { PI_SECTIONS, KEY_IDS, keyRows, keyPayload, keyError, ownedAccounts, colorRows, soundGainProblem, gainPercent, autoCloseSegments, isSettingsWindow, settingsWindowView, quickPanelView, displayNameProblem, islandInteractionView, autoCloseProblem, commandOutcome, hotkeySetOutcome, makeDrafts, providerRows, cancelPlan, TABS, tabById, tabAlias, servicesGroupVisible, tabKeyTarget, METHOD_CARDS, providerList, loginPlan, pendingLogin, pendingLoginReady, connectedAccounts, AGENT_IDS, agentsView, agentActionFailure, planSummary, AGENTS_WAIT_MS, CONNECT_WAIT_MS, LOGOUT_WORD, SOUND_DEFAULT: false, connectionView, accountRows, loginMethods, createValidity,
+  return { PI_SECTIONS, KEY_IDS, keyRows, keyPayload, keyError, ownedAccounts, colorRows, soundGainProblem, gainPercent, autoCloseSegments, isSettingsWindow, settingsWindowView, quickPanelView, displayNameProblem, islandInteractionView, autoCloseProblem, commandOutcome, hotkeySetOutcome, makeDrafts, providerRows, cancelPlan, TABS, tabById, tabAlias, servicesGroupVisible, tabKeyTarget, METHOD_CARDS, providerList, loginPlan, pendingLogin, pendingLoginReady, connectedAccounts, AGENT_IDS, agentsView, directOutcome, agentActionFailure, planSummary, AGENTS_WAIT_MS, CONNECT_WAIT_MS, LOGOUT_WORD, SOUND_DEFAULT: false, connectionView, accountRows, loginMethods, createValidity,
     modelsTabView, chosenToggle, chosenModelsPayload,
     maskInput, promptView, replyValid, eventView, safeWebUrl, flowOutcome, connectorsView, soundDefault, generalView, captureCombo,
     maskInput, promptView, replyValid, eventView, safeWebUrl, flowOutcome, connectorsView, soundDefault, generalView, captureCombo,

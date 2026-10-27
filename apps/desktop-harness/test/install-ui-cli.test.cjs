@@ -51,6 +51,25 @@ function runMany(lists, env) {
 }
 const cli = (args, env) => runMany([['install', ...args]], env)[0];
 
+test('Windows UI install refuses before reading settings or creating audit/backup/lock files', t => {
+  const dir = tmp(t);
+  const settings = path.join(dir, 'settings.json');
+  fs.writeFileSync(settings, '{"keep":true}\n');
+  const before = fs.readFileSync(settings);
+  for (const harness of ['claude', 'codex', 'copilot', 'opencode', 'recap', 'statusline']) {
+    for (const extra of [[], ['--apply-plan', 'a'.repeat(64), '--audit-dir', path.join(dir, 'audit')]]) {
+      const args = ['install', harness, '--settings', settings, '--json', ...extra];
+      const script = "Object.defineProperty(process,'platform',{value:'win32'}); process.getuid=undefined; process.argv=[process.execPath,...JSON.parse(process.argv[1])]; require(process.argv[1]);";
+      const result = spawnSync(process.execPath, ['-e', script, JSON.stringify([BIN, ...args])], {encoding:'utf8', timeout:5000});
+      assert.equal(result.status, 77, result.stdout + result.stderr);
+      assert.equal(result.stderr, '');
+      assert.equal(result.stdout, JSON.stringify({schema:'abito-hook-install/1',ok:false,code:'unsupported_platform',message:'Automatic hook installation is not available on this platform yet.'}) + '\n');
+      assert.deepEqual(fs.readdirSync(dir), ['settings.json']);
+      assert.deepEqual(fs.readFileSync(settings), before);
+    }
+  }
+});
+
 function world(t, { harness = 'claude', content = '{\n  "keep": true\n}\n' } = {}) {
   const d = tmp(t);
   const home = path.join(d, 'home'); fs.mkdirSync(path.join(home, harness === 'claude' ? '.claude' : '.codex'), { recursive: true });

@@ -64,6 +64,7 @@ const AGENTS = Object.freeze([
 	// Both answer permissions from the island and notify on session end (apps/desktop-harness install copilot|opencode).
 	Object.freeze({ id: "copilot-cli", name: "Copilot CLI", harness: "copilot", dir: ".copilot/hooks", file: "abito-island.json", events: Object.freeze(["permissionRequest", "sessionEnd"]) }),
 	Object.freeze({ id: "opencode", name: "OpenCode", harness: "opencode", dir: ".config/opencode/plugins", file: "abito-island.js", events: Object.freeze(["permission.ask", "event"]) }),
+	Object.freeze({ id: "pi", name: "Pi", harness: "pi", dir: ".pi/agent/extensions", file: "abito-island", events: Object.freeze(["extension"]) }),
 ]);
 
 /** The only error type thrown to callers; `code` is a protocol error code (busy, bad_request). */
@@ -131,6 +132,7 @@ class AgentsManager extends EventEmitter {
 	constructor(options) {
 		super();
 		this.installerBin = options.installerBin;
+		this.platform = options.platform ?? process.platform;
 		this.nodeExe = options.nodeExe ?? process.execPath;
 		this.home = options.home;
 		this.islandDir = options.islandDir;
@@ -192,6 +194,7 @@ class AgentsManager extends EventEmitter {
 		const agent = AGENTS.find((a) => a.id === id);
 		if (!agent || (planHash !== undefined && !HASH.test(planHash))) throw new AgentsError("bad_request");
 		if (!remove && ["recap", "statusline"].includes(id) && planHash === undefined) throw new AgentsError("bad_request");
+		if (!["linux", "darwin"].includes(this.platform)) return this.list();
 		if (!agent.harness || !this.available) return this.list(); // nothing to run: the agent reads unavailable
 		if (this.op) throw new AgentsError("busy");
 		this.op = { id: agent.id };
@@ -277,6 +280,7 @@ class AgentsManager extends EventEmitter {
 
 	/** The state entry of one agent (read-only preview). Never throws. */
 	async entry(agent) {
+		if (!["linux", "darwin"].includes(this.platform)) return this.plain(agent, "unavailable", "unsupported_platform");
 		if (!agent.harness || !this.available) return this.plain(agent, "unavailable");
 		try {
 			const pv = await this.inspect(agent, false);
@@ -322,6 +326,7 @@ class AgentsManager extends EventEmitter {
 			state === "outdated"
 				? `Updates the Abito hooks in ${file}. A backup is made first.`
 				: `Adds the Abito hooks (${agent.events.join(", ")}) to ${file}. A backup is made first.`;
+		if (agent.id === "pi") summary = "Installs the Abito Pi extension in the default ~/.pi/agent directory. A backup is made first.";
 		if (agent.id === "opencode") summary = state === "outdated" ? `Updates the Abito plugin in ${file}. A backup is made first.` : `Adds the Abito plugin to ${file}. A backup is made first.`;
 		if (agent.id === "recap") summary = "Adds notify-only hooks that only count activity for the weekly recap. No command text, path or prompt is kept. A backup is made first.";
 		if (agent.id === "statusline") summary = "Adds the status-line relay in ~/.claude/settings.json. An existing status line keeps working (the relay prints it). A backup is made first.";
@@ -348,7 +353,7 @@ class AgentsManager extends EventEmitter {
 	/** True when a regular file `<target>.abito-backup-*` exists next to the target (bounded readdir). */
 	backupExists(agent) {
 		if (!agent.harness) return false;
-		const dir = path.join(this.home, agent.dir);
+		const dir = agent.id === "pi" ? path.join(this.home, ".pi/agent/abito-backups") : path.join(this.home, agent.dir);
 		const prefix = `${agent.file}.abito-backup-`;
 		let handle;
 		try {
@@ -359,7 +364,7 @@ class AgentsManager extends EventEmitter {
 				if (!item.name.startsWith(prefix)) continue;
 				try {
 					const st = fs.lstatSync(path.join(dir, item.name));
-					if (st.isFile() && !st.isSymbolicLink()) return true;
+					if ((agent.id === "pi" ? st.isDirectory() : st.isFile()) && !st.isSymbolicLink()) return true;
 				} catch {}
 			}
 		} catch {

@@ -7,6 +7,8 @@
 mod win;
 #[cfg(windows)]
 pub use win::Host;
+#[cfg(windows)]
+pub(crate) use win::spawn_in_job;
 // Windows runtime lookups (T2/S4): re-exported for the integration tests.
 #[cfg(windows)]
 pub use win::{discover_node, discover_pi};

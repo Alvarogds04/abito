@@ -97,6 +97,17 @@ function setup(t, scenario = {}, extra = {}) {
 	const calls = () => (fs.existsSync(`${scenarioFile}.calls`) ? fs.readFileSync(`${scenarioFile}.calls`, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 	return { base, home, islandDir, manager, write, calls, installerBin, scenarioFile };
 }
+test("Windows installer entries remain unavailable without invoking the POSIX installer", async t => {
+  const s = setup(t, {}, { platform: "win32", run: async () => { throw Error("must not spawn"); } });
+  const expected = (await s.manager.list()).map(a => ({...a, state:"unavailable", detail:"unsupported_platform", backup:false}));
+  assert.ok(expected.length >= 6);
+  assert.deepEqual(await s.manager.list(), expected);
+  assert.deepEqual(await s.manager.connect("claude-code", HASH_A), expected);
+  assert.deepEqual(await s.manager.disconnect("codex"), expected);
+  assert.deepEqual(s.calls(), []);
+  const frame = require("../src/protocol.cjs").agentsFrame(expected);
+  assert.deepEqual(frame.agents, expected);
+});
 const byId = (list, id) => list.find((a) => a.id === id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => {
@@ -158,6 +169,7 @@ test("installerBin unset: every agent unavailable, no spawn", async () => {
 			["statusline", "Uso del plan (relay)", "unavailable", null, false],
 			["copilot-cli", "Copilot CLI", "unavailable", null, false],
 			["opencode", "OpenCode", "unavailable", null, false],
+			["pi", "Pi", "unavailable", null, false],
 		],
 	);
 	assert.equal(m.available, false);
@@ -179,7 +191,7 @@ test("state mapping: not_connected with plan_hash and closed summaries", async (
 	assert.equal(codex.trust_review, true);
 	assert.equal(byId(list, "opencode").state, "unavailable", "no OpenCode settings dir in the private HOME: not installed");
 	assert.equal(byId(list, "copilot-cli").state, "unavailable");
-	assert.equal(s.calls().length, 6, "one read-only preview per agent");
+	assert.equal(s.calls().length, 7, "one read-only preview per agent");
 });
 
 test("state mapping: connected has no plan fields; replace and mixed ops are outdated", async (t) => {
@@ -260,13 +272,13 @@ test("list is cached for 1 s and concurrent calls are single-flight", async (t) 
 	const [a, b, c] = await Promise.all([s.manager.list(), s.manager.list(), s.manager.list()]);
 	assert.deepEqual(a, b);
 	assert.deepEqual(b, c);
-	assert.equal(s.calls().length, 6);
+	assert.equal(s.calls().length, 7);
 	clock += 900;
 	await s.manager.list();
-	assert.equal(s.calls().length, 6, "served from cache inside 1 s");
+	assert.equal(s.calls().length, 7, "served from cache inside 1 s");
 	clock += 200;
 	await s.manager.list();
-	assert.equal(s.calls().length, 12, "expired cache re-previews");
+	assert.equal(s.calls().length, 14, "expired cache re-previews");
 });
 
 test("argv is exactly the contract: preview, apply with --audit-dir, optional --timeout-sec", async (t) => {
@@ -293,7 +305,7 @@ test("child env: allowlist + ABITO_ISLAND_EXE only, HOME is the real home passed
 			else process.env[k] = saved[k];
 		}
 	}
-	assert.equal(s.calls().length, 6);
+	assert.equal(s.calls().length, 7);
 	for (const call of s.calls()) {
 		for (const k of Object.keys(call.env)) assert.ok(["PATH", "HOME", "LANG", "ABITO_ISLAND_EXE"].includes(k), `unexpected env ${k}`);
 		assert.equal(call.env.PATH, "/usr/bin:/bin");

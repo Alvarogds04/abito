@@ -27,7 +27,7 @@ async function scene({ persists = true, startEnabled = true } = {}) {
       return {}; } },
     event: { emit: async () => { clicks.push(1); if (!current) { current = root; return; } if (persists) host.enabled = !host.enabled; } } } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../packaging/validate/browser.js'), 'utf8'), {
-    window, document: { querySelector: sel => (sel === '.hub-page' ? current : sel === '.hub-page .switch:not(:disabled)' ? sw : null), querySelectorAll: () => [tab], getElementById: () => null },
+    window, document: { querySelector: sel => (sel === '.hub-page' ? current : sel === '.hub-page .switch:not(:disabled)' ? sw : sel === '.hub-side .hub-item[data-page="privacy"]' ? tab : null), querySelectorAll: () => [tab], getElementById: () => null },
     addEventListener() {}, console: { error() {} }, performance, setTimeout: fn => { fn(); return 1; }, requestAnimationFrame: fn => fn(),
     getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) });
   let result, error;

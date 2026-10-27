@@ -592,6 +592,22 @@ test('#409 T2 «Quitar conexión» lives on the owned-account row: exact sentenc
   assert.match(allText(c.get('owned-accounts')), /No se pudo quitar la conexión\. No se cambió nada\./);
 });
 
+test('HU-041 deferred: new accounts offer no custom endpoint preset; a saved custom account still renders', async () => {
+  const store = fakeStore({ accounts: [{ accountId: 'mine', provider: 'custom', hasCredential: false, config: { nombre: 'Mio', baseUrl: 'https://llm.example/v1', api: 'openai-completions', compat: {}, models: [], defaultModel: '' } }] });
+  const b = boot({ store }); await flush();
+  for (const file of ['avatar-colors.js', 'settings-view.js', 'pill-settings.js', 'settings.js']) b.load(file);
+  b.click('open-screen-settings'); await flush(); b.click('settings-tab-accounts'); await flush();
+  const values = () => b.get('account-provider').children.map(x => x.value);
+  b.click('account-add'); await flush();
+  assert.ok(!values().includes('custom'), 'new account: no custom endpoint preset');
+  assert.ok(values().includes('openai'));
+  b.get('account-form').querySelectorAll('button').find(x => allText(x) === 'Cancelar').fire('click'); await flush();
+  b.get('owned-accounts').querySelectorAll('button').find(x => allText(x) === 'Editar').fire('click'); await flush();
+  assert.ok(values().includes('custom'), 'saved custom account keeps its provider option');
+  assert.equal(b.get('account-provider').value, 'custom');
+  assert.equal(b.get('account-url').value, 'https://llm.example/v1');
+});
+
 test('#409 T3 the manual masked editor: full field set, credential options, write-only secret, closed verbs', async () => {
   const KEY = ['synthetic', 'manual', 'key', '0042'].join('-');
   const store = fakeStore({ accounts: [{ accountId: 'nan', provider: 'nan', hasCredential: true, config: { nombre: 'nan (Pi)', baseUrl: 'https://api.nan.builders/v1', api: 'openai-completions', compat: {}, models: ['m0'], defaultModel: 'm0' } }] });
@@ -855,6 +871,23 @@ for (const existing of [0, 1]) {
     assert.equal(b.get('blob-count').textContent, `${existing + 1}/3`);
   });
 }
+
+test('abito-pausa 0.1.2: the island «Del catálogo» chooser hides paused services (GitHub, n8n, …, Spotify); stored declarations are untouched', async () => {
+  const b = boot({ prefs: { declaredPills: ['integration_resend'] }, specs: SPECS }); await flush();
+  b.load('paused.js');
+  for (const file of ['avatar-colors.js', 'settings-view.js', 'pill-settings.js', 'settings.js', 'specialists.js']) b.load(file);
+  await flush(); b.click('open-screen-settings'); await flush(); b.click('settings-tab-pills'); await flush();
+  b.click('blob-tile-new'); await flush();
+  const rows = () => b.get('pill-catalog-list').children.map(r => r.dataset.pillId);
+  const shown = rows();
+  assert.ok(shown.length > 0, 'the chooser still lists the active ones');
+  for (const id of ['integration_github', 'integration_n8n', 'integration_vercel', 'integration_stripe', 'integration_resend', 'integration_notion', 'integration_calcom', 'integration_spotify'])
+    assert.ok(!shown.includes(id), `${id} is paused: not offered on the island`);
+  b.get('pill-catalog-search').value = 'n8n'; b.get('pill-catalog-search').fire('input');
+  assert.deepEqual(rows().filter(Boolean), [], 'searching does not bring a paused one back');
+  assert.deepEqual(b.backend.prefs.declaredPills, ['integration_resend'], 'the stored declaration is never rewritten');
+  assert.deepEqual(writes(b), [], 'nothing is written');
+});
 
 test('#442 «Del catálogo» keeps today\'s declaration gates AND creates the prefilled agent; deleting it quits the declaration (remove/re-add regression)', async () => {
   const b = await settingsBoot({ prefs: { declaredPills: ['integration_resend'] }, specs: SPECS });

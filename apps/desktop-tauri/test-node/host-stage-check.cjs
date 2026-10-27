@@ -39,6 +39,10 @@ try {
     fs.copyFileSync(path.join(crate, '../desktop-harness', file), target);
     fs.chmodSync(target, 0o644);
   }
+  for (const name of L.PI_FILES) {
+    const file = path.join(stage, 'desktop-pi', name); fs.mkdirSync(path.dirname(file), {recursive:true,mode:0o755});
+    fs.copyFileSync(path.join(crate, '..', 'desktop-pi', name), file); fs.chmodSync(file, 0o644);
+  }
   const receipt = {
     fixture: 'PRE-COMMIT STRUCTURAL TEST ONLY; toy executable, synthetic provenance, NOT RELEASE EVIDENCE',
     identifier: L.IDENTIFIER, version: L.checkConfig(crate).version,

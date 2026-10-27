@@ -32,7 +32,9 @@ const vm = require('node:vm');
     }}
   }};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../packaging/validate/browser.js'),'utf8'),{
-    window, document:{getElementById:id=>id==='shortcut-reset'?reset:rows[id],querySelectorAll:()=>[nav]},
+    window, document:{getElementById:id=>id==='shortcut-reset'?reset:rows[id],querySelectorAll:()=>[nav],
+      // 0.1.2: the page button is found by its data-page (paused pages are hidden, so positions shift)
+      querySelector:sel=>sel==='.hub-side .hub-item[data-page="shortcuts"]'?nav:null},
     addEventListener(){},console:{error(){}},performance,
     setTimeout(fn,ms){if(ms===250)for(const sw of Object.values(switches))sw.disabled=false;fn();return 1;},
     requestAnimationFrame:fn=>fn(),getComputedStyle:()=>({display:'block',visibility:'visible'})

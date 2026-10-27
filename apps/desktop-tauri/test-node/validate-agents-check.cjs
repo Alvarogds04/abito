@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-async function scene(band, late = false) {
+async function scene(band, late = false, page = 'agents', shownPages = [page]) {
   let current = null, changed = false, instructions = '';
   const element = (id, textContent = '') => ({id, textContent, disabled:false, value:'',
     classList:{contains:()=>true}, scrollIntoView(){}, closest:()=>null,
@@ -18,19 +18,27 @@ async function scene(band, late = false) {
       else {changed=true; instructions=field.value;}
     }}}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../packaging/validate/browser.js'),'utf8'),{
-    window, document:{querySelector:()=>current,querySelectorAll:()=>[tab],getElementById:()=>field},
+    // 0.1.2: the validator finds a page by its data-page; a paused (hidden) page has no button in the menu
+    window, document:{querySelector:sel=>{const m=/data-page="([a-z]+)"/.exec(sel);return m?(shownPages.includes(m[1])?tab:null):current;},
+      querySelectorAll:()=>[tab],getElementById:()=>field},
     addEventListener(){},console:{error(){}},performance,
     setTimeout:fn=>{fn();return 1;},requestAnimationFrame:fn=>fn(),
     getComputedStyle:()=>({display:'block',visibility:'visible'})});
-  return window.AbitoValidate.hub(0,'integrations');
+  return window.AbitoValidate.hub(0,page);
 }
 (async()=>{
-  for (const band of ['No se pudo completar; no se tocó nada.', 'install_failed', 'No se pudo completar']) {
-    for (const late of [false,true]) {
-      const result = await scene(band, late);
-      assert.equal(result.ok,false,`ajustes-integrations must reject ${band} (late=${late})`);
+  // agent rows live on Agentes; Integraciones keeps the same rule for the day it is active again
+  for (const page of ['agents', 'integrations']) {
+    for (const band of ['No se pudo completar; no se tocó nada.', 'install_failed', 'No se pudo completar']) {
+      for (const late of [false,true]) {
+        const result = await scene(band, late, page);
+        assert.equal(result.ok,false,`ajustes-${page} must reject ${band} (late=${late})`);
+      }
     }
+    assert.equal((await scene('Codex no disponible', false, page)).ok,true,`${page}: unavailable is not an installer error`);
   }
-  assert.equal((await scene('Codex no disponible')).ok,true,'unavailable is not an installer error');
-  console.log('validate-agents: 7 scene checks passed');
+  // 0.1.2 (human: «vale todo lo que este en pausa se puede ocultar?» → yes): a paused page is hidden, so the scene reports it as such
+  const hidden = await scene('install_failed', false, 'integrations', ['agents']);
+  assert.deepEqual([hidden.ok, hidden.hidden], [true, true], 'a hidden paused page is reported hidden, never «verified»');
+  console.log('validate-agents: 15 scene checks passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

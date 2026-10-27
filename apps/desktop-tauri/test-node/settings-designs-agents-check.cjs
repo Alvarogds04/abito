@@ -41,12 +41,14 @@ test('S20 Agentes: the table has the four columns and the rows in the wireframe 
   assert(ui.children[0].children.indexOf(table) < ui.children.length, 'table first');
 });
 
-test('S20 Agentes: Estado is icon + word per row; rows are 40px; Pi reads from the live session list', async () => {
+test('S20 Agentes: Estado is icon + word per row; rows are 40px; Pi reads its extension state independently of sessions', async () => {
   const { ui } = await mount();
   const claude = entry(ui, 'claude-code'), codex = entry(ui, 'codex'), pi = entry(ui, 'pi');
-  assert.equal(cellText(claude, 'agent-state'), '○ Sin conectar'); assert.equal(cellText(codex, 'agent-state'), '✓ Conectado'); assert.equal(cellText(pi, 'agent-state'), '✓ activo');
+  assert.equal(cellText(claude, 'agent-state'), '○ Sin conectar'); assert.equal(cellText(codex, 'agent-state'), '✓ Conectado'); assert.equal(cellText(pi, 'agent-state'), '· No disponible todavía');
   for (const row of [claude, codex, pi]) assert(all(row).some(e => e.className === 'state-ico' && e.attrs['aria-hidden'] === 'true'), 'icon is decorative; the word carries the state');
-  const gone = await mount({ sessions: { rows: [], truncated: false } }); assert.equal(cellText(entry(gone.ui, 'pi'), 'agent-state'), '○ sin sesión');
+  const gone = await mount({ sessions: { rows: [], truncated: false } }); assert.equal(cellText(entry(gone.ui, 'pi'), 'agent-state'), '· No disponible todavía');
+  const installed = await mount({ agents: [{id:'pi', state:'connected'}], sessions: null });
+  assert.equal(cellText(entry(installed.ui,'pi'), 'agent-state'), '✓ Instalado en carpeta predeterminada');
   const unknown = await mount({ sessions: null }); assert.equal(cellText(entry(unknown.ui, 'pi'), 'agent-state'), '· No disponible todavía');
   const fs = require('node:fs'), path = require('node:path');
   const css = fs.readFileSync(path.join(__dirname, '../frontend/vendor/coucou/hub/abito.css'), 'utf8');
@@ -56,7 +58,11 @@ test('S20 Agentes: Estado is icon + word per row; rows are 40px; Pi reads from t
 test('S20 Agentes: «En isla» is the pill declaration through the SAME closed command; main/unknown are disabled with a reason; there is no «full» (S32: no limit)', async () => {
   const { ui, calls, store } = await mount();
   const sw = id => all(entry(ui, id)).find(e => e.className.split(' ').includes('switch'));
-  assert.equal(sw('claude-code').disabled, true); assert.equal(sw('claude-code').attrs['aria-pressed'], 'true'); assert(sw('claude-code').attrs.title, 'why: it is the main pill');
+  // HU-015: a main-pill preference cannot activate an agent whose own hooks are absent.
+  assert.equal(sw('claude-code').disabled, true); assert.equal(sw('claude-code').attrs['aria-pressed'], 'false'); assert.match(sw('claude-code').attrs.title, /hooks/);
+  const installedMain = await mount({ agents: [{ id: 'claude-code', state: 'connected', backup: true }] });
+  const mainSwitch = all(entry(installedMain.ui, 'claude-code')).find(e => e.className.split(' ').includes('switch'));
+  assert.equal(mainSwitch.disabled, true); assert.equal(mainSwitch.attrs['aria-pressed'], 'true'); assert.match(mainSwitch.attrs.title, /principal/);
   assert.equal(sw('pi').disabled, true); assert(sw('pi').attrs.title, 'why: Pi is the principal agent');
   const codex = sw('codex'); assert.equal(codex.disabled, false); assert.equal(codex.attrs['aria-pressed'], 'false');
   calls.length = 0; codex.fire('click', false); await ui.settled(); assert.deepEqual(calls, [], 'a synthetic click does nothing');

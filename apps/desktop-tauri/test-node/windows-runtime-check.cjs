@@ -10,7 +10,7 @@ const crate = path.resolve(__dirname, '..');
 const script = path.join(crate, 'packaging/windows/stage-runtime.cjs');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-win-stage-'));
 const out = path.join(scratch, 'payload');
-const files = [...L.DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...L.HARNESS_FILES.map(f => `desktop-harness/${f}`)].sort();
+const files = [...L.DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...L.HARNESS_FILES.map(f => `desktop-harness/${f}`), ...L.PI_FILES.map(f => `desktop-pi/${f}`)].sort();
 const bins = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe'];
 function run(...args) { return spawnSync(process.execPath, [script, '--out', out, ...args], { encoding: 'utf8' }); }
 function entries(dir, prefix = '') { return fs.readdirSync(dir).flatMap(n => fs.statSync(path.join(dir, n)).isDirectory() ? entries(path.join(dir, n), `${prefix}${n}/`) : [`${prefix}${n}`]).sort(); }

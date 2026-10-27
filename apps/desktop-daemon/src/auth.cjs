@@ -21,7 +21,8 @@ const { EventEmitter } = require("node:events");
 const { spawn } = require("node:child_process");
 const { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } = require("node:fs");
 const path = require("node:path");
-const { validateLocalBaseUrl, validateLocalModelIds } = require("./protocol.cjs");
+const { validateCustomBaseUrl, validateLocalBaseUrl, validateLocalModelIds } = require("./protocol.cjs");
+const { CustomProviderError, discoverModels } = require("./custom-provider.cjs");
 const { ENV_ALLOWLIST, assertSecurePath, ensurePrivateDir, writePrivateFile } = require("./isolation.cjs");
 
 const STRICT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -77,6 +78,7 @@ function accountDto(meta) {
 		authMethod: meta.authMethod,
 		configured: meta.configured === true,
 		...(meta.kind === "local" ? { local: true } : {}),
+		...(meta.kind === "custom" ? { custom: true } : {}),
 	};
 }
 
@@ -283,7 +285,7 @@ class AccountManager extends EventEmitter {
 			authMethod: meta.authMethod,
 			configured: meta.configured === true,
 			createdAt: meta.createdAt,
-			...(meta.kind === "local" ? { kind: "local" } : {}),
+			...(meta.kind === "local" || meta.kind === "custom" ? { kind: meta.kind } : {}),
 		};
 		writePrivateFile(path.join(this.accountDir(meta.accountId), "account.json"), `${JSON.stringify(clean, null, 2)}\n`);
 		return clean;
@@ -429,6 +431,130 @@ class AccountManager extends EventEmitter {
 		});
 	}
 
+	// ----- custom (LiteLLM / OpenAI-compatible) provider accounts -----------------------
+
+	/** Private models.json of a custom account: Base URL + discovered ids, never a key (that lives in auth.json). */
+	writeCustomModels(accountId, provider, baseUrl, modelIds) {
+		const doc = { providers: { [provider]: { name: "Custom gateway", baseUrl, api: LOCAL_API, models: modelIds.map((id) => ({ id })) } } };
+		writePrivateFile(path.join(this.accountDir(accountId), "models.json"), `${JSON.stringify(doc, null, 2)}\n`);
+	}
+
+	requireCustom(accountId) {
+		const meta = this.requireMeta(accountId);
+		if (meta.kind !== "custom") throw fail("Account is not a custom provider");
+		return meta;
+	}
+
+	customConfig(meta) {
+		try {
+			const doc = JSON.parse(readFileSync(path.join(this.accountDir(meta.accountId), "models.json"), "utf8"));
+			const entry = doc.providers?.[meta.provider];
+			const baseUrl = validateCustomBaseUrl(entry?.baseUrl);
+			if (baseUrl) return { baseUrl, models: Array.isArray(entry.models) ? entry.models : [] };
+		} catch {}
+		throw fail("Custom provider configuration is unreadable");
+	}
+
+	/** The stored key, read straight from the account's private auth.json (the only secret store). */
+	storedApiKey(meta) {
+		this.enforceCredentialPermissions(meta.accountId);
+		try {
+			const credential = JSON.parse(readFileSync(path.join(this.accountDir(meta.accountId), "auth.json"), "utf8"))[meta.provider];
+			if (credential?.type === "api_key" && typeof credential.key === "string" && credential.key !== "") return credential.key;
+		} catch {}
+		throw fail("Account is not signed in");
+	}
+
+	/** Bounded discovery; the previous configuration is left untouched unless it fully succeeds. */
+	async discoverInto(meta, baseUrl) {
+		const apiKey = this.storedApiKey(meta);
+		try {
+			this.writeCustomModels(meta.accountId, meta.provider, baseUrl, await discoverModels({ baseUrl, apiKey }));
+		} catch (error) {
+			throw error instanceof CustomProviderError ? error : fail(GENERIC_REQUEST_FAILURE);
+		}
+	}
+
+	/**
+	 * Creates a custom-provider account bound to a validated Base URL. No credential and no network:
+	 * the key arrives later through auth_start / auth_reply, models through refreshCustomModels.
+	 */
+	async createCustomAccount({ accountId, label, baseUrl } = {}) {
+		if (typeof label !== "string" || label.trim() === "" || label.length > 80 || /[\u0000-\u001f]/.test(label)) {
+			throw fail("Invalid account label");
+		}
+		const url = validateCustomBaseUrl(baseUrl);
+		if (!url) throw fail("Invalid Base URL");
+		if (accountId !== undefined && !isStrictAccountId(accountId)) throw fail("Invalid account id");
+		return this.mutate(async () => {
+			ensurePrivateDir(this.accountsRoot);
+			let id = accountId;
+			if (id !== undefined) {
+				if (existsSync(this.accountDir(id))) throw fail("Account already exists");
+			} else {
+				const base = slugify(label);
+				id = base;
+				for (let n = 2; existsSync(this.accountDir(id)); n++) id = `${base.slice(0, 56)}-${n}`;
+			}
+			const provider = `custom-${id}`;
+			if (!STRICT_ID.test(provider)) throw fail("Invalid account id");
+			ensurePrivateDir(this.accountDir(id));
+			try {
+				this.writeCustomModels(id, provider, url, []);
+				const meta = this.writeMeta({
+					accountId: id,
+					label: label.trim(),
+					provider,
+					authMethod: "none",
+					configured: false,
+					createdAt: new Date().toISOString(),
+					kind: "custom",
+				});
+				return accountDto(meta);
+			} catch (error) {
+				rmSync(assertSecurePath(this.accountDir(id)), { recursive: true, force: true });
+				throw error;
+			}
+		});
+	}
+
+	/** Re-discovers the gateway's models (requires the stored key). Failure keeps the previous models. */
+	async refreshCustomModels({ accountId } = {}) {
+		this.requireCustom(accountId);
+		this.assertIdle();
+		return this.mutate(async () => {
+			this.assertIdle();
+			const meta = this.requireCustom(accountId);
+			await this.discoverInto(meta, this.customConfig(meta).baseUrl);
+			return this.status(accountId);
+		});
+	}
+
+	/**
+	 * Changes the Base URL. While a key is stored it may only move within the SAME origin (the key is
+	 * never re-pointed at another host without signing out and entering it again); the models are then
+	 * re-discovered, and any failure keeps the previous configuration.
+	 */
+	async setCustomEndpoint({ accountId, baseUrl } = {}) {
+		const url = validateCustomBaseUrl(baseUrl);
+		if (!url) throw fail("Invalid Base URL");
+		this.requireCustom(accountId);
+		this.assertIdle();
+		return this.mutate(async () => {
+			this.assertIdle();
+			const meta = this.requireCustom(accountId);
+			if (meta.configured === true) {
+				if (new URL(url).origin !== new URL(this.customConfig(meta).baseUrl).origin) {
+					throw fail("Sign out before changing the gateway host");
+				}
+				await this.discoverInto(meta, url);
+				return this.status(accountId);
+			}
+			this.writeCustomModels(accountId, meta.provider, url, []);
+			return accountDto(meta);
+		});
+	}
+
 	requireLocal(accountId) {
 		const meta = this.requireMeta(accountId);
 		if (meta.kind !== "local") throw fail("Account is not a local endpoint");
@@ -571,6 +697,7 @@ class AccountManager extends EventEmitter {
 		const meta = this.requireMeta(accountId);
 		if (meta.kind === "local") throw fail("Local accounts do not sign in");
 		if (method !== "oauth" && method !== "api_key") throw fail("Invalid sign-in method");
+		if (meta.kind === "custom" && method !== "api_key") throw fail("Custom providers sign in with an API key");
 		const flow = {
 			id: `flow-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
 			accountId,

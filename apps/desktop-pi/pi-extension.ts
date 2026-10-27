@@ -24,10 +24,15 @@ export default function (pi: ExtensionAPI) {
   // Pi's own ask tools (gentle-pi's ask_user_choice / one-question ask_user_question) are answerable from Abito too;
   // ABITO_NATIVE_ASK=0 turns this off. See README.
   pi.on('tool_call', nativeAsk.createNativeAskHandler({ controller, env: process.env }));
+  // HU-042: Pi's own yes/no confirmations (ctx.ui.confirm) are answerable from Abito too, unless sensitive;
+  // ABITO_NATIVE_CONFIRM=0 turns this off. Installed once per shared ui object, restored on shutdown. See README.
+  let uninstallConfirm: () => void = () => {};
   pi.on('session_start', (_event, ctx) => {
     notify = ctx.hasUI ? message => ctx.ui.notify(message, 'warning') : undefined;
+    uninstallConfirm();
+    uninstallConfirm = nativeAsk.installConfirmRouter({ ctx, controller, env: process.env });
   });
-  pi.on('session_shutdown', () => { notify = undefined; });
+  pi.on('session_shutdown', () => { notify = undefined; uninstallConfirm(); uninstallConfirm = () => {}; });
   const Option = Type.Object({
     value: Type.Optional(Type.String({ pattern: '^[A-Za-z0-9_-]{1,128}$' })),
     label: Type.String({ minLength: 1, maxLength: 120 }),

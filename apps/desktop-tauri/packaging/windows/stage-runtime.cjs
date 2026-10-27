@@ -3,10 +3,10 @@
 // One closed runtime list drives staging, NSIS installation/removal and receipts.
 const fs = require('node:fs');
 const path = require('node:path');
-const { DAEMON_FILES, HARNESS_FILES } = require('../lib.cjs');
+const { DAEMON_FILES, HARNESS_FILES, PI_FILES } = require('../lib.cjs');
 const crate = path.resolve(__dirname, '../..');
 const BINARY_FILES = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe'];
-const RUNTIME_FILES = [...DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...HARNESS_FILES.map(f => `desktop-harness/${f}`)].sort();
+const RUNTIME_FILES = [...DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...HARNESS_FILES.map(f => `desktop-harness/${f}`), ...PI_FILES.map(f => `desktop-pi/${f}`)].sort();
 const RUNTIME_DIRS = [...new Set(RUNTIME_FILES.flatMap(f => {
   const dirs = []; for (let d = path.posix.dirname(f); d !== '.'; d = path.posix.dirname(d)) dirs.push(d);
   return dirs;
@@ -61,7 +61,7 @@ function stage(out) {
 if (require.main === module) {
   const args = process.argv.slice(2);
   if (args.length === 1 && args[0] === '--help') {
-    console.log('Usage: node packaging/windows/stage-runtime.cjs [--out DIRECTORY]\nStage the closed daemon/harness payload and runtime.nsh (default: dist/windows-runtime). Unknown output entries are rejected; no recursive cleanup.');
+    console.log('Usage: node packaging/windows/stage-runtime.cjs [--out DIRECTORY]\nStage the closed daemon/harness/Pi payload and runtime.nsh (default: dist/windows-runtime). Unknown output entries are rejected; no recursive cleanup.');
   } else if (args.length && !(args.length === 2 && args[0] === '--out' && args[1])) {
     console.error('Usage: stage-runtime.cjs [--out DIRECTORY]'); process.exitCode = 2;
   } else {

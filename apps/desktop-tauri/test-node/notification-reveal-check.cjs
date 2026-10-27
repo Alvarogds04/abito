@@ -126,6 +126,15 @@ test('action: resting compact AND hidden islands expand; visible/animating ones 
   assert.equal(N.revealAction({ phase: 'compact' }), 'expand', 'boot before the first host snapshot: the host verb decides, a no-op is harmless');
 });
 
+test('HU-006 S4/S5: a notice never grows a visible compact island; hidden still reveals, expanded unchanged', () => {
+  assert.equal(N.revealAction({ state: 'compact', phase: 'compact', notice: true }), 'none', 'S4: compact stays compact; the pill shows the notice');
+  assert.equal(N.revealAction({ phase: 'compact', notice: true }), 'none', 'S4: also before the first host snapshot');
+  assert.equal(N.revealAction({ state: 'hidden', phase: 'compact', notice: true }), 'expand', 'hidden keeps its reveal policy');
+  assert.equal(N.revealAction({ state: 'expanded', phase: 'expanded', view: 'chat', notice: true }), 'none', 'S5: expanded behaves as today');
+  assert.equal(N.revealAction({ state: 'compact', phase: 'compact', notice: true, question: true }), 'expand', 'a question keeps its own policy');
+  assert.equal(N.revealAction({ state: 'compact', phase: 'compact' }), 'expand', 'a non-notice reveal (desktop character) is unchanged');
+});
+
 test('gates while hidden: boot/cached/duplicate/expired never restore the hidden island', () => {
   // the gates are state-agnostic by design; the hidden reveal must fire ONLY on
   // new events. These are the same baselines asserted above, run against the

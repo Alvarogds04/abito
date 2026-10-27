@@ -146,6 +146,10 @@ function fakeStage({ crateDir: _crateDir = crate } = {}) {
     fs.copyFileSync(path.join(crate, '..', 'desktop-harness', n), file);
     fs.chmodSync(file, 0o644);
   }
+  for (const name of L.PI_FILES) {
+    const file = path.join(dir, 'desktop-pi', name); fs.mkdirSync(path.dirname(file), {recursive:true,mode:0o755});
+    fs.copyFileSync(path.join(__dirname, '..', '..', 'desktop-pi', name), file); fs.chmodSync(file, 0o644);
+  }
   const files = {};
   for (const n of L.STAGED) files[n] = L.sha256File(path.join(dir, n));
   fs.writeFileSync(path.join(dir, 'receipt.json'), JSON.stringify({ identifier: L.IDENTIFIER, r6_sha256: L.checkR6(crate), provenance: { head: 'a'.repeat(40), clean: true }, files }), { mode: 0o644 });
@@ -153,12 +157,15 @@ function fakeStage({ crateDir: _crateDir = crate } = {}) {
 }
 test('L42 F1: the package ships the hook installer and everything it requires, and the staged daemon resolves it', () => {
   assert(Array.isArray(L.HARNESS_FILES) && L.HARNESS_FILES.includes('bin/abito-hook.cjs'), 'the installer is a shipped file');
+  assert(L.HARNESS_FILES.includes('src/installer-platform.cjs'), 'platform guard must ship');
+  assert(L.PI_FILES?.includes('pi-extension.ts'), 'closed Pi runtime payload must ship beside harness');
   // closed under require(): every relative require of a shipped harness file is shipped too
   for (const rel of L.HARNESS_FILES.filter(f => f.endsWith('.cjs'))) {
     const src = fs.readFileSync(path.join(crate, '..', 'desktop-harness', rel), 'utf8');
     for (const m of src.matchAll(/require\(['"](\.{1,2}\/[^'"]+)['"]\)/g)) {
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
-      assert(L.HARNESS_FILES.includes(target), `${rel} requires ${m[1]} (${target}) which is not shipped`);
+      const sharedProbe = rel === 'src/installer-platform.cjs' && target === '../desktop-daemon/src/procinfo.cjs' && L.DAEMON_FILES.includes('src/procinfo.cjs');
+      assert(sharedProbe || L.HARNESS_FILES.includes(target), `${rel} requires ${m[1]} (${target}) which is not shipped`);
     }
   }
   assert(L.STAGED.includes('desktop-harness/bin/abito-hook.cjs'));
@@ -169,6 +176,21 @@ test('L42 F1: the package ships the hook installer and everything it requires, a
   assert.deepEqual(L.verifyStage(d, { sourceCrate: crate }), []);
   fs.rmSync(path.join(d, 'desktop-harness/src/install-ui.cjs'));
   assert(L.verifyStage(d, { sourceCrate: crate }).length > 0, 'a missing harness file fails verification');
+});
+test('HU-015: the daemon-free Agentes entry ships, closed under require(), beside the harness it drives', () => {
+  assert(L.DAEMON_FILES.includes('src/agents-direct.cjs'), 'Ajustes → Agentes runs src/agents-direct.cjs with no daemon: it must be packaged');
+  assert(L.STAGED.includes('desktop-daemon/src/agents-direct.cjs'));
+  for (const rel of ['src/agents-direct.cjs', 'src/agents.cjs', 'src/agent-hooks.cjs']) {
+    const src = fs.readFileSync(path.join(crate, '..', 'desktop-daemon', rel), 'utf8');
+    for (const m of src.matchAll(/require\(['"](\.{1,2}\/[^'"]+)['"]\)/g)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
+      assert(L.DAEMON_FILES.includes(target), `${rel} requires ${m[1]} (${target}) which is not shipped`);
+    }
+  }
+  const d = fakeStage();
+  assert.deepEqual(L.verifyStage(d, { sourceCrate: crate }), []);
+  fs.rmSync(path.join(d, 'desktop-daemon/src/agents-direct.cjs'));
+  assert(L.verifyStage(d, { sourceCrate: crate }).length > 0, 'a package without the entry fails verification');
 });
 test('verify: a pristine stage passes; tampering is caught without launching anything', () => {
   const d = fakeStage();

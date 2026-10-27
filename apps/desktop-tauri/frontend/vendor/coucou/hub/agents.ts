@@ -77,6 +77,7 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     head.append(h('div', { style: 'display:flex;align-items:center;gap:8px;min-width:132px' }, dot, h('span', { style: 'font-size:12.5px', text: name }), infoTip(tip, `Más información: ${name}`)),
       h('span', { class: 'spacer' }), install);
     if (remove) head.append(remove);
+    if (r?.helpUrl) body.append(h('p', { class: 'hint', style: 'user-select:text;overflow-wrap:anywhere', text: `README · ${r.helpUrl}` }));
     if (r?.note && r.state !== 'error') body.append(hint(r.note)); // a standing `error` state is the dot's job (#503 S20)
     return block;
   }
@@ -84,13 +85,20 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     h('span', { class: 'agent-state', role: 'cell' }, h('span', { class: 'state-ico', 'aria-hidden': 'true', text: icon }), h('span', { class: 'state-word', text: word }));
   // One table row: name | state (icon + word) | «En isla» switch | actions. The review-and-confirm flow (reviewChange) and
   // every closed command are the ones agentBlock always used; only the layout changed (#503 S20, Opción B).
-  function islandSwitch(id: string): HTMLElement {
+  function islandSwitch(id: string, installed: boolean): HTMLElement {
+    if (id === 'pi') {
+      const sw = trusted(toggle(installed, () => {})) as HTMLButtonElement; sw.disabled = true;
+      sw.setAttribute('aria-label', 'En la isla: Pi'); sw.setAttribute('aria-pressed', String(installed));
+      sw.setAttribute('title', installed ? 'Extensión instalada en la carpeta predeterminada.' : 'Instalá la extensión de Pi primero.');
+      return h('span', {class:'agent-island',role:'cell'}, sw);
+    }
     const pill = AGENT_PILL[id], cur = P && prefsKnown ? P.normalize(prefs) : null;
-    const isMain = !!cur && cur.mainPill === pill, on = isMain || !!cur?.declaredPills.includes(pill);
-    const sw = trusted(toggle(on, () => { if (cur && pill && !isMain && P.toggle(P.normalize(prefs), pill)) work(() => call('prefs_action', { action: 'toggle_declared_pill', id: pill }), next => { prefs = next; paint(); }, () => paint()); })) as HTMLButtonElement;
+    const isMain = !!cur && cur.mainPill === pill, on = installed && (isMain || !!cur?.declaredPills.includes(pill));
+    const sw = trusted(toggle(on, () => { if (installed && cur && pill && !isMain && P.toggle(P.normalize(prefs), pill)) work(() => call('prefs_action', { action: 'toggle_declared_pill', id: pill }), next => { prefs = next; paint(); }, () => paint()); })) as HTMLButtonElement;
     sw.setAttribute('aria-label', `En la isla: ${id}`); sw.setAttribute('aria-pressed', String(on));
-    sw.disabled = !cur || !pill || isMain;
-    if (isMain) sw.setAttribute('title', 'Es la píldora principal de la isla.');
+    sw.disabled = !installed || !cur || !pill || isMain;
+    if (!installed) sw.setAttribute('title', 'Instalá los hooks de este agente primero.');
+    else if (isMain) sw.setAttribute('title', 'Es la píldora principal de la isla.');
     else if (!cur || !pill) sw.setAttribute('title', UNAVAILABLE);
     return h('span', { class: 'agent-island', role: 'cell' }, sw);
   }
@@ -102,7 +110,7 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     let open = false;
     const entry = h('div', { class: 'agent-entry', id: `agent-row-${id}` });
     const line = h('div', { class: 'agent-row', role: 'row' }, h('span', { class: 'agent-name', role: 'cell', text: name }),
-      unknown ? stateCell('·', UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || '○', r.word), islandSwitch(id), actions);
+      unknown && !['node_missing', 'failed'].includes(state?.agentsRuntime) ? stateCell('·', UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || '○', r.word), islandSwitch(id, installed), actions);
     entry.append(line, menu, detail);
     const redraw = () => {
       clear(actions); clear(menu); clear(detail);
@@ -120,6 +128,7 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
       } else if (!unknown) actions.append(install);
       // The `error` state's generic sentence is the state column's job, not a caption (#503 S20); other notes stay.
       if (r?.note && r.state !== 'error') detail.append(hint(r.note));
+      if (r?.helpUrl) detail.append(h('p', { class: 'hint', style: 'user-select:text;overflow-wrap:anywhere', text: `README · ${r.helpUrl}` }));
     };
     redraw(); return entry;
   }
@@ -129,19 +138,15 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     return h('div', { class: 'agent-entry agent-off', id: `agent-row-${id}`, 'aria-disabled': 'true' }, h('div', { class: 'agent-row', role: 'row' },
       h('span', { class: 'agent-name', role: 'cell', text: name }), stateCell('·', NOT_IN_VERSION), h('span', { class: 'agent-island', role: 'cell' }, sw), h('span', { class: 'agent-actions', role: 'cell' })));
   }
-  function piRow() {
-    const rows = state?.sessions?.rows, known = Array.isArray(rows), active = known && rows.some((x: any) => x?.kind === 'pi');
-    const sw = trusted(toggle(true, () => {})) as HTMLButtonElement; sw.disabled = true; sw.setAttribute('title', 'Pi es el agente principal: siempre está en la isla.'); sw.setAttribute('aria-label', 'En la isla: Pi'); sw.setAttribute('aria-pressed', 'true');
-    return h('div', { class: 'agent-entry', id: 'agent-row-pi' }, h('div', { class: 'agent-row', role: 'row' }, h('span', { class: 'agent-name', role: 'cell', text: 'Pi' }),
-      known ? stateCell(active ? '✓' : '○', active ? 'activo' : 'sin sesión') : stateCell('·', UNAVAILABLE), h('span', { class: 'agent-island', role: 'cell' }, sw), h('span', { class: 'agent-actions', role: 'cell' })));
-  }
+  function piRow() { return agentRow('pi', 'Pi'); }
   function paint() {
     if (reviewing) return;
     clear(root);
     const list = flex(0); list.setAttribute('id', 'agent-hook-list');
     list.append(piRow());
     for (const [id, name] of CLI_AGENTS) list.append(agentRow(id, name));
-    for (const [id, name] of OTHER_AGENTS) list.append(unavailableRow(id, name));
+    // HU-015: expose existing harness backends, never infer support from a session or Pi.
+    for (const [id, name] of OTHER_AGENTS) list.append(['copilot-cli', 'opencode'].includes(id) ? agentRow(id, name) : unavailableRow(id, name));
     const header = h('div', { class: 'agent-row agent-head', role: 'row' },
       ...['Agente', 'Estado', 'En isla', 'Acciones'].map(c => h('span', { role: 'columnheader', text: c })));
     const table = h('div', { class: 'agent-table', role: 'table', 'aria-label': 'Agentes' }, header, list);

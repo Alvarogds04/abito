@@ -306,6 +306,17 @@ pub mod ffi {
         }
     }
 
+    /// Read-only config-file policy: unlike directory_private this requires a
+    /// regular file and allows only user/SYSTEM/Administrators DACL principals.
+    /// No ACL repair and no reparse ancestors.
+    pub fn config_file_private(target: &Path, current: &str) -> bool {
+        if !plain_path(target) { return false; }
+        let attributes = unsafe { GetFileAttributesW(wide(&target.to_string_lossy()).as_ptr()) };
+        if attributes == INVALID_FILE_ATTRIBUTES || attributes & FILE_ATTRIBUTE_DIRECTORY != 0 { return false; }
+        let Some((owner, allowed)) = owner_and_dacl(target) else { return false; };
+        winpolicy::dacl_private(&owner, current, Some(&allowed))
+    }
+
     fn owner_and_dacl(target: &Path) -> Option<(String, Vec<String>)> {
         let wide = wide(&target.to_string_lossy());
         let (mut owner, mut dacl, mut descriptor) =

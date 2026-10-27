@@ -1,5 +1,6 @@
-//! abito-pausa S1-S2 (human: «Visibles en gris y apagadas»): this version works on Chat and Agentes. Every other feature is
-//! PAUSED: it stays visible in grey in Ajustes (frontend `hub/shell.ts` PAUSED_PAGES) and is switched off INSIDE, here — its
+//! abito-pausa (human 0.1.2: «vale todo lo que este en pausa se puede ocultar?» → yes; supersedes 26-oct «Visibles en gris
+//! y apagadas»): this version works on Chat and Agentes. Every other feature is PAUSED: it is hidden in Ajustes (frontend
+//! `hub/shell.ts` PAUSED_PAGES) and switched off INSIDE, here — its
 //! background work never starts, whatever its stored preference says. The stored preference is left untouched, so the next
 //! version turns a feature back on by flipping one constant. One place, no deleted code.
 

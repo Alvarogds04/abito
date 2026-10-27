@@ -42,4 +42,20 @@ function runPs(pid, exec = execFileSync) {
 	}
 }
 
-module.exports = { PS, PS_ARGS, parsePsLine, runPs };
+/** Parent executable identity, not command-line text: comm preserves spaces and carries no argv. */
+function runPsExecutable(pid, exec = execFileSync) {
+	if (!Number.isSafeInteger(pid) || pid <= 1) return undefined;
+	try {
+		const out = exec(PS, ['-ww', '-o', 'uid=', '-o', 'comm=', '-p', String(pid)], {
+			encoding: 'utf8', env: { LC_ALL: 'C', PATH: '/usr/bin:/bin' }, timeout: 2000,
+			stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8192,
+		});
+		const lines = String(out).split('\n').filter(line => line.trim() !== '');
+		if (lines.length !== 1) return undefined;
+		const match = /^\s*(\d+)\s+(\/[^\r\n\0]+)$/.exec(lines[0]);
+		if (!match || !Number.isSafeInteger(Number(match[1]))) return undefined;
+		return { uid: Number(match[1]), executable: match[2] };
+	} catch { return undefined; }
+}
+
+module.exports = { PS, PS_ARGS, parsePsLine, runPs, runPsExecutable };

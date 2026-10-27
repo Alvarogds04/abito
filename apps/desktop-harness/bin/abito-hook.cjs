@@ -48,7 +48,7 @@ function readStdin() {
 //  - a stray crash after the verdict is known exits with that verdict's code, silently;
 //  - a stray crash before any verdict prints ONE fixed JSON error (best effort) and exits 70.
 const INTERNAL_LINE = '{"schema":"abito-hook-install/1","ok":false,"code":"internal","message":"internal error"}\n';
-const EXIT_OF = { usage: 64, refused: 65, not_writable: 65, audit_unavailable: 73, not_island: 77 };
+const EXIT_OF = { usage: 64, refused: 65, not_writable: 65, audit_unavailable: 73, not_island: 77, unsupported_platform: 77 };
 const exitOfJson = o => (o && o.ok === true ? 0 : o && EXIT_OF[o.code] !== undefined ? EXIT_OF[o.code] : 70);
 async function runIsland(argv) {
   let verdict = null;
@@ -69,6 +69,10 @@ async function runInstaller(argv) {
     // island install mode: one JSON line on stdout, nothing on stderr, no TTY (src/install-ui.cjs, docs/ISLAND-INSTALL.md)
     await runIsland(argv);
     return;
+  }
+  if (argv[0] === 'pi') {
+    process.stderr.write('usage: abito-hook install pi --user [--remove] --json [--apply-plan <hash> --audit-dir <abs path>] (Linux/macOS only)\n');
+    process.exitCode = 64; return;
   }
   const { runInstall, askLine, promptTimeoutFromEnv } = require('../src/install-claude.cjs');
   const { runInstallCodex } = require('../src/install-codex.cjs');

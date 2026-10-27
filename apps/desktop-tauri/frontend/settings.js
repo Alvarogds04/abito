@@ -459,6 +459,16 @@
   let failureTimer = 0;
   function send(payload, okSay) {
     if (busy) return;
+    // HU-015: agent hook changes use the daemon-free host route only; the engine's connection says nothing about them.
+    if (payload && (payload.action === 'agent_connect' || payload.action === 'agent_disconnect')) {
+      busy = true;
+      agent(payload).then(next => {
+        busy = false; applyAgent(next);
+        const out = V.directOutcome(next, payload.agentId, okSay);
+        say(out.say); if (!out.ok) showFailure({ word: 'No se pudo', icon: 'triangle', tone: 'red', say: out.say });
+      }, error => { busy = false; say((error && error.message) || 'No se pudo completar.'); render(); });
+      return;
+    }
     busy = true;
     const before = agentState;
     if (waiting) clearTimeout(waiting.timer);
@@ -614,7 +624,7 @@
       ['openrouter', 'OpenRouter', 'https://openrouter.ai/api/v1', 'openai-completions'],
       ['ollama', 'Ollama (local)', 'http://127.0.0.1:11434/v1', 'openai-completions'],
       ['lmstudio', 'LM Studio (local)', 'http://127.0.0.1:1234/v1', 'openai-completions'],
-      ['custom', 'Endpoint personalizado (HTTPS)', '', 'openai-completions'],
+      // HU-041 (deferred to after 0.1.2): no new custom endpoint; saved custom accounts still render via the fallback below.
     ];
     for (const [id, title] of presets) option(provider, id, title);
     if (saved && !presets.some(p => p[0] === saved.provider)) option(provider, saved.provider, saved.provider);

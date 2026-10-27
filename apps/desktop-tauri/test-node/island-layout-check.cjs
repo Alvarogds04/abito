@@ -557,6 +557,23 @@ test('S2 compactView: up to 3 coloured minis + «+N», the activity line from RE
   assert.equal(L.compactView({ rows, focusId: null, pending: null }).reply, false);
   assert.equal(L.compactView(null).width, 288);
 });
+test('HU-006 S4 compactView: a notice shows inside the compact pill without widening it; a waiting question still wins', () => {
+  const done = L.compactView({ rows: [], focusId: null, pending: null, notice: { kind: 'settled', title: 'Terminó: tests verdes' } });
+  assert.deepEqual([done.activity, done.badge, done.width, done.reply], ['Terminó: tests verdes', 'finished', 288, false]);
+  const busy = [row({ id: 's-0000000a', kindLabel: 'Pi', cwd: 'workspace', state: 'running' })];
+  const withRows = L.compactView({ rows: busy, focusId: 's-0000000a', pending: null, notice: { kind: 'attention', title: 'Codex te pide permiso' } });
+  assert.deepEqual([withRows.activity, withRows.badge, withRows.width], ['Codex te pide permiso', 'attention', 440], 'same width as without the notice');
+  const ask = L.compactView({ rows: busy, focusId: null, pending: { kind: 'question', agent: 'pi', text: '¿Seguro?' }, notice: { kind: 'settled', title: 'x' } });
+  assert.deepEqual([ask.badge, ask.activity], ['question', '¿Seguro?']);
+  const long = L.compactView({ rows: [], pending: null, notice: { kind: 'settled', title: 'x'.repeat(200) } });
+  assert.ok(long.activity.length <= 44, 'bounded');
+  for (const bad of [{ kind: 'evil', title: 'x' }, { kind: 'settled', title: 7 }, { kind: 'settled', title: '' }, 'text']) {
+    const v = L.compactView({ rows: [], pending: null, notice: bad });
+    assert.deepEqual([v.activity, v.badge], ['', ''], JSON.stringify(bad));
+  }
+  const css = fs.readFileSync(path.join(frontend, 'vendor/coucou/island/island.css'), 'utf8');
+  for (const kind of ['finished', 'attention']) assert.match(css, new RegExp(`#compact-badge\\[data-kind="${kind}"\\]::before`), kind);
+});
 test('S1/S2 wiring + CSS: the strip element, the 8px activation zone (24px hidden offset), the mini row and the activity line exist', () => {
   const html = fs.readFileSync(path.join(frontend, 'index.html'), 'utf8');
   for (const id of ['edge-strip', 'compact-activity', 'compact-badge']) assert.match(html, new RegExp(`id="${id}"`), id);

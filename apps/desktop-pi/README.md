@@ -8,8 +8,11 @@ This directory is the **Pi-side producer**, not a desktop app. The explicit `abi
 
 ## Install and enable
 
-Nothing is installed by the Pi package: this directory is a **source tree**, not a shipped extension (the installed
-`~/.local/share/abito-island` contains no `desktop-pi`). Three ways to enable it, in increasing permanence:
+Abito ships the closed Pi runtime beside its harness. On Linux/macOS, **Settings → Agents → Pi → Install** previews and installs it into `~/.pi/agent/extensions/abito-island/index.ts` without downloading dependencies. Restart Pi afterwards. The row reflects this extension's manifest, never a running session or the presence of Pi itself.
+
+Only the default `~/.pi/agent` directory is supported. A Pi session using another `PI_CODING_AGENT_DIR` will not load this installation; the row always states that limitation. Windows automatic installation remains explicitly unavailable, and the terminal installer is not a workaround.
+
+Other opt-in loading mechanisms (not managed by the Settings installer):
 
 | How | Command / location | Useful for |
 | --- | --- | --- |
@@ -18,9 +21,7 @@ Nothing is installed by the Pi package: this directory is a **source tree**, not
 | Project extensions | copy it to `<project>/.pi/extensions/abito-island/` | One repository, with Pi's project trust. |
 
 Pi loads TypeScript directly (jiti), so no build step is needed. Only the Pi API and Node builtins are imported; there
-are no npm dependencies. **Installation parity is not there yet:** Claude Code gets `abito-hook install claude --user`
-(preview + human confirmation), while Pi has no installer — the change needed is described under
-*Installer proposal* in the parity audit.
+are no npm dependencies. The managed installer uses an exact eight-file manifest, refuses foreign/modified/unlisted files and symlinks, binds the shown hash to the current and bundled bytes, and makes a directory backup before replacement/removal. It never recursively removes unrelated files. See [the installer contract](../desktop-harness/docs/PI-INSTALL.md).
 
 The level switch matters more than the loading mechanism: with the default `ABITO_QUESTIONS` value, the island shows
 notices but `abito_ask` answers `unavailable`. Set `ABITO_QUESTIONS=1` (or `3`) in the environment Pi runs in.
@@ -179,7 +180,8 @@ still decide whether the socket is usable.
 | Approval (exactly two opaque tokens, no free text) | `abito_ask` `kind:"approval"` | `ABITO_QUESTIONS>=1` |
 | One question, several ticked options | `abito_ask` `multiSelect: true` | `ABITO_QUESTIONS=3` + `structured:1` receiver |
 | 1–4 questions with steps and a summary (Claude Code's `AskUserQuestion` shape) | `abito_ask` `questions[]`, or a native multi-question `ask_user_question` raced at level 3 | `ABITO_QUESTIONS=3` + `structured:1` receiver |
-| Pi tool permissions, provider consent, authorization prompts | **nothing** — not intercepted, the terminal dialog runs untouched | — |
+| Pi's own yes/no confirmation (`ctx.ui.confirm`, e.g. gentle-pi's «Allow guarded forced git branch deletion?») | raced against the terminal, first answer wins (see below) | `ABITO_QUESTIONS>=1` |
+| Sensitive confirmations (credentials, tokens, keys, passwords, login/OAuth/auth, consent, provider consent, permission grants, review/RDD consent, maintenance authorization, opaque tokens), and every select/input/editor prompt | **nothing** — not intercepted, the terminal dialog runs untouched | — |
 
 The island's «Ver» / *Abrir terminal* on a notice is host-owned (`focus_host {origin:'notice', id}`) and does not
 depend on which producer sent the frame, so a Pi notice behaves exactly like a Claude Code one.
@@ -410,9 +412,11 @@ The handshake, one-global-question admission, no queue/defaults, exactly two app
    documentation fix: level ≥ 1 changes the shared socket's handshake, and a receiver that does not support it stops
    notices too. Options: keep `0` and document `1|3` (today), default to `1`, or default to `3` (full Claude Code
    `AskUserQuestion` parity). See the parity audit.
-3. **Pi tool permissions and provider-owned consent:** they remain separate and untouched. Routing any of them needs a
-   separate human decision/design, preserving their exact authority envelope; ordinary question answers confer no
-   permission. Claude Code does have a permission path (`PermissionRequest` hook); Pi deliberately has none today.
+3. **Pi tool permissions and provider-owned consent:** *superseded for yes/no confirmations (HU-042).* Human decision,
+   verbatim option chosen: «Cualquier confirmación sí/no que no sea sensible». Any non-sensitive `ctx.ui.confirm` is
+   now raced with Abito (see «Answering Pi's yes/no confirmations from Abito» below). Provider-owned consent,
+   credentials and every other sensitive confirm stay terminal-only, and select/input/editor prompts are untouched.
+   Claude Code has its own permission path (`PermissionRequest` hook); this is Pi's equivalent for plain yes/no.
 4. **Installation:** Pi has no installer and this extension is not shipped with the installed app. The change needed
    (ship the producer, add `install pi`, refuse to touch anything else) is described as a proposal in
    [`docs/desktop/pi-question-parity-audit.md`](../../docs/desktop/pi-question-parity-audit.md). How each agent is
@@ -439,6 +443,29 @@ When Abito is connected, a call to Pi's own `ask_user_choice` (gentle-pi), or to
 - **Consent and authorization prompts are never answerable from Abito.** Not intercepted (the native dialog runs untouched) when the question, labels, descriptions or previews mention consent, authorization, grant, decline, permission, token, binding, envelope, provider, credentials or secrets, or when any option value does not look like a plain word (opaque ids, hex, long digit runs, JSON, `granted`/`declined`). When in doubt, it is not intercepted.
 - Abito absent, disconnected, busy (queue full or another question live), or an input outside Abito's limits: **not intercepted at all**. If Abito fails mid-race (expiry, disconnect), the terminal dialog keeps waiting indefinitely; nothing is ever auto-answered.
 - `ABITO_NATIVE_ASK=0` disables the interception entirely.
+
+## Answering Pi's yes/no confirmations from Abito
+
+Human decision (HU-042), verbatim option chosen: «Cualquier confirmación sí/no que no sea sensible».
+
+Any `ctx.ui.confirm(title, message)` raised by Pi or by another extension (for example gentle-pi's bash guard: «Allow guarded forced git branch deletion?») reaches Abito as an approval card from «Pi» with the session's project name, options **Sí** / **No**. **The first human answer wins; the other side is withdrawn.** gentle-pi is not modified: when the session starts, the extension wraps the confirm of Pi's shared UI object once (`installConfirmRouter` in `native-ask.cjs`) and restores the original on `session_shutdown`. Only `confirm` is wrapped, never `select`, `input` or `editor`.
+
+**What is sent:** the title and the message **verbatim** (no redaction), so you approve exactly what Pi showed. A confirm is not routed, and the terminal dialog runs untouched, when the title is empty or longer than 200 characters, or when the message is longer than 1200 characters or 12 lines. It is also not routed when any character cannot be shown honestly. Allowed are printable ASCII, a line break in the message, a few punctuation marks (¿ ¡ « » · ° – — ‘ ’ “ ” …) and accented Latin letters (á, ñ, ü…). Everything else is refused: look-alike letters from other scripts, fullwidth forms, invisible or format characters, combining marks, tabs, non-breaking spaces and control characters.
+
+**Safety rules:**
+
+- **Sensitive confirmations never leave the terminal.** The check is a denylist that fails closed, applied to the title and the message after normalising them: accents removed, lower case, look-alike characters accepted for each letter (`0`→o, `1`→i/l, `2`→z, `3`→e, `4`/`@`→a, `5`/`$`→s, `6`/`9`→g, `7`/`+`→t, `8`→b, `(`/`<`→c, …) and spaces, dots, dashes and underscores removed, so `pass word`, `log_in`, `t0ken`, `6rant` or `ReviewRDD` still match. It covers credentials (*creds*), tokens, keys (*clave*, *llave*, and compounds such as `privatekey`, `keystore`, `keyfile`, `keygen`; only `keyboard` is let through), API keys, passwords (*pwd*), passcodes, passkeys, PINs, secrets, keychains, login/sign-in (*logging in*, *iniciar/abrir sesión*), OAuth, auth/authorization/authentication, consent (*consentimiento*), provider consent, permission grants, gentle-ai review/RDD consent, maintenance authorization, MFA/OTP and cookies. It also covers credentials inside an address (`user:token@host`, `//token@host`, and the percent-encoded `%40`/`%3A`), known secret shapes (`sk-…`, `sk_…`, `ghp_…`, `xoxb-…`, AWS keys, `Bearer …`), and opaque ids or tokens of 12 or more characters, including ones split by dashes, slashes or spaces.
+- **Only an explicit «Sí» approves.** «No» and a human cancel from Abito answer no. Expiry, busy, disconnect, an unknown answer or any error **decides nothing**: the terminal keeps waiting and decides. If the caller's own signal aborts, both sides are withdrawn and the answer is no.
+- No UI, Abito not connected or busy: the confirm is not routed.
+- `ABITO_NATIVE_CONFIRM=0` disables it entirely.
+
+A confirm answered from Abito posts one info line in Pi's terminal, `Respondido en Abito: Sí` or `Respondido en Abito: No`.
+
+**Limits (read before relying on it):**
+
+- A denylist cannot prove completeness: a sensitive prompt written in a way nobody anticipated could still reach Abito. The card always shows the exact text Pi showed, and nothing is approved without your explicit «Sí» click. Before the checks, encoded text is read as what it encodes (`%XX`, HTML entities, `\uXXXX`), letters drawn with symbols are read as letters (`|<` k, `|2` r, `|\|` n, `|v|` m, `\/` v, `|>` p), and a word with one letter replaced by up to three symbols still matches.
+- The check errs toward the terminal, so some ordinary confirms stay terminal-only. Examples: `npm run preview` (contains *review*), `$(pwd)`, `auth.spec.ts`, `--login`, `tokenizer`, `monkey` (*key*), `secretary`, `providers`, and short hashes or camel-case names such as `a1b2c3d4e5f6` or `ImportPipeline2`. These behave exactly as before this change: you answer them in the terminal.
+- Not verified yet: the card as rendered in the live island, Pi's RPC mode, and a session reload that creates a new extension runner (covered by reading Pi's code, not by a test). The last round of filter fixes (encoded text, symbol-drawn letters, symbol runs) was not independently re-reviewed.
 
 ## Structured questions (level 3)
 

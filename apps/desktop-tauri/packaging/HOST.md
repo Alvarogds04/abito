@@ -70,9 +70,9 @@ npx --yes @tauri-apps/cli@2 build --ci --bundles app,dmg \
   --config "$(node packaging/macos-config.cjs)" -- --locked
 ```
 
-The config generator uses `DAEMON_FILES` and `HARNESS_FILES` from `lib.cjs` as
+The config generator uses `DAEMON_FILES`, `HARNESS_FILES` and `PI_FILES` from `lib.cjs` as
 an exact source-to-resource map. Tauri copies them into
-`Contents/Resources/desktop-daemon` and `Contents/Resources/desktop-harness`.
+`Contents/Resources/desktop-daemon`, `Contents/Resources/desktop-harness` and `Contents/Resources/desktop-pi`.
 The host looks there before the debug-only source fallback. The daemon's existing
 sibling lookup also finds the hook installer there; no separate hook override is
 needed. Linux still uses the directories adjacent to the executable.

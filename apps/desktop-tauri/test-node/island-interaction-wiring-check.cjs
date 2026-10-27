@@ -394,13 +394,23 @@ test('#419 style.css rules: theme tokens, transform token, reduced motion, no sy
 });
 
 const finishedNotice=id=>({id,kind:'settled',title:'Pi terminó',agent:'pi',projectName:id,detail:'No confirma éxito',at:Date.now(),expiresAt:Date.now()+60000});
-test('A04c shipped finished opens its lane, holds 5200ms, then folds without dismissing',()=>{
-  const f=engagementFixture(false); f.mutate(); f.seed('compact'); f.update({notices:[finishedNotice('fresh')]});
-  assert.equal(f.view(),'notices'); f.seed('expanded'); f.advance(5199); assert.equal(f.desktopCalls.includes('autoClose'),false);
+test('A04c shipped finished opens its lane, holds 5200ms, then folds without dismissing (a HIDDEN island it revealed itself)',()=>{
+  const f=engagementFixture(false); f.mutate(); f.seed('hidden'); f.update({notices:[finishedNotice('fresh')]});
+  assert.equal(f.view(),'notices'); assert.ok(f.desktopCalls.includes('expand'),'a hidden island is revealed through the host verb');
+  f.seed('expanded'); f.advance(5199); assert.equal(f.desktopCalls.includes('autoClose'),false);
   f.advance(1); assert.equal(f.view(),'overview'); assert.equal(f.desktopCalls.filter(x=>x==='autoClose').length,1); assert.equal(f.desktopCalls.includes('dismiss'),false);
 });
+// HU-006 (human: «que salga en la isla compactada y que no me lo agrande»; S4/S6): a compact island never grows by itself, and an
+// island the human opens afterwards is theirs: the finished timer never folds it.
+test('A04c HU-006: a finished notice on a compact island does not expand it, and a human-opened island is never auto-folded',()=>{
+  const f=engagementFixture(false); f.mutate(); f.seed('compact'); f.update({notices:[finishedNotice('fresh')]});
+  assert.equal(f.desktopCalls.includes('expand'),false,'S4: no automatic expand while compact');
+  f.seed('expanded'); f.advance(5200);
+  assert.equal(f.desktopCalls.includes('autoClose'),false,'S6: the human opened it; it is not folded for them');
+  assert.equal(f.desktopCalls.includes('dismiss'),false);
+});
 for(const [name,protect] of [['human engagement',f=>f.click()],['pending request',f=>f.update({request:{}})],['transport failure',f=>f.update({unavailable:true})]]) test('A04c '+name+' prevents the finished timer collapsing the island',()=>{
-  const f=engagementFixture(false); f.mutate(); f.seed('compact'); f.update({notices:[finishedNotice('fresh')]}); f.seed('expanded'); protect(f); f.advance(5200);
+  const f=engagementFixture(false); f.mutate(); f.seed('hidden'); f.update({notices:[finishedNotice('fresh')]}); f.seed('expanded'); protect(f); f.advance(5200);
   assert.equal(f.view(),'overview'); assert.equal(f.desktopCalls.includes('autoClose'),false);
 });
 test('A04c the finished pane selects the new tail, not the oldest retained notice',()=>{

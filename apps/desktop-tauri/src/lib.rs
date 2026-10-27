@@ -14,6 +14,7 @@
 //! script.
 
 pub mod agentclient;
+pub mod agents_direct;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod agentconn;
 #[cfg(windows)]

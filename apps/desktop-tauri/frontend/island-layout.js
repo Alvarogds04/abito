@@ -275,6 +275,10 @@
       const first = String(pending.text || '').split(/\r?\n/).map(l => l.trim()).find(Boolean) || '';
       const av = approvalView(pending, '');
       activity = bound(av ? `${av.title} ${av.command}` : first, 44); reply = true;
+    } else if (o && o.notice && typeof o.notice === 'object' && (o.notice.kind === 'settled' || o.notice.kind === 'attention') &&
+      typeof o.notice.title === 'string' && o.notice.title.trim()) {
+      // HU-006 S4: a notice reads inside the compact pill at the width it already has; opening it stays the human's click (S6).
+      activity = bound(o.notice.title.trim(), 44); badge = o.notice.kind === 'attention' ? 'attention' : 'finished';
     }
     return { minis: reply ? [] : minis, more: reply ? 0 : Math.max(0, rows.length - MINIS), activity, badge, reply, width: reply ? COMPACT_ASK : rows.length ? COMPACT_WIDE : COMPACT_W };
   }
@@ -290,7 +294,7 @@ function mount(L) {
   const status = doc.getElementById('col-status');
   const centre = doc.getElementById('col-centre'), cState = doc.getElementById('centre-state'), cSteps = doc.getElementById('centre-steps');
   const cEmpty = doc.getElementById('centre-empty'), cta = doc.getElementById('centre-cta');
-  let view = null, pending = null, queuedCount = 0, focusId = null, selectedId = null, finished = false;
+  let view = null, pending = null, queuedCount = 0, focusId = null, selectedId = null, finished = false, compactNotice = null;
   const state = { mode: 'normal', attributedId: null, counts: null };
   // the list is sized to a whole number of rows from the card's real inner height (it changes with the notices band and focus mode)
   const blobsCard = doc.getElementById('blobs'), blobsList = doc.getElementById('pill-choices');
@@ -357,7 +361,7 @@ function mount(L) {
   const strip = doc.getElementById('edge-strip');
   function paintCompact(rows) {
     const kind = pending ? (approvalView(pending, '') || pending.kind === 'approval' ? 'approval' : 'question') : null;
-    const c = L.compactView({ rows, focusId, pending });
+    const c = L.compactView({ rows, focusId, pending, notice: compactNotice });
     doc.dispatchEvent(new CustomEvent('abito:compact-view', { detail: c }));
     if (strip) {
       const e = L.edgeStripView({ pending: kind, queued: queuedCount, finished });
@@ -390,6 +394,8 @@ function mount(L) {
     }
   }
   doc.addEventListener('abito:finished-shown', e => { finished = !!(e.detail && e.detail.shown); publish(); });
+  // HU-006: the notice the compact pill shows (display title only); null clears it
+  doc.addEventListener('abito:compact-notice', e => { const n = e.detail; compactNotice = n && typeof n === 'object' ? { kind: n.kind, title: n.title } : null; publish(); });
   // the CTA is the header's own «+» (a new conversation): no new host verb
   if (cta) cta.addEventListener('click', event => { if (event.isTrusted === true) doc.dispatchEvent(new CustomEvent('abito:centre-new')); });
   function syncMode() {

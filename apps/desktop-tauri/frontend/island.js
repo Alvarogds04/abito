@@ -818,8 +818,9 @@
   const finishedCycle = NV?.createFinishedCycle?.({
     now: () => performance.now(), schedule: (fn, ms) => setTimeout(fn, ms), cancel: id => clearTimeout(id),
     start(id) {
-      automaticExpansion = !!noticeLane?.automatic || current?.state === 'hidden' || capsule.dataset.phase === 'compact';
-      revealIsland();
+      // HU-006: a visible compact island no longer grows on its own, so only a hidden reveal is an automatic expansion
+      automaticExpansion = !!noticeLane?.automatic || current?.state === 'hidden';
+      revealIsland(false, true);
       noticeLane = { id, view:'notices', automatic:true };
       capsule.dataset.noticeView = 'notices';
       moveView(0); renderCard(); paintNoticeCard(null); render();
@@ -830,6 +831,7 @@
       const fold = ownsView && expired && automaticExpansion && finishedAllowed() &&
         capsule.dataset.phase === 'expanded' && !capsule.matches(':hover');
       automaticExpansion = false;
+      if (compactNoticeId === id) showCompactNotice(null);
       if (!ownsView) return;
       noticeLane = null; delete capsule.dataset.noticeView;
       moveView(0); renderCard(); render(); syncInteraction();
@@ -843,11 +845,17 @@
   document.addEventListener('keydown', engageFinished);
   window.addEventListener('pagehide', () => finishedCycle?.stop());
   let revealFlight = false;
+  // HU-006 S4: the notice the compact pill shows (display title only); the human opens it with the pill's own click (S6)
+  let compactNoticeId = null;
+  function showCompactNotice(n) {
+    compactNoticeId = n ? n.id : null;
+    document.dispatchEvent(new CustomEvent('abito:compact-notice', { detail: n ? { kind: n.kind === 'attention' ? 'attention' : 'settled', title: n.title } : null }));
+  }
   if (desktopCharacter) desktopCharacter.attach({ clay, reveal: () => revealIsland() }); // #486
-  function revealIsland(question = false) {
+  function revealIsland(question = false, notice = false) {
     edgeInteraction?.alert();
     if (!NV || typeof NV.revealAction !== 'function' || revealFlight) return;
-    const action = NV.revealAction({ state: current && current.state, phase: capsule.dataset.phase, view: capsule.dataset.view, question });
+    const action = NV.revealAction({ state: current && current.state, phase: capsule.dataset.phase, view: capsule.dataset.view, question, notice });
     if (action === 'leave-chat' || action === 'show-question') { openQuestion(); return; }
     if (action !== 'expand') return;
     if (!window.desktop || typeof window.desktop.expand !== 'function') return;
@@ -907,7 +915,11 @@
     // F6 (SN1): an attention notice alone (Codex asks in its own terminal) is signalled by the Sileo pill, not by forcing the island open
     const attentionOnly = arrivals.length > 0 && arrivals.every(x => x.kind === 'attention');
     // human 26-oct: Sileo toasts only while Abito is hidden; a visible island shows the attention notice itself (its Avisos strip)
-    if (fresh) { if (attentionOnly && capsule.dataset.edgeHidden === 'true') edgeInteraction?.alert(); else revealIsland(); } // boot, retained rows and snapshot churn are not arrivals
+    if (fresh) { if (attentionOnly && capsule.dataset.edgeHidden === 'true') edgeInteraction?.alert(); else revealIsland(false, true); } // boot, retained rows and snapshot churn are not arrivals
+    // HU-006 S4: the latest new notice reads inside the compact pill; a notice that left the list leaves the pill
+    const shownArrival = arrivals.filter(x => !x.kind || x.kind === 'settled' || x.kind === 'attention').at(-1);
+    if (shownArrival) showCompactNotice(shownArrival);
+    else if (compactNoticeId && !notices.some(n => n && n.id === compactNoticeId)) showCompactNotice(null);
     // Sileo toast: ONE «terminó» event per NEW settled notice; display text only
     const settled = arrivals.filter(x => !x.kind || x.kind === 'settled').at(-1);
     if (settled) document.dispatchEvent(new CustomEvent('abito:notice-arrival', { detail: { id: settled.id, kind: 'settled', title: settled.title, agent: settled.agent, projectName: settled.projectName } }));

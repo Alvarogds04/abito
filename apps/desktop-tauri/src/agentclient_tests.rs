@@ -400,7 +400,7 @@ fn a_plan_that_does_not_look_like_ours_never_reaches_the_page() {
 #[test]
 fn the_three_new_details_are_part_of_the_closed_set() {
     let mut st = ClientState::connected();
-    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed"] {
+    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform"] {
         st.apply(&json!({"type":"agents","agents":[{"id":"codex","state":"error","detail":d}]})).unwrap();
         assert_eq!(serde_json::to_value(&st).unwrap()["agents"][0]["detail"], json!(d), "{d}");
     }
@@ -596,5 +596,40 @@ fn a_truncated_sessions_frame_carries_the_real_total_and_only_then() {
         let rows: Vec<Value> = (0..5).map(|i| json!({"id":format!("s-{i:08x}"),"kind":"pi","cwd":"p","state":"sleeping","origin":null})).collect();
         st.apply(&json!({"type":"sessions","schema":"abito-sessions/view/1","truncated":true,"total":bad,"sessions":rows})).unwrap();
         assert!(serde_json::to_value(&st).unwrap()["sessions"].get("total").is_none(), "{bad}");
+    }
+}
+
+// ---- HU-015: the daemon-free route folds its two frames with the SAME closed rules ----------------------
+mod direct {
+    use super::*;
+    const H: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn fold_direct_keeps_only_the_closed_view_under_its_own_keys() {
+        let out = json!({
+            "agents": {"type":"agents","agents":[
+                {"id":"claude-code","state":"not_connected","backup":false,"detail":null,"plan_hash":H,"summary":"Adds the Abito hooks (PermissionRequest, Stop) to ~/.claude/settings.json. A backup is made first.","reviewable":true},
+                {"id":"codex","state":"connected","backup":true,"detail":null},
+                {"id":"pi","state":"connected"},
+                {"id":"unknown-agent","state":"connected"},
+                {"id":"codex","state":"error"}]},
+            "hooks": {"type":"hooks","clients":[{"id":"gemini-cli","state":"connected","mechanism":"artifact","detail":null},{"id":"evil","state":"connected","mechanism":"artifact"}]},
+        });
+        let view = fold_direct(&out).expect("folds");
+        assert_eq!(view["agentsRuntime"], "ok");
+        let ids: Vec<&str> = view["directAgents"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["claude-code", "codex", "pi"], "unknown ids and duplicates dropped");
+        assert_eq!(view["directAgents"][0]["plan_hash"], H);
+        assert_eq!(view["directAgents"][1]["state"], "connected");
+        assert_eq!(view["directHooks"].as_array().unwrap().len(), 1);
+        // never the engine's own keys: the daemon's pushed state must not be able to overwrite these
+        assert!(view.get("agents").is_none() && view.get("hooks").is_none());
+    }
+
+    #[test]
+    fn fold_direct_refuses_garbage_instead_of_inventing_state() {
+        for bad in [json!(null), json!({}), json!({"agents":{"type":"agents"},"hooks":{"type":"hooks","clients":[]}}), json!({"error":"failed"}), json!({"agents":"x","hooks":"y"})] {
+            assert!(fold_direct(&bad).is_none(), "{bad}");
+        }
     }
 }
