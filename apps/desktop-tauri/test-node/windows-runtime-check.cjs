@@ -38,6 +38,11 @@ try {
   assert.doesNotMatch(macro, /^  File .*\//m, 'NSIS source paths use Windows separators, including on the cross host');
   const nsis = fs.readFileSync(path.join(crate, 'packaging/windows/abito.nsi'), 'utf8');
   assert.ok(nsis.includes('!include "${RUNTIMEDIR}\\runtime.nsh"'));
+  // Per-user install only into the protected default (%LOCALAPPDATA%\Programs): no directory page, so a tester can
+  // never pick a folder other local users can modify (e.g. C:\Abito) and plant binaries the island trusts.
+  assert.ok(nsis.includes('InstallDir "$LOCALAPPDATA\\Programs\\abito-island"'));
+  assert.doesNotMatch(nsis, /MUI_PAGE_DIRECTORY/);
+  assert.doesNotMatch(nsis, /^InstallDirRegKey/m);
   const deleted = [...macro.matchAll(/^  Delete "\$INSTDIR\\([^"]+)"$/gm)].map(m => m[1].replaceAll('\\', '/')).sort();
   assert.deepEqual(installed, [...files, ...bins].sort());
   assert.deepEqual(deleted, installed);

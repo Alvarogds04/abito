@@ -44,6 +44,20 @@ jobs:
           npx --yes @tauri-apps/cli@2 build --ci --bundles app,dmg \
             --config "$(node packaging/macos-config.cjs)" \
             -- --locked
+      - name: Verify bundle seal and Info.plist
+        run: |
+          set -euo pipefail
+          app=$(ls -d target/release/bundle/macos/*.app)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          grep -q '^Signature=adhoc' "$RUNNER_TEMP/codesign.txt"
+          test -d "$app/Contents/_CodeSignature"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" = true
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$app/Contents/Info.plist" >/dev/null
+          want=$(node -p "require('./tauri.conf.json').version")
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$want"
+          # A quarantined download must be assessable (unsigned-developer path), never rejected as damaged.
+          spctl --assess --type execute -vv "$app" 2>&1 || true
       - name: Package
         run: |
           set -euo pipefail

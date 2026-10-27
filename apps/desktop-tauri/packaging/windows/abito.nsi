@@ -35,13 +35,11 @@ Unicode true
 Name "Abito Island"
 OutFile "${OUTDIR}\abito-island-${VERSION}-win-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\abito-island"
-InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "InstallLocation"
 RequestExecutionLevel user
 
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
-!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
