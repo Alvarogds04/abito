@@ -181,7 +181,7 @@ try {
         $code = $LASTEXITCODE
         if ((Get-Item -LiteralPath (Join-Path $root 'install.stderr.log')).Length -ne 0) { throw 'install wrote to stderr' }
         $json = $out | ConvertFrom-Json
-        if ($json.code -eq 'not_island') {
+        if ($json.PSObject.Properties['code'] -and $json.code -eq 'not_island') {
             Write-Host "DIAG not_island: ABITO_ISLAND_EXE=$($env:ABITO_ISLAND_EXE) pid=$PID"
             $helper = Join-Path $install 'abito-private-session.exe'
             Write-Host "DIAG parent-check: $(& $helper --parent-check $PID 2>&1) exit=$LASTEXITCODE"
