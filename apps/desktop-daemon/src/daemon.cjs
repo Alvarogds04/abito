@@ -98,6 +98,20 @@ function publishSessionWindows(root, payload, deps = {}) {
 	return true;
 }
 
+/** Read-only native ACL/server identity/ready proof. No token leaves Node. */
+function verifySessionWindows(root, deps = {}) {
+    const exe = deps.helperPath ?? findSessionHelper(deps);
+    if (!exe) return false;
+    try {
+        const result = (deps.spawnSync ?? require("node:child_process").spawnSync)(exe, ["--verify"], {
+            timeout: SESSION_HELPER_TIMEOUT_MS, windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe"], maxBuffer: 4096,
+            env: { ...process.env, ABITO_ISLAND_DIR: path.resolve(root) },
+        });
+        return !result.error && result.status === 0 && !result.stdout?.length && !result.stderr?.length;
+    } catch { return false; }
+}
+
 const uid = () => (typeof process.getuid === "function" ? process.getuid() : undefined);
 
 function sessionPath(root) {
@@ -265,8 +279,17 @@ async function classifySession(root, deps = {}) {
 	if (!session) return { state: "stale", reason: "bad_session" };
 	// Probe BEFORE trusting anything else: even a dead recorded pid must never
 	// hide a live endpoint (GD029: never overwrite a session that answers ready).
-	const ready = (await probeEndpoint(session)) === "ready";
+	const platform = deps.platform ?? process.platform;
+	// Windows never sends the token through the unverified Node probe. The
+	// native helper checks file ACL + pipe server pid/SID before hello→ready.
+	const ready = platform === "win32"
+		? (deps.nativeVerify ?? verifySessionWindows)(root) === true
+		: (await probeEndpoint(session)) === "ready";
 	if (pidState(session.pid) !== "alive") return { state: "stale", reason: "pid_dead", ready };
+	if (platform === "win32") {
+		return ready ? { state: "healthy", reason: "ready", ready: true }
+			: { state: "foreign", reason: "identity_unconfirmed", ready: false };
+	}
 	if (session.pid !== process.pid) {
 		let cmdline = "";
 		if (process.platform === "darwin") cmdline = runPs(session.pid)?.command ?? "";
@@ -868,6 +891,7 @@ module.exports = {
 	pidAlive,
 	pidState,
 	publishSessionWindows,
+	verifySessionWindows,
 	probeEndpoint,
 	procStartTicks,
 	readSession,

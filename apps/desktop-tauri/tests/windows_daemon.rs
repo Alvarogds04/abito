@@ -287,6 +287,48 @@ fn reader_sends_the_token_only_after_verification_and_connects() {
 }
 
 #[test]
+fn helper_verify_is_read_only_and_requires_native_identity_and_ready() {
+    for ready in [true, false] {
+        let base = scratch(if ready { "verify-ready" } else { "verify-refused" });
+        let name = pipe_name();
+        let server = winipc::ffi::create_server_pipe(&name, &current_sid(), false).unwrap();
+        assert_eq!(run_helper(&base, payload(&name, std::process::id()).as_bytes(), None).status.code(), Some(0));
+        let before = std::fs::read(session_file(&base)).unwrap();
+        let server_thread = std::thread::spawn(move || {
+            let event = winipc::ffi::create_manual_event().unwrap();
+            let file = std::fs::File::from(server);
+            let wait = std::time::Duration::from_secs(5);
+            winipc::ffi::connect_and_wait(file.as_raw_handle(), wait).unwrap();
+            let mut buffer = [0u8; 512];
+            let n = winipc::ffi::read_bounded_overlapped(&file, event.as_raw_handle(), &mut buffer, wait).unwrap();
+            assert!(String::from_utf8_lossy(&buffer[..n]).contains(&token()));
+            let reply: &[u8] = if ready { b"{\"type\":\"ready\"}\n" } else { b"{\"type\":\"refused\"}\n" };
+            winipc::ffi::write_bounded(file.as_raw_handle(), reply, wait).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        });
+        let output = Command::new(HELPER).arg("--verify").env("LOCALAPPDATA", &base).env_remove("ABITO_ISLAND_DIR").output().unwrap();
+        server_thread.join().unwrap();
+        assert_eq!(output.status.code(), Some(if ready { 0 } else { 1 }));
+        assert!(output.stdout.is_empty() && output.stderr.is_empty(), "verdict code only");
+        assert_eq!(std::fs::read(session_file(&base)).unwrap(), before);
+        assert_eq!(std::fs::read_dir(base.join("Abito/runtime")).unwrap().count(), 1);
+        widen_dacl_to_everyone(&session_file(&base));
+        let refused = Command::new(HELPER).arg("--verify").env("LOCALAPPDATA", &base).env_remove("ABITO_ISLAND_DIR").output().unwrap();
+        assert_eq!(refused.status.code(), Some(1));
+        assert!(refused.stdout.is_empty() && refused.stderr.is_empty());
+        assert_eq!(std::fs::read(session_file(&base)).unwrap(), before);
+        let invalid = Command::new(HELPER).args(["--verify", "attacker-path"]).env("LOCALAPPDATA", &base).output().unwrap();
+        assert_ne!(invalid.status.code(), Some(0), "no caller path argument");
+        let outside = base.join("not-canonical");
+        let redirected = Command::new(HELPER).arg("--verify").env("LOCALAPPDATA", &base).env("ABITO_ISLAND_DIR", &outside).output().unwrap();
+        assert_eq!(redirected.status.code(), Some(1));
+        assert!(redirected.stdout.is_empty() && redirected.stderr.is_empty());
+        assert!(!outside.exists(), "verify cannot create or inspect a caller-selected non-canonical root");
+        assert_eq!(std::fs::read(session_file(&base)).unwrap(), before);
+    }
+}
+
+#[test]
 fn node_discovery_finds_only_a_real_executable() {
     let base = scratch("node");
     std::fs::write(base.join("node.exe"), b"").unwrap();

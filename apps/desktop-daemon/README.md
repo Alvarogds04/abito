@@ -23,6 +23,13 @@ and a fixed, path-redacted category. Unknown exception details are omitted, not
 printed after best-effort redaction: they may contain tokens or account data. The
 app-owned daemon inherits the island's stderr; it does not create a separate daemon.log.
 
+On Windows, read-only `status` is healthy only after the fixed sibling
+`abito-private-session.exe --verify` proves session-file owner/ACL, pipe-server
+PID/SID and authenticated hello→ready. Node does not send the token before that
+native proof, and status never cleans up the session file. Missing/failed helpers
+fail closed. `stop` still refuses an unconfirmed Windows PID; status proof does
+not grant signal/kill authority.
+
 **The app never restarts the host, so app→host has no restart loop, and the daemon
 alone owns the bounded backoff for pi.** This means a capped retry delay, not a
 fixed retry count. App-side host crashes degrade through `no_daemon`; app shutdown

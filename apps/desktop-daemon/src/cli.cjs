@@ -161,7 +161,11 @@ async function main(argv) {
 		if (command === "status" && argv.length === 1) {
 			// #390 GD014: classify BEFORE liveSession (its stale cleanup may unlink the file)
 			const verdict = await classifySession(root);
-			const session = liveSession(root);
+			// Windows status is read-only after native proof. Never run the
+			// POSIX liveSession stale-file cleanup or enable bare-pid signalling.
+			const session = process.platform === "win32"
+				? (verdict.state === "healthy" && verdict.ready === true ? readSession(root) : undefined)
+				: liveSession(root);
 			if (!session) return fail(3, `not running (${verdict.state}: ${verdict.reason})`);
 			const cfg = config.loadConfig(root);
 			process.stdout.write(

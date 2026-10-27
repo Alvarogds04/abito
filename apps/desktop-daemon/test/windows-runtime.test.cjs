@@ -34,6 +34,44 @@ const PAYLOAD = () => ({
 	startedAt: Date.now(),
 });
 
+test("native Windows verification maps only a silent successful helper to true", () => {
+    const { verifySessionWindows } = require("../src/daemon.cjs");
+    for (const [result, expected] of [
+        [{ status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }, true],
+        [{ status: 1 }, false], [{ status: null, error: new Error("timeout") }, false],
+        [{ status: 0, stdout: Buffer.from("unexpected") }, false],
+    ]) {
+        assert.equal(verifySessionWindows(os.tmpdir(), { helperPath: "fixed-helper.exe", spawnSync(exe, args, options) {
+            assert.equal(exe, "fixed-helper.exe");
+            assert.deepEqual(args, ["--verify"]);
+            assert.equal(options.input, undefined, "no token on stdin");
+            assert.equal(options.timeout, 5000);
+            return result;
+        } }), expected);
+    }
+});
+
+test("Windows classify is read-only and healthy only after native verification", async () => {
+    const { classifySession } = require("../src/daemon.cjs");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "abito-classify-"));
+    const runtime = path.join(root, "runtime");
+    fs.mkdirSync(runtime, { mode: 0o700 });
+    const file = path.join(runtime, "session.json");
+    fs.writeFileSync(file, JSON.stringify(PAYLOAD()), { mode: 0o600 });
+    const before = fs.readFileSync(file);
+    try {
+        let calls = 0;
+        const verdict = await classifySession(root, { platform: "win32", nativeVerify: () => { calls++; return true; } });
+        assert.deepEqual(verdict, { state: "healthy", reason: "ready", ready: true });
+        assert.equal(calls, 1);
+        const denied = await classifySession(root, { platform: "win32", nativeVerify: () => false });
+        assert.notEqual(denied.state, "healthy");
+        assert.equal(denied.ready, false);
+        assert.deepEqual(fs.readFileSync(file), before);
+        assert.deepEqual(fs.readdirSync(runtime), ["session.json"]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("sessionHelperCandidates is fixed (no PATH, no CWD) and empty off Windows", () => {
 	const candidates = sessionHelperCandidates();
 	if (WIN) {

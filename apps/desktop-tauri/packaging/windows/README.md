@@ -10,6 +10,8 @@ The installer contains these sibling executables:
 - `abito-notice-relay.exe`
 - `abito-private-session.exe`
 
+`abito-private-session --verify` performs a read-only native status check using the same canonical root as publication: strict session-file ACL/owner, live daemon PID, pipe server PID/SID, then authenticated hello→ready. It accepts no path argument, never prints a token, writes nothing, and returns only a silent exit code (0 verified, 1 refused). `--help` describes both modes. Windows daemon CLI `status` uses this fixed sibling helper instead of a Node-only pipe probe; failure or a missing helper is not healthy. This does not authorize `stop` to signal a bare Windows PID.
+
 The closed `desktop-daemon` and `desktop-harness` directories live beside them. Node and Pi remain external runtime prerequisites, not bundled dependencies.
 
 For native Windows packaging, stage with Node, copy the three built executables to `dist`, and invoke NSIS with `VERSION`, `BINDIR`, `ICON`, and `OUTDIR`. `RUNTIMEDIR` defaults to `${BINDIR}\windows-runtime`; the native workflow passes it explicitly. NSIS source paths, including the generated `File` entries, use backslashes. The generated include is BOM-free ASCII with LF line endings and drives both native and cross packaging. Before native compilation, CI prints the runtime directory argument, staged file list, and include header to distinguish missing payloads from NSIS path resolution failures.

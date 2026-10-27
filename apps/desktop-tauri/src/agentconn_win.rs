@@ -130,6 +130,30 @@ fn read_session(path: &Path) -> Result<Session, Reason> {
     Ok(session)
 }
 
+/// Read-only native status proof for the already-shipped session helper.
+/// Uses the same ACL, live-pid and server-pid/SID gates as the island BEFORE
+/// sending a token. Sends only hello; no refresh/commands, cleanup or writes.
+pub fn verify_session(island_root: &Path) -> Result<(), Reason> {
+    let session = read_session(&session_path(island_root))?;
+    let pipe = connect_verified(&session)?;
+    pipe.write_all(session.hello().as_bytes()).map_err(|_| Reason::Refused)?;
+    let mut buffer = FrameBuffer::default();
+    let mut chunk = [0u8; 4096];
+    let deadline = Instant::now() + HELLO_WAIT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let n = pipe.read_timeout(&mut chunk, remaining).map_err(|_| Reason::Refused)?;
+        if n == 0 { return Err(Reason::Refused); }
+        let frames = buffer.push(&chunk[..n]).map_err(|_| Reason::Refused)?;
+        if let Some(first) = frames.first() {
+            return if first.get("type").and_then(Value::as_str) == Some("ready") {
+                Ok(())
+            } else { Err(Reason::Refused) };
+        }
+        if Instant::now() >= deadline { return Err(Reason::Refused); }
+    }
+}
+
 impl AgentConn {
     pub fn new(changed: impl Fn(Value) + Send + Sync + 'static) -> AgentConn {
         AgentConn {

@@ -18,7 +18,10 @@
 //!   are refused. Everything fails closed; errors are fixed strings (never
 //!   echoed input, never the token).
 //!
-//! No GUI, no arguments, no output on stdout except a bare `ok` on success.
+//! No GUI. Default publication consumes stdin and prints no success output.
+//! `--verify` derives the same canonical root, proves the native session/pipe
+//! identity and hello→ready without writes, and returns only a silent verdict
+//! exit code. It never accepts a path argument or exposes a token.
 use std::io::Read as _;
 use std::io::Write as _;
 #[cfg(windows)]
@@ -102,13 +105,20 @@ fn validated_bytes(input: &str) -> Result<Vec<u8>, &'static str> {
 }
 
 fn run() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--help"] {
+        println!("Usage: abito-private-session [--verify]\nNo arguments: publish bounded session JSON from stdin.\n--verify: read-only canonical session ACL/server identity/hello-ready check; silent exit 0 on success, 1 on refusal. No path arguments.");
+        return 0;
+    }
+    let verify = args.as_slice() == ["--verify"];
+    if !args.is_empty() && !verify { return fail("usage: abito-private-session [--verify]"); }
     #[cfg(windows)]
     {
-        run_windows()
+        run_windows(verify)
     }
     #[cfg(not(windows))]
     {
-        fail("this helper is Windows-only")
+        if verify { 1 } else { fail("this helper is Windows-only") }
     }
 }
 
@@ -128,10 +138,10 @@ fn read_bounded_input(reader: &mut impl std::io::Read) -> Result<String, &'stati
 }
 
 #[cfg(windows)]
-fn run_windows() -> i32 {
+fn run_windows(verify: bool) -> i32 {
     // Identity first: without OUR user SID there is no owner for the DACL.
     let Some(sid) = winipc::ffi::current_user_sid() else {
-        return fail("current user SID unavailable");
+        return if verify { 1 } else { fail("current user SID unavailable") };
     };
     // Canonical root only: an unsafe override is refused here (never bypasses
     // the protected LOCALAPPDATA root), matching the Rust reader's policy.
@@ -140,8 +150,11 @@ fn run_windows() -> i32 {
         std::env::var("LOCALAPPDATA").ok().as_deref(),
     ) {
         Some(root) => root,
-        None => return fail("island root is not the canonical protected one"),
+        None => return if verify { 1 } else { fail("island root is not the canonical protected one") },
     };
+    if verify {
+        return if abito_island::agentconn::verify_session(&root).is_ok() { 0 } else { 1 };
+    }
     let runtime = root.join("runtime");
     // The daemon creates the runtime directory; this helper only ever fills
     // session.json inside it. A missing, non-private or reparse runtime
