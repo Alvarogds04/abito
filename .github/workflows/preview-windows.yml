@@ -148,7 +148,11 @@ jobs:
           $version = $config.version
           $dist = (Resolve-Path dist).Path
           $icon = (Resolve-Path icons/icon.ico).Path
+          Get-ChildItem -Recurse dist | Select-Object FullName,Length
+          Test-Path dist/windows-runtime/runtime.nsh
+          Get-Content dist/windows-runtime/runtime.nsh -TotalCount 5
           & $nsis /V2 "/DVERSION=$version" "/DBINDIR=$dist" `
+            "/DRUNTIMEDIR=$dist\windows-runtime" `
             "/DICON=$icon" "/DOUTDIR=$dist" packaging/windows/abito.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node packaging/windows/stage-win.cjs

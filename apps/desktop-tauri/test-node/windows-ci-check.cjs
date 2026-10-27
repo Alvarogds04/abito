@@ -36,4 +36,15 @@ assert.ok(('Abito CI ' + 'f'.repeat(32)).length <= 48, 'New-LocalUser descriptio
 assert.match(workflow, /tar -xjf \$archive -C \$env:RUNNER_TEMP/);
 assert.match(workflow, /Test-Path \(Join-Path \$lib 'sherpa-onnx-c-api\.lib'\)/);
 assert.match(workflow, /"SHERPA_ONNX_LIB_DIR=\$lib" >> \$env:GITHUB_ENV/);
+const installer = workflow.split('      - name: Stage closed runtime and build full installer\n')[1].split('      - name:')[0];
+assert.ok(installer.includes('"/DRUNTIMEDIR=$dist\\windows-runtime"'), 'native NSIS must receive an explicit Windows runtime directory');
+for (const diagnostic of [
+  'Get-ChildItem -Recurse dist | Select-Object FullName,Length',
+  'Test-Path dist/windows-runtime/runtime.nsh',
+  'Get-Content dist/windows-runtime/runtime.nsh -TotalCount 5',
+]) {
+  assert.ok(installer.includes(diagnostic), `missing pre-NSIS diagnostic: ${diagnostic}`);
+  assert.ok(installer.indexOf(diagnostic) < installer.indexOf('& $nsis /V2'));
+}
+assert.doesNotMatch(installer, /Remove-Item|New-Item/);
 console.log('PASS: hosted-Windows guards and independent install continuation (structural only)');
