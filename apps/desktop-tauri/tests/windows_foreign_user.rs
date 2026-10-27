@@ -541,8 +541,10 @@ fn session_fixture(tag: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&base); // stale fixture of ours
     std::fs::create_dir_all(base.join("Abito").join("runtime")).expect("island scratch");
     let sid = winipc::ffi::current_user_sid().expect("fixture owner");
-    winipc::ffi::set_owner_only_acl(&base.join("Abito"), &sid).expect("private Abito dir");
+    // Protect the existing child first, before the parent's non-inheritable
+    // DACL removes the child's inherited grants (same fixture as windows_daemon).
     winipc::ffi::set_owner_only_acl(&base.join("Abito").join("runtime"), &sid).expect("private runtime dir");
+    winipc::ffi::set_owner_only_acl(&base.join("Abito"), &sid).expect("private Abito dir");
     base
 }
 

@@ -22,6 +22,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Isolated Pi installation failed' }
 $localData = [Environment]::GetFolderPath('LocalApplicationData')
 $recap = Join-Path $localData 'com.abitog.AbitoTauri/recap.json'
 if (Test-Path -LiteralPath $recap) { throw 'Runner already has island recap data; refusing smoke against existing state' }
+if (Test-Path -LiteralPath (Join-Path $localData 'Abito')) { throw 'Runner already has island runtime data; refusing reuse' }
 $originalEnv = @{}
 foreach ($key in @('PATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ABITO_PROJECT_ROOT', 'ABITO_ISLAND_DIR', 'ABITO_DESKTOP_SOCKET')) {
     $originalEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
@@ -45,16 +46,19 @@ function Stop-Island {
     }
 }
 function Start-Island([string]$Mode) {
-    $data = Join-Path $root $Mode
-    New-Item -ItemType Directory -Path $data | Out-Null
-    # A real private profile-like root, not an ACL bypass. Only our disposable directory.
-    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-    $acl = [System.Security.AccessControl.DirectorySecurity]::new()
-    $acl.SetOwner($sid)
-    $acl.SetAccessRuleProtection($true, $false)
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
-    $acl.AddAccessRule($rule)
-    Set-Acl -LiteralPath $data -AclObject $acl
+    # The ready scenario must prove the real default profile ACL works. Never
+    # rewrite it to make the test pass. Missing-runtime scenarios use fresh roots.
+    $data = if ($Mode -eq 'ready') { $localData } else { Join-Path $root $Mode }
+    if ($Mode -ne 'ready') {
+        New-Item -ItemType Directory -Path $data | Out-Null
+        $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+        $acl.SetOwner($sid)
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $data -AclObject $acl
+    }
     $env:LOCALAPPDATA = $data
     $env:APPDATA = if ($Mode -eq 'ready') { $roaming } else { $empty }
     $env:ProgramFiles = $empty

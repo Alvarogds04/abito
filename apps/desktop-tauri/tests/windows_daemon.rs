@@ -42,8 +42,12 @@ fn scratch(tag: &str) -> PathBuf {
         .join(format!("abito-win-daemon-{}-{}-{}", tag, std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
     std::fs::create_dir_all(base.join("Abito").join("runtime")).expect("scratch island");
     let me = current_sid();
-    apply_protected_dacl(base.join("Abito").as_path(), &me);
+    // Protect deepest-first: setting the parent's non-inheritable DACL first
+    // removes the child's inherited grants on Windows before we can set its
+    // owner/DACL (ERROR_ACCESS_DENIED on hosted runners). A protected child
+    // keeps its explicit owner-only grants when the parent changes afterward.
     apply_protected_dacl(base.join("Abito").join("runtime").as_path(), &me);
+    apply_protected_dacl(base.join("Abito").as_path(), &me);
     base
 }
 
