@@ -396,6 +396,9 @@ test('general: sound switch is persisted (default ON), motion is «respect the s
   const win = S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: true, status: 'active', limited: false, backend: 'win32', portal_note: null } });
   assert.equal(win.hotkey.backend, 'win32');
   assert.equal(win.hotkey.backendLabel, 'Atajo de Windows');
+  const mac = S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: true, status: 'active', limited: false, backend: 'macos', portal_note: null } });
+  assert.equal(mac.hotkey.backend, 'macos');
+  assert.equal(mac.hotkey.backendLabel, 'Atajo de macOS');
   const winTaken = S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: true, status: 'taken', limited: false, backend: 'win32', portal_note: null } });
   assert.equal(winTaken.hotkey.backendLabel, 'Atajo de Windows', 'a denied grab still names the right backend');
   assert.equal(S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: false, status: 'disabled', limited: false, backend: 'x11', portal_note: null } }).hotkey.enabled, false);

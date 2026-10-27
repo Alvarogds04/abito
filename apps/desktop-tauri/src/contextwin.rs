@@ -66,12 +66,20 @@ pub fn is_abito(c: &Candidate) -> bool {
     c.app_id.to_lowercase().contains("abito") || c.app_name.to_lowercase().contains("abito")
 }
 
+/// Longest app name / window title sent to the model, in characters, on every OS: a title can be a
+/// whole document name or a page of text, and it leaves the machine.
+pub const MAX_CONTEXT_CHARS: usize = 200;
+
+fn capped(text: &str) -> String {
+    text.trim().chars().take(MAX_CONTEXT_CHARS).collect()
+}
+
 /// Most recent window that is not Abito and has an app name (NotchBuddy: `guard let appName`).
 pub fn pick_external(recent: &[Candidate]) -> Option<ActiveWindow> {
     recent
         .iter()
         .find(|c| !is_abito(c) && !c.app_name.trim().is_empty())
-        .map(|c| ActiveWindow { app: c.app_name.trim().to_string(), title: c.title.trim().to_string() })
+        .map(|c| ActiveWindow { app: capped(&c.app_name), title: capped(&c.title) })
 }
 
 /// The exact text NotchBuddy sends to the model (ClaudeService.swift: first message only).

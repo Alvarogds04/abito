@@ -393,7 +393,7 @@ async function renderChatSettings({ invoke, V, listen, timers }) {
     if (prefs.windowContextNative === true) {
       ctxBody.append(h("div", { class: "hub-note", text: "Abito lee la app y el título de la ventana activa del sistema. No se captura la URL." + (typeof prefs.windowContextNote === "string" ? " Contexto " + prefs.windowContextNote + ". Para activarlo: Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla. Abito no pide ese permiso por ti." : "") }));
     } else
-    ctxBody.append(h("div", { class: "hub-note", text: available === true ? "La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL." : available === false ? "La extensión de GNOME no está disponible. En GNOME Wayland no se pueden leer ventanas nativas sin ella; el respaldo X11 solo ve ventanas XWayland." : "No se pudo comprobar la extensión de GNOME." }));
+      ctxBody.append(h("div", { class: "hub-note", text: available === true ? "La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL." : available === false ? "La extensión de GNOME no está disponible. En GNOME Wayland no se pueden leer ventanas nativas sin ella; el respaldo X11 solo ve ventanas XWayland." : "No se pudo comprobar la extensión de GNOME." }));
     if (available !== true) {
       ctxBody.append(
         h("div", { class: "hub-note", text: "Para instalarla, desde la raíz del repositorio ejecuta:" }),

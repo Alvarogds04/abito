@@ -27,6 +27,8 @@ pub mod x11;
 // U3a: the Win32 grabber seam; its whole body is cfg(windows)-gated, so this
 // mount compiles empty everywhere else (same pattern as the x11/portal files).
 pub mod win32;
+// HU-053: the macOS Carbon twin; its whole body is cfg(target_os = "macos")-gated.
+pub mod macos;
 
 const MAX_INPUT: usize = 64;
 const SHIFT: u8 = 1;
@@ -197,6 +199,34 @@ impl Combo {
             Key::Left => 0x25,
             Key::Right => 0x27,
             Key::F(n) => 0x70 + u32::from(n) - 1,
+        }
+    }
+
+    /// Carbon modifier mask for `RegisterEventHotKey` (HIToolbox Events.h): cmdKey 0x100,
+    /// shiftKey 0x200, optionKey 0x800, controlKey 0x1000. Super maps to Command.
+    pub fn mac_modifiers(&self) -> u32 {
+        let mut m = 0u32;
+        if self.mods & SUPER != 0 { m |= 0x100; }
+        if self.mods & SHIFT != 0 { m |= 0x200; }
+        if self.mods & ALT != 0 { m |= 0x800; }
+        if self.mods & CTRL != 0 { m |= 0x1000; }
+        m
+    }
+
+    /// Carbon virtual key code (kVK_*): the PHYSICAL ANSI key, not a character.
+    pub fn mac_keycode(&self) -> u32 {
+        // Indexed A..Z, then 0..9 (kVK_ANSI_*), then F1..F12.
+        const LETTERS: [u32; 26] = [0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46,
+            45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16, 6];
+        const DIGITS: [u32; 10] = [29, 18, 19, 20, 21, 23, 22, 26, 28, 25];
+        const FKEYS: [u32; 12] = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111];
+        match self.key {
+            Key::Letter(c) => LETTERS[usize::from(c.to_ascii_uppercase() - b'A')],
+            Key::Digit(c) => DIGITS[usize::from(c - b'0')],
+            Key::Space => 49,
+            Key::Left => 123,
+            Key::Right => 124,
+            Key::F(n) => FKEYS[usize::from(n) - 1],
         }
     }
 

@@ -39,15 +39,15 @@ pub fn current() -> Option<Token> {
     }
 }
 
-/// Best effort, never panics: the window may be gone, or Windows may refuse the switch.
+/// Best effort, never panics: the window may be gone or minimized, or Windows may refuse the switch.
 #[cfg(windows)]
 pub fn give_back(token: Token) -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, SetForegroundWindow};
     let hwnd = token as usize as windows_sys::Win32::Foundation::HWND;
     // SAFETY: IsWindow validates a stale handle first; every call tolerates failure.
     unsafe {
-        if IsWindow(hwnd) == 0 { return false; }
-        if IsIconic(hwnd) != 0 { ShowWindow(hwnd, SW_RESTORE); }
+        // A minimized target is left alone: the human minimized it on purpose.
+        if IsWindow(hwnd) == 0 || IsIconic(hwnd) != 0 { return false; }
         SetForegroundWindow(hwnd) != 0
     }
 }
@@ -61,6 +61,8 @@ pub fn current() -> Option<Token> {
     remember(std::process::id(), pid as u32, pid as Token)
 }
 
+/// AppKit objects belong to the main thread: callers on another thread must marshal this call
+/// there (the hotkey host uses `run_on_main_thread`).
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 pub fn give_back(token: Token) -> bool {

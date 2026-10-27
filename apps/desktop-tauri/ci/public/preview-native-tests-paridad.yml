@@ -6,7 +6,9 @@ name: Preview native tests (paridad)
 # Triggers ONLY for branches named preview/*-paridad.
 # What this does NOT prove: that the keyboard really returns to the
 # previous app, or that the real WebView2/WKWebView report the OS
-# reduced-motion setting. Those need a human on a real machine.
+# reduced-motion setting. Those need a human on a real machine
+# (a headless-Edge probe of SPI_CLIENTAREAANIMATION returned no output
+# on the hosted runner and was dropped).
 on:
   push:
     branches: ['preview/*-paridad']
@@ -69,52 +71,6 @@ jobs:
         run: |
           node test-node/overview-view-check.cjs
           exit $LASTEXITCODE
-
-      - name: Reduced motion probe (HU-051, Windows webview engine)
-        if: ${{ !cancelled() }}
-        run: |
-          Add-Type -Namespace W -Name S -MemberDefinition @'
-          [DllImport("user32.dll", SetLastError=true)]
-          public static extern bool SystemParametersInfo(uint a, uint b, ref bool c, uint d);
-          [DllImport("user32.dll", SetLastError=true)]
-          public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint d);
-          '@
-          $GET = 0x1042; $SET = 0x1043
-          $old = $false
-          [void][W.S]::SystemParametersInfo($GET, 0, [ref]$old, 0)
-          Write-Host "client-area animations before: $old"
-          $html = Join-Path $env:RUNNER_TEMP 'motion.html'
-          $js = 'document.body.textContent=' +
-            '"REDUCED="+matchMedia("(prefers-reduced-motion: reduce)").matches'
-          "<body><script>$js</script></body>" | Set-Content $html
-          $url = ([Uri]$html).AbsoluteUri
-          $edge = @(
-            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
-            "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $edge) { throw 'msedge.exe not found on the runner' }
-          Write-Host "edge: $edge"
-          function Probe {
-            $prof = Join-Path $env:RUNNER_TEMP ("edge-" + [guid]::NewGuid())
-            $out = & $edge --headless=new --disable-gpu --no-first-run `
-              --user-data-dir=$prof --virtual-time-budget=3000 `
-              --dump-dom $url 2>&1
-            Write-Host "edge exit: $LASTEXITCODE"
-            ($out | Out-String).Trim()
-          }
-          try {
-            [void][W.S]::SystemParametersInfo($SET, 0, [IntPtr]::Zero, 2)  # off
-            $off = Probe
-            [void][W.S]::SystemParametersInfo($SET, 0, [IntPtr]1, 2)  # on
-            $on = Probe
-          } finally {
-            [void][W.S]::SystemParametersInfo($SET, 0, [IntPtr][int]$old, 2)
-          }
-          Write-Host "animations OFF -> $off"
-          Write-Host "animations ON  -> $on"
-          if ($off -notmatch 'REDUCED=true' -or $on -notmatch 'REDUCED=false') {
-            throw 'Chromium/WebView2 did not mirror SPI_CLIENTAREAANIMATION'
-          }
 
   macos:
     runs-on: macos-26

@@ -16,7 +16,7 @@ const FILE: &str = "hotkey.json";
 
 /// The system-wide id our WM_HOTKEY messages carry back. One live grab at a
 /// time (a rebind always releases the old one before registering anew).
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 const HOTKEY_ID: u32 = 1;
 
 #[cfg(windows)]
@@ -26,10 +26,13 @@ use abito_island::hotkey::win32::Grabber;
 /// mounts this file under cfg(not(unix)), and the only non-unix build here is
 /// x86_64-pc-windows-msvc). The alias documents the shape this file would have
 /// elsewhere: a grab that exists but holds nothing.
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(target_os = "macos")]
+use abito_island::hotkey::macos::Grabber;
+
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 #[derive(Default)]
 struct Grabber;
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 impl Grabber {
     fn status(&self) -> hotkey::Status {
         hotkey::Status::Unsupported
@@ -70,7 +73,7 @@ fn view_of(config: &HotkeyConfig, held: Option<&Grabber>) -> View {
             None => hotkey::idle_status(config),
         },
         limited: false,
-        backend: "win32",
+        backend: if cfg!(target_os = "macos") { "macos" } else { "win32" },
         portal_note: None,
         effective: None,
     }
@@ -104,7 +107,21 @@ fn rebind(app: &AppHandle) {
             });
             *host.grabber.lock().expect("hotkey grabber lock") = Some(grab);
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            // HU-053: Carbon delivers presses on the main run loop, so register there. No
+            // permission is involved; the closure publishes the real status when it is known.
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let press = handle.clone();
+                let grab = Grabber::start(HOTKEY_ID, cfg.combo, move || press_on_main(&press));
+                let state = handle.state::<AppState>();
+                *state.hotkey.grabber.lock().expect("hotkey grabber lock") = Some(grab);
+                publish(&handle);
+            });
+            return;
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             let _ = &cfg;
         }
@@ -206,11 +223,15 @@ pub(crate) fn press_on_main(app: &AppHandle) {
                 crate::restore(&inner);
                 if before.is_none() { return; }
                 let Some(win) = crate::main_window(&inner) else { return };
+                let inner = inner.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     let focused = win.is_focused().unwrap_or(false);
                     if let Some(previous) = hotkey::foreground::hand_back(focused, false, before) {
-                        let _ = hotkey::foreground::give_back(previous);
+                        // AppKit is main-thread only; Win32 does not care, so one path serves both.
+                        let _ = inner.run_on_main_thread(move || {
+                            let _ = hotkey::foreground::give_back(previous);
+                        });
                     }
                 });
             }

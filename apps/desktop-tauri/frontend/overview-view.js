@@ -288,7 +288,7 @@
     if (!view || typeof view !== 'object' || view.enabled === false) return null;
     const combo = String(view.combo || '');
     const problem = Object.prototype.hasOwnProperty.call(HOTKEY_PROBLEMS, view.status)
-      ? (view.status === 'unsupported' && view.backend === 'win32' ? HOTKEY_PROBLEM_WIN32 : HOTKEY_PROBLEMS[view.status])
+      ? (view.status === 'unsupported' && (view.backend === 'win32' || view.backend === 'macos') ? HOTKEY_PROBLEM_WIN32 : HOTKEY_PROBLEMS[view.status])
       : null;
     if (problem) {
       return { kind: view.status, word: problem[0], icon: problem[1], tone: problem[2], aria: `${problem[0]}: ${combo} ${problem[3]}` };

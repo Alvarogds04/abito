@@ -179,3 +179,13 @@ fn native_capture_answers_without_panic_and_never_returns_our_own_process() {
         assert!(!w.app.to_lowercase().contains("abito"));
     }
 }
+
+#[test]
+fn context_text_is_capped_on_every_os_without_splitting_a_character() {
+    let long = "é".repeat(500);
+    let w = pick_external(&[Candidate { app_id: "x".into(), app_name: long.clone(), title: long.clone() }]).unwrap();
+    assert_eq!(w.app.chars().count(), MAX_CONTEXT_CHARS);
+    assert_eq!(w.title.chars().count(), MAX_CONTEXT_CHARS);
+    let short = pick_external(&[c("code", "Code", "main.rs")]).unwrap();
+    assert_eq!((short.app.as_str(), short.title.as_str()), ("Code", "main.rs"), "short text is untouched");
+}
