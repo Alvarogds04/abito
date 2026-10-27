@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const net = require('node:net');
 const { createHash, randomUUID } = require('node:crypto');
 const { verifyEndpoint } = require('./security.cjs');
+const { createWindowsConnection } = require('./windows-transport.cjs');
 const { QuestionBroker, FRAME_BYTES, STRUCTURED_FRAME_BYTES } = require('./questions.cjs');
 const projectId = cwd => createHash('sha256').update(cwd).digest('hex');
 // S10 (L25): display-only fields of `settled`, sent ONLY after the receiver proved it speaks the extended protocol
@@ -20,7 +21,8 @@ const sessionToken = value => typeof value === 'string' && value.length <= 128 &
 // Factory has no resources; disconnected notices/questions are never replayed.
 // No history or lifecycle event payload is inspected. Questions are explicit.
 function registerAdapter(pi, { endpoint, runtime, retryMs = 5000, heartbeatMs = 10000,
-  questionTimeoutMs, questionClock, onDiagnostic, questionLevel = 0, onTransportError = () => {}, resolveEndpoint }) {
+  questionTimeoutMs, questionClock, onDiagnostic, questionLevel = 0, onTransportError = () => {}, resolveEndpoint,
+  platform = process.platform, open }) {
   if (![0, 1, 2, 3].includes(questionLevel)) throw new Error('Invalid question capability level');
   let socket, retry, heartbeat, stopped = true, ready = false, questionsReady = false, structuredReady = false, identity, transportError;
   function isCurrent(ctx) {
@@ -59,14 +61,15 @@ function registerAdapter(pi, { endpoint, runtime, retryMs = 5000, heartbeatMs = 
       try { target = resolveEndpoint(); } catch { target = undefined; }
     }
     let file;
-    try { file = verifyEndpoint(target, runtime); } catch { schedule(); return; }
-    const connection = net.createConnection(target);
+    try { file = verifyEndpoint(target, runtime, { platform }); } catch { schedule(); return; }
+    const openConnection = open ?? (platform === 'win32' ? createWindowsConnection : net.createConnection);
+    const connection = openConnection(target);
     socket = connection;
     let bytes = Buffer.alloc(0), count = 0, period = Date.now(), questionAttempted = false;
     connection.setTimeout(3000, () => connection.destroy());
     connection.on('connect', () => {
       try {
-        const after = verifyEndpoint(target, runtime);
+        const after = verifyEndpoint(target, runtime, { platform });
         if (after.dev !== file.dev || after.ino !== file.ino) throw new Error('Endpoint changed');
       } catch { connection.destroy(); return; }
       write('hello');
@@ -121,8 +124,9 @@ function registerAdapter(pi, { endpoint, runtime, retryMs = 5000, heartbeatMs = 
   }
   pi.on('session_start', (_event, ctx) => {
     stop(); transportError = undefined;
-    // Linux and macOS (darwin gates, 0036fcf2); the endpoint is either fixed or re-read from the island handoff on each attempt
-    if ((process.platform !== 'linux' && process.platform !== 'darwin') || (!endpoint && !resolveEndpoint)) return;
+    // Unix sockets or the authenticated Windows relay; re-resolve discovery
+    // on every attempt rather than retaining a stale endpoint after restart.
+    if (!['linux', 'darwin', 'win32'].includes(platform) || (!endpoint && !resolveEndpoint)) return;
     try {
       const sessionId = ctx.sessionManager.getSessionId();
       if (!sessionToken(sessionId)) return;

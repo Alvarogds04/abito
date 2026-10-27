@@ -17,7 +17,19 @@ function privateDirectory(target, owner) {
   const stat = fs.lstatSync(target);
   if (stat.uid !== owner || (stat.mode & 0o7777) !== 0o700) throw new Error('Private directory required');
 }
-function verifyEndpoint(endpoint, runtime) {
+function verifyEndpoint(endpoint, runtime, options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform === 'win32') {
+    // Windows (T2/S3): the endpoint is the notice metadata path; Node only
+    // checks the shape and the runtime binding. The native relay owns the real
+    // verification (owner-only DACL, live pid, connected server pid+SID)
+    // before it forwards any byte, so there is nothing socket-like to stat here.
+    const { windowsEndpointShape } = require('./config.cjs');
+    if (!windowsEndpointShape(endpoint) || path.win32.dirname(endpoint) !== runtime) {
+      throw new Error('Unexpected endpoint');
+    }
+    return { dev: 0, ino: 0 };
+  }
   if (process.platform !== 'linux' || !endpointShape(endpoint, runtime)) throw new Error('Unexpected endpoint');
   const owner = process.getuid();
   privateDirectory(runtime, owner);

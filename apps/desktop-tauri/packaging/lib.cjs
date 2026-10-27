@@ -189,7 +189,7 @@ const DAEMON_FILES = ['package.json', 'identity.md', 'THIRD-PARTY-NOTICES.md',
 const HARNESS_FILES = ['bin/abito-hook.cjs', 'bin/abito-recap-hook.cjs', 'bin/abito-statusline.cjs', 'package.json',
   'src/claude-ask.cjs', 'src/claude-suggestions.cjs', 'src/claude.cjs', 'src/client.cjs', 'src/codex.cjs', 'src/config.cjs', 'src/copilot.cjs', 'src/deadline.cjs', 'src/file-permission.cjs', 'src/hook-common.cjs', 'src/identity.cjs',
   'src/install-claude.cjs', 'src/install-codex.cjs', 'src/install-copilot.cjs', 'src/install-opencode.cjs', 'src/install-recap.cjs', 'src/install-statusline.cjs', 'src/install-ui.cjs',
-  'src/opencode.cjs', 'src/projection.cjs', 'src/recap-hook.cjs', 'src/redact.cjs', 'src/security.cjs', 'src/statusline.cjs', 'src/title-cache.cjs'];
+  'src/opencode.cjs', 'src/projection.cjs', 'src/recap-hook.cjs', 'src/redact.cjs', 'src/security.cjs', 'src/statusline.cjs', 'src/title-cache.cjs', 'src/windows-transport.cjs'];
 const STAGED = ['abito-island', 'abito-island-launcher', 'abito-island.png', `${IDENTIFIER}.desktop`,
   ...DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...HARNESS_FILES.map(f => `desktop-harness/${f}`)];
 const STAGED_DIRS = ['desktop-daemon', 'desktop-daemon/src', 'desktop-harness', 'desktop-harness/bin', 'desktop-harness/src'];

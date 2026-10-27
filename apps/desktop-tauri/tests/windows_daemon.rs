@@ -172,7 +172,7 @@ fn set_protected_dacl(path: &Path, sddl: &str) {
         ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW, SE_FILE_OBJECT, SDDL_REVISION_1,
     };
     use windows_sys::Win32::Security::{
-        GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
         PROTECTED_DACL_SECURITY_INFORMATION,
     };
     let wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
@@ -185,6 +185,11 @@ fn set_protected_dacl(path: &Path, sddl: &str) {
     let mut dacl: *mut ACL = std::ptr::null_mut();
     let got = unsafe { GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted) };
     assert!(got != 0 && present != 0, "self-relative DACL");
+    // OWNER_SECURITY_INFORMATION requires a non-null owner SID. Merely
+    // including O:<sid> in the descriptor does not populate that argument.
+    let mut owner = std::ptr::null_mut();
+    assert_ne!(unsafe { GetSecurityDescriptorOwner(sd, &mut owner, &mut defaulted) }, 0);
+    assert!(!owner.is_null(), "fixture descriptor must name its owner");
     let result = (|| {
         let file: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         let status = unsafe {
@@ -192,7 +197,7 @@ fn set_protected_dacl(path: &Path, sddl: &str) {
                 file.as_ptr().cast_mut(),
                 SE_FILE_OBJECT,
                 OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                std::ptr::null_mut(),
+                owner,
                 std::ptr::null_mut(),
                 dacl,
                 std::ptr::null_mut(),

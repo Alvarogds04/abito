@@ -45,7 +45,27 @@ Only Claude's `PermissionRequest` reads `permission_suggestions`. These are perm
 | `src/install-ui.cjs` | Island install mode for Claude/Codex, recap and statusline: `--json` preview with `plan_hash`, `--apply-plan` trusted-click apply with audit trail (see `docs/ISLAND-INSTALL.md`). |
 | `bin/abito-hook.cjs` | CLI entry: `abito-hook claude\|codex <event>`, `abito-hook copilot\|opencode permission-request` and `abito-hook install claude\|codex\|copilot\|opencode\|recap\|statusline`; stdin reader, watchdog, last-resort error handlers. |
 
-## Environment
+## Windows notice transport
+
+On Windows, discovery uses `%LOCALAPPDATA%\\Abito\\notices\\endpoint.json`;
+`ABITO_SOCKET_DIR` is a Unix-only setting. An explicit `ABITO_DESKTOP_SOCKET`
+must instead name an absolute, normalized Windows `endpoint.json`, not a pipe.
+No UID or `/proc` lookup is performed.
+
+The producer launches `abito-notice-relay.exe`, never a direct Node pipe
+connection. The native relay verifies the private metadata ACL and actual
+server PID/SID before forwarding any protocol byte. Missing/rejected helpers
+leave the island unavailable; they never imply a human answer or bypass
+terminal decisions. Unix socket validation and framing are unchanged.
+
+Helper lookup uses only the installed sibling executable, the canonical
+`%LOCALAPPDATA%\\Programs\\abito-island` installation, or the fixed sibling
+`desktop-tauri/target/debug` development build. It never searches PATH or CWD,
+and rejects a symlink in the executable slot. An externally copied Pi extension
+requires the canonical install or its own trusted sibling helper; arbitrary
+custom installation directories are not discovered automatically.
+
+## Environment (Unix)
 
 | Variable | Meaning |
 | --- | --- |

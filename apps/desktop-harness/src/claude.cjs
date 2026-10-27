@@ -69,7 +69,7 @@ async function handleClaudeHook({ event, input, env = {}, argv = [], now, client
     } else if (data.stop_hook_active === true) return none();
 
     let config;
-    try { config = resolveConfig(env, process.getuid()); } catch { return none('Abito island: invalid configuration.\n'); }
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Abito island: invalid configuration.\n'); }
     if (!config.endpoint) return none('Abito island unavailable. Answer in the terminal.\n');
     const session = sessionToken(data.session_id);
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd, sessionId: session, agent: 'claude-code',

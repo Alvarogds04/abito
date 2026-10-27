@@ -1,0 +1,29 @@
+# Windows installer payload
+
+From `apps/desktop-tauri`, run `sh packaging/windows/xbuild.sh package` with the existing cross-build image. Host Node stages the runtime before the container build; Node is not required in the image. This command does not install or launch Abito.
+
+`node packaging/windows/stage-runtime.cjs [--out DIRECTORY]` copies exactly `DAEMON_FILES` and `HARNESS_FILES` exported by `packaging/lib.cjs`, defaulting to gitignored `dist/windows-runtime`. It generates `runtime.nsh` from those same lists. Existing unknown entries and symlinks are rejected rather than removed. `--help` describes the CLI.
+
+The installer contains these sibling executables:
+
+- `abito-island.exe`
+- `abito-notice-relay.exe`
+- `abito-private-session.exe`
+
+The closed `desktop-daemon` and `desktop-harness` directories live beside them. Node and Pi remain external runtime prerequisites, not bundled dependencies.
+
+For native Windows packaging, stage with Node, copy the three built executables to `dist`, and invoke NSIS with `VERSION`, `BINDIR`, `ICON`, and `OUTDIR`. `RUNTIMEDIR` defaults to `${BINDIR}/windows-runtime`. The same generated include drives both native and cross packaging.
+
+Uninstall deletes only listed payload files and `uninstall.exe`, then removes empty owned directories deepest first. It does not recursively delete directories or remove unrelated files or island user configuration. The per-user shortcut and uninstall registry entry are removed.
+
+After packaging, `node packaging/windows/stage-win.cjs` records hashes for all three executables, the setup executable, staged runtime and generated include, plus packaging/runtime/frontend source inputs. `node packaging/windows/stage-win.cjs --check` checks the exact receipt sets and hashes against the current artifacts and inputs, and rejects stale runtime copies. This is provenance checking, **not** proof that Windows installation or runtime launch works; the native CI install smoke supplies that evidence.
+
+Local contract test: `node test-node/windows-runtime-check.cjs`. It stages an isolated payload, checks require closure and install/delete equivalence, exercises preservation of unrelated files, and runs the receipt CLI with tampered artifacts and inputs.
+
+## Native preview smoke
+
+`ci/public/preview-windows.yml` refuses non-GitHub-hosted runners before checkout or tool setup. It parses both PowerShell scripts before any account operation, executes native policy/receiver/daemon and real foreign-user tests, builds the release installer, then invokes `ci/public/smoke-windows.ps1 -Setup <setup.exe>`. NSIS is reused from the runner when available; only a disposable hosted runner may use the pinned 3.11 Chocolatey fallback.
+
+The smoke installs silently in a fresh runner-temp directory and compares every installed file to the staged payload. It installs real Pi into an isolated npm prefix, starts the installed island, checks authenticated installed daemon status, and sends a Claude Stop event through the installed hook and native relay. Success requires a persisted island recap turn, not merely hook process success. Separate child environments assert the exact missing-Pi and missing-Node messages while the notice receiver still starts. Uninstall must remove every shipped file while preserving an unrelated fixture and island recap data. Logs are uploaded even on failure; no recursive profile cleanup runs.
+
+`node test-node/windows-ci-check.cjs` checks guard placement structurally. It does not replace native PowerShell parsing or the full Windows smoke.

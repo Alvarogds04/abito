@@ -48,7 +48,27 @@ adapter in the same session.
 
 **Compatibility warning:** enable `ABITO_QUESTIONS=1` or `2` **only against a new QP/1 receiver at a separate root**. Against an old receiver, `questions_hello` is rejected and the shared socket closes. This interrupts **not only questions but also notices**. Conversely, the old Pi adapter destroys its connection on any byte after `ready`; a new receiver must never send `questions_ready` to an unsubscribed producer. Do not experiment against the installed app.
 
-## Configuration and socket ownership
+## Windows notice transport
+
+On Windows, discovery uses `%LOCALAPPDATA%\\Abito\\notices\\endpoint.json`;
+`ABITO_SOCKET_DIR` is a Unix-only setting. An explicit `ABITO_DESKTOP_SOCKET`
+must instead name an absolute, normalized Windows `endpoint.json`, not a pipe.
+No UID or `/proc` lookup is performed.
+
+The producer launches `abito-notice-relay.exe`, never a direct Node pipe
+connection. The native relay verifies the private metadata ACL and actual
+server PID/SID before forwarding any protocol byte. Missing/rejected helpers
+leave the island unavailable; they never imply a human answer or bypass
+terminal decisions. Unix socket validation and framing are unchanged.
+
+Helper lookup uses only the installed sibling executable, the canonical
+`%LOCALAPPDATA%\\Programs\\abito-island` installation, or the fixed sibling
+`desktop-tauri/target/debug` development build. It never searches PATH or CWD,
+and rejects a symlink in the executable slot. An externally copied Pi extension
+requires the canonical install or its own trusted sibling helper; arbitrary
+custom installation directories are not discovered automatically.
+
+## Configuration and socket ownership (Unix)
 
 | Variable | Meaning and default |
 | --- | --- |
