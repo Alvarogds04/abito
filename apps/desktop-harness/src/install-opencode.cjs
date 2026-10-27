@@ -72,7 +72,7 @@ const OPENCODE_PROFILE = {
   verify: plan => (_parsed, _p, text) => text === plan.after,
 };
 
-function planOpencodePlugin({ settingsPath, timeoutSec, remove = false, binPath = core.BIN_PATH, execPath = process.execPath, uid = process.getuid(), profile = OPENCODE_PROFILE }) {
+function planOpencodePlugin({ settingsPath, timeoutSec, remove = false, binPath = core.BIN_PATH, execPath = process.execPath, uid = require('./win-fs.cjs').uidOf(), profile = OPENCODE_PROFILE }) {
   if (timeoutSec === undefined) timeoutSec = profile.defaultTimeoutSec;
   core.checkTimeout(timeoutSec);
   profile.checkPaths(binPath, execPath);

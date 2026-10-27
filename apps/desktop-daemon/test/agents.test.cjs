@@ -97,16 +97,44 @@ function setup(t, scenario = {}, extra = {}) {
 	const calls = () => (fs.existsSync(`${scenarioFile}.calls`) ? fs.readFileSync(`${scenarioFile}.calls`, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 	return { base, home, islandDir, manager, write, calls, installerBin, scenarioFile };
 }
-test("Windows installer entries remain unavailable without invoking the POSIX installer", async t => {
-  const s = setup(t, {}, { platform: "win32", run: async () => { throw Error("must not spawn"); } });
-  const expected = (await s.manager.list()).map(a => ({...a, state:"unavailable", detail:"unsupported_platform", backup:false}));
-  assert.ok(expected.length >= 6);
-  assert.deepEqual(await s.manager.list(), expected);
-  assert.deepEqual(await s.manager.connect("claude-code", HASH_A), expected);
-  assert.deepEqual(await s.manager.disconnect("codex"), expected);
-  assert.deepEqual(s.calls(), []);
-  const frame = require("../src/protocol.cjs").agentsFrame(expected);
-  assert.deepEqual(frame.agents, expected);
+test("Windows (HU-047): the installer runs with a Windows-shaped env, the bundled script is manifest-verified, and refusal reasons surface", async t => {
+  const calls = [];
+  const verified = [];
+  const s = setup(t, {}, { platform: "win32", verifyBundled: (file) => verified.push(file), run: async (argv, env) => {
+    calls.push({ argv, env });
+    return { exit: 0, stdout: Buffer.from(JSON.stringify(preview({ harness: "claude", ops: ["keep", "keep"], target: path.join(s.home, ".claude/settings.json") }))) };
+  } });
+  const list = await s.manager.list();
+  assert.ok(list.length >= 6);
+  assert.ok(calls.length >= 1, "the installer preview runs on Windows");
+  assert.ok(verified.length >= 1 && verified.every((f) => f === s.installerBin), "the registered script is verified against the install manifest");
+  for (const { env } of calls) {
+    assert.equal(env.HOME, s.home);
+    assert.equal(env.USERPROFILE, s.home);
+    assert.ok(!("PATH" in env && env.PATH.includes("/usr/bin")), "no POSIX PATH on Windows");
+    assert.ok(typeof env.SystemRoot === "string" || process.platform !== "win32");
+  }
+});
+test("Windows (HU-047): an installer script that fails the manifest check never runs", async t => {
+  const calls = [];
+  const s = setup(t, {}, { platform: "win32", verifyBundled: () => { throw new Error("script_untrusted"); }, run: async (argv) => { calls.push(argv); return { exit: 0, stdout: "" }; } });
+  const list = await s.manager.list();
+  assert.deepEqual(calls, []);
+  assert.ok(list.every((a) => a.state === "error" || a.state === "unavailable"));
+});
+test("Windows (HU-047): unsafe_target and install_unverified installer codes map to fixed details", async t => {
+  const P = require("../src/protocol.cjs");
+  for (const code of ["unsafe_target", "install_unverified"]) {
+    const s = setup(t, {}, { platform: "win32", verifyBundled: () => {}, run: async (argv) => {
+      if (argv.includes("--apply-plan")) return { exit: 65, stdout: Buffer.from(JSON.stringify({ schema: SCHEMA, ok: false, code, message: "x" }) + "\n") };
+      return { exit: 0, stdout: Buffer.from(JSON.stringify(preview({ harness: "claude", target: path.join(s.home, ".claude/settings.json") }))) };
+    } });
+    const out = await s.manager.connect("claude-code", HASH_A);
+    const row = out.find((a) => a.id === "claude-code");
+    assert.equal(row.state, "error");
+    assert.equal(row.detail, code);
+    assert.doesNotThrow(() => P.agentsFrame(out));
+  }
 });
 const byId = (list, id) => list.find((a) => a.id === id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

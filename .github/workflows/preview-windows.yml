@@ -138,6 +138,8 @@ jobs:
           foreach ($bin in $bins) {
             Copy-Item "target/release/$bin.exe" "dist/$bin.exe"
           }
+          node packaging/windows/install-manifest.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $nsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
           if (-not (Test-Path -LiteralPath $nsis)) {
             $command = Get-Command makensis -ErrorAction SilentlyContinue

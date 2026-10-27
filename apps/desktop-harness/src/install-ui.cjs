@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const core = require('./install-claude.cjs');
+const winfs = require('./win-fs.cjs');
 const codex = require('./install-codex.cjs');
 const recap = require('./install-recap.cjs');
 const statusline = require('./install-statusline.cjs');
@@ -81,7 +82,15 @@ function checkIslandGuards(env, ppid, readExe = defaultReadExe) {
 }
 
 // ---- audit log ----
+function winAuditDir(w, dir, create) {
+  if (typeof dir !== 'string' || dir === '' || dir.includes('\0') || !path.isAbsolute(dir)) throw new Error('audit dir must be absolute and normalized');
+  if (create) w.makeDir(dir);
+  const f = w.checkPath(dir);
+  if (f.kind !== 'dir' || f.reparse || !f.private || !f.parent_ok) throw new Error('audit dir is not a private directory of ours');
+}
 function ensureAuditDir(dir, uid, create = true) {
+  const w = winfs.active();
+  if (w) return winAuditDir(w, dir, create);
   if (typeof dir !== 'string' || dir === '' || dir.includes('\0') || !path.isAbsolute(dir) || path.normalize(dir) !== dir || (dir.length > 1 && dir.endsWith('/'))) throw new Error('audit dir must be absolute and normalized');
   let st;
   try { st = fs.lstatSync(dir); } catch (e) {
@@ -106,9 +115,26 @@ function rotateAudit(file) {
   } catch { /* best effort: the append below still decides */ }
 }
 // Appends exactly one JSON line. Throws on any problem (callers decide whether that is fatal).
-function appendAudit(dir, record, uid = process.getuid(), { create = true } = {}) {
+function winAppendAudit(w, file, record) {
+  const line = Buffer.from(JSON.stringify(record) + '\n', 'utf8');
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let cur = w.readPrivate(file);
+    // The helper caps one write at 1 MiB: rotate (replacing the previous generation) well before that.
+    if (cur && cur.size + line.length > AUDIT_MAX_BYTES / 2) {
+      try { w.remove(file + '.1'); } catch (e) { if (e.reason !== 'missing') throw e; }
+      w.move(file, file + '.1');
+      cur = null;
+    }
+    try { w.writePrivate(file, cur ? Buffer.concat([cur.buf, line]) : line, cur ? cur.sha256 : null); return; }
+    catch (e) { if (e.reason !== 'mismatch' && e.reason !== 'exists') throw e; }
+  }
+  throw new Error('audit file is busy');
+}
+function appendAudit(dir, record, uid = winfs.uidOf(), { create = true } = {}) {
   ensureAuditDir(dir, uid, create);
   const file = path.join(dir, AUDIT_FILE);
+  const w = winfs.active();
+  if (w) return winAppendAudit(w, file, record);
   rotateAudit(file);
   const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
   try {
@@ -126,8 +152,31 @@ const sleepMs = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 // Returns {dir, token}, or null when busy. Throws UiError(65, not_writable) when the settings directory refuses the mkdir.
 // The lock is a directory holding an 'owner' file with a random token; a regular file or symlink planted at that path
 // (lstat, never followed) is unlinked once older than 30 s and counts as busy while younger.
+function winAcquireLock(w, dir, waitMs) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    let made;
+    try { made = w.makeDir(dir); } catch (e) {
+      if (e.reason === 'not_private' || e.reason === 'reparse' || e.reason === 'unsafe_path') throw new UiError(65, 'not_writable', 'the settings directory is not private to this user; nothing was written');
+      return null;
+    }
+    if (made.created) {
+      const token = crypto.randomBytes(16).toString('hex');
+      try { w.writePrivate(path.join(dir, LOCK_OWNER), Buffer.from(token), null); } catch { try { w.remove(dir); } catch { /* ignore */ } return null; }
+      return { dir, token };
+    }
+    try {
+      const f = w.checkPath(dir);
+      if (Date.now() - f.mtime_ms > LOCK_STALE_MS) { try { w.remove(path.join(dir, LOCK_OWNER)); } catch { /* ignore */ } w.remove(dir); continue; }
+    } catch { /* raced with the owner: retry */ }
+    if (Date.now() > deadline) return null;
+    sleepMs(25);
+  }
+}
 function acquireLock(target, waitMs = LOCK_WAIT_MS) {
   const dir = path.join(path.dirname(target), `.${path.basename(target)}.abito-lock`);
+  const w = winfs.active();
+  if (w) return winAcquireLock(w, dir, waitMs);
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {
@@ -152,6 +201,11 @@ function acquireLock(target, waitMs = LOCK_WAIT_MS) {
 }
 // Removes the lock only if it still carries OUR token: a stolen/replaced lock belongs to someone else now.
 function releaseLock(lock) {
+  const w = winfs.active();
+  if (w) {
+    try { const own = w.readPrivate(path.join(lock.dir, LOCK_OWNER)); if (own && own.buf.toString('utf8') === lock.token) { w.remove(path.join(lock.dir, LOCK_OWNER)); w.remove(lock.dir); } } catch { /* best effort */ }
+    return;
+  }
   try {
     if (fs.readFileSync(path.join(lock.dir, LOCK_OWNER), 'utf8') !== lock.token) return;
     fs.unlinkSync(path.join(lock.dir, LOCK_OWNER));
@@ -163,6 +217,8 @@ function freeBackupPath(settingsPath, when) {
   const baseName = core.backupPathFor(settingsPath, when);
   for (let i = 0; i <= BACKUP_SUFFIX_MAX; i++) {
     const cand = i === 0 ? baseName : `${baseName}-${i}`;
+    const w = winfs.active();
+    if (w) { try { if (!w.checkPath(cand).exists) return cand; } catch { return baseName; } continue; }
     try { fs.lstatSync(cand); } catch (e) { if (e.code === 'ENOENT') return cand; return baseName; }
   }
   return baseName; // all taken: the O_EXCL write fails => apply_failed, nothing overwritten
@@ -216,7 +272,7 @@ function buildPlan(parsed, opts) {
   const o = parsed.o;
   if (parsed.harness === 'pi') {
     const target = core.resolveUserSettings(env, opts.homedir || os.homedir, ['.pi', 'agent', 'extensions', 'abito-island']);
-    const plan = pi.planPi({home:env.HOME, uid:opts.uid === undefined ? process.getuid() : opts.uid, remove:o.remove,
+    const plan = pi.planPi({home:env.HOME, uid:opts.uid === undefined ? winfs.uidOf() : opts.uid, remove:o.remove,
       execPath:opts.execPath || process.execPath, binPath:opts.binPath || core.BIN_PATH});
     if (plan.settingsPath !== target) throw new core.InstallError(65, 'Pi default path mismatch');
     const action = o.remove ? 'remove' : 'install';
@@ -225,7 +281,7 @@ function buildPlan(parsed, opts) {
   const settingsPath = o.user ? core.resolveUserSettings(env, opts.homedir || os.homedir, profile.defaultFile) : o.settings;
   const common = {
     settingsPath, remove: o.remove, execPath: opts.execPath || process.execPath,
-    uid: opts.uid === undefined ? process.getuid() : opts.uid,
+    uid: opts.uid === undefined ? winfs.uidOf() : opts.uid,
   };
   const plan = parsed.harness === 'statusline'
     ? statusline.planStatusLine({ ...common, binPath: opts.binPath || statusline.STATUSLINE_BIN, home: o.user ? env.HOME : (opts.homedir || os.homedir)() })
@@ -235,7 +291,8 @@ function buildPlan(parsed, opts) {
   return { plan, action, hash: computePlanHash(plan, parsed.harness, action), trust: parsed.harness === 'codex' && !o.remove };
 }
 
-const fixedMessage = { usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
+const WIN_UNVERIFIED = new Set(['helper_failed', 'helper_untrusted', 'script_untrusted']);
+const fixedMessage = { unverified: 'the installed Abito files could not be verified; nothing was written', unsafe: 'the target or its folder is not private to this user or goes through a link; nothing was written', usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
 
 // argv: arguments after `install`. Always prints exactly one JSON line through opts.out; returns the exit code.
 async function runInstallUi(argv, opts = {}) {
@@ -250,16 +307,19 @@ async function runInstallUi(argv, opts = {}) {
   let refuseHash;
   const fail = (exit, code, message) => {
     if (refuseHash !== undefined && code !== 'audit_unavailable') {
-      try { appendAudit(opts.auditDir, { ts: Date.now(), event: 'refused', code, plan_hash: refuseHash }, opts.uid === undefined ? process.getuid() : opts.uid, { create: false }); } catch { /* never blocks, never changes the exit */ }
+      try { appendAudit(opts.auditDir, { ts: Date.now(), event: 'refused', code, plan_hash: refuseHash }, opts.uid === undefined ? winfs.uidOf() : opts.uid, { create: false }); } catch { /* never blocks, never changes the exit */ }
     }
     emit({ schema: SCHEMA, ok: false, code, message }); return exit;
   };
   try {
     const parsed = parseUiArgs(argv);
     if (!parsed) return fail(64, 'usage', fixedMessage.usage);
-    // Native peer/target probes do not establish audit, side-file, or bundled-script trust.
-    // Refuse BEFORE getuid, reads or writes; never present a Windows preview as installable.
-    if (!['linux', 'darwin'].includes(process.platform)) return fail(77, 'unsupported_platform', 'Automatic hook installation is not available on this platform yet.');
+    // Windows (HU-047): audit, side files, locks and every write go through the native ACL helper, which must match the
+    // install manifest. If it cannot be trusted the plan is refused up front and nothing is read or written.
+    if (!['linux', 'darwin', 'win32'].includes(process.platform)) return fail(77, 'unsupported_platform', 'Automatic hook installation is not available on this platform yet.');
+    if (process.platform === 'win32') {
+      try { winfs.active(); } catch { return fail(65, 'install_unverified', fixedMessage.unverified); }
+    }
     if (parsed.applyPlan !== null) { refuseHash = parsed.applyPlan; opts = { ...opts, auditDir: parsed.auditDir }; }
     if (parsed.applyPlan === null) {
       const { plan, action, hash, trust } = buildPlan(parsed, opts);
@@ -274,6 +334,8 @@ async function runInstallUi(argv, opts = {}) {
     return await applyPlanned(parsed, opts, emit, fail);
   } catch (e) {
     if (e instanceof UiError) return fail(e.exitCode, e.code, e.message);
+    if (e instanceof winfs.WinFsError) return fail(65, WIN_UNVERIFIED.has(e.reason) ? 'install_unverified' : 'unsafe_target', WIN_UNVERIFIED.has(e.reason) ? fixedMessage.unverified : fixedMessage.unsafe);
+    if (e instanceof core.InstallError && e.reason) return fail(65, WIN_UNVERIFIED.has(e.reason) ? 'install_unverified' : 'unsafe_target', WIN_UNVERIFIED.has(e.reason) ? fixedMessage.unverified : fixedMessage.unsafe);
     if (e instanceof core.InstallError) return e.exitCode === 64 ? fail(64, 'usage', fixedMessage.usage) : fail(e.exitCode, 'refused', fixedMessage.refused);
     return fail(70, 'internal', fixedMessage.internal);
   }
@@ -281,7 +343,7 @@ async function runInstallUi(argv, opts = {}) {
 
 async function applyPlanned(parsed, opts, emit, fail) {
   const env = opts.env || process.env;
-  const uid = opts.uid === undefined ? process.getuid() : opts.uid;
+  const uid = opts.uid === undefined ? winfs.uidOf() : opts.uid;
   const now = opts.now || (() => new Date());
   // 1) island guards first: nothing is read or written before they pass
   if (!checkIslandGuards(env, opts.ppid === undefined ? process.ppid : opts.ppid, opts.readExe)) return fail(77, 'not_island', 'not allowed in this context');
@@ -310,11 +372,11 @@ async function applyPlanned(parsed, opts, emit, fail) {
         verify: parsed.harness === 'statusline' ? statusline.verify(plan) : (plan.profile && plan.profile.verify ? plan.profile.verify(plan) : undefined),
         out: () => {}, err: s => { msg += s; } });
       if (parsed.harness === 'statusline' && ((rc !== 0 && previousSaved) || (rc === 0 && plan.restorePrevious))) {
-        try { fs.unlinkSync(statusline.previousFile(plan.home)); } catch { /* same cleanup as the interactive installer */ }
+        try { statusline.removePrevious(plan.home); } catch { /* same cleanup as the interactive installer */ }
       }
       if (rc !== 0) code = /changed since the preview/.test(msg) ? 'plan_changed' : /could not restore/.test(msg) ? 'restore_failed' : /verification failed/.test(msg) ? 'verification_failed' : 'apply_failed';
     }
-    const backupMade = backupPath !== null && fs.existsSync(backupPath) ? backupPath : null;
+    const backupMade = backupPath !== null && (winfs.active() ? (() => { try { return winfs.active().checkPath(backupPath).exists; } catch { return false; } })() : fs.existsSync(backupPath)) ? backupPath : null;
     // 5) result line, best effort
     let recorded = true;
     try { appendAudit(parsed.auditDir, { ts: Date.now(), event: 'result', plan_hash: hash, ok: rc === 0, code, backup: backupMade }, uid); } catch { recorded = false; }
@@ -325,7 +387,7 @@ async function applyPlanned(parsed, opts, emit, fail) {
       return 70;
     }
     // 6) one JSON line
-    const rollback = parsed.harness === 'pi' || !plan.changed ? null : backupMade ? `cp -p ${core.shq(backupMade)} ${core.shq(plan.settingsPath)}` : `rm -- ${core.shq(plan.settingsPath)}`;
+    const rollback = parsed.harness === 'pi' || !plan.changed || winfs.active() ? null : backupMade ? `cp -p ${core.shq(backupMade)} ${core.shq(plan.settingsPath)}` : `rm -- ${core.shq(plan.settingsPath)}`;
     const res = {
       schema: SCHEMA, ok: true, mode: 'applied', harness: parsed.harness, action, target: plan.settingsPath, plan_hash: hash, changed: plan.changed,
       backup: backupMade, rollback, entries: entriesOf(plan), requires_trust_review: trust,

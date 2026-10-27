@@ -570,6 +570,8 @@
     plan_changed: 'Algo cambió desde la vista previa; revisá el nuevo cambio y volvé a intentar.',
     audit_unavailable: 'No se pudo abrir el registro de cambios, así que no se tocó nada.',
     install_failed: 'No se pudo completar; no se tocó nada.',
+    unsafe_target: 'La carpeta o el archivo de configuración no es privado de tu usuario o pasa por un enlace; no se tocó nada.',
+    install_unverified: 'No se pudieron verificar los archivos instalados de Abito; no se tocó nada. Reinstalá Abito.',
   });
   const PLAN_FALLBACK = 'Se van a agregar los hooks de Abito. Antes se hace un respaldo.';
   const PLAN_HASH = /^[0-9a-f]{64}$/;

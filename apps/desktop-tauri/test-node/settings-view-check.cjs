@@ -1044,6 +1044,9 @@ test('details: plan_changed re-shows the NEW plan; audit_unavailable and install
   assert.equal(again.primary.command.plan_hash, HASH, 'the retry is bound to the NEW plan that came back');
   assert.ok(again.summary, 'the new summary is shown again');
   assert.match(rowOf(plan({ state: 'error', detail: 'audit_unavailable', plan_hash: null, summary: null })).note, /registro|auditor/i);
+  // HU-047: Windows refusals say why, in their own sentences.
+  assert.match(rowOf(plan({ state: 'error', detail: 'unsafe_target', plan_hash: null, summary: null })).note, /privad|enlace/i);
+  assert.match(rowOf(plan({ state: 'error', detail: 'install_unverified', plan_hash: null, summary: null })).note, /verific/i);
   assert.match(rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null })).note, /no se tocó|no se pudo/i);
   // an error without a plan cannot be retried blindly with a stale one
   const noPlan = rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null }));

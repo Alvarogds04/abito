@@ -35,7 +35,7 @@ const COPILOT_PROFILE = {
   },
 };
 
-function planCopilotHooks({ settingsPath, timeoutSec, remove = false, binPath = core.BIN_PATH, execPath = process.execPath, uid = process.getuid(), profile = COPILOT_PROFILE }) {
+function planCopilotHooks({ settingsPath, timeoutSec, remove = false, binPath = core.BIN_PATH, execPath = process.execPath, uid = require('./win-fs.cjs').uidOf(), profile = COPILOT_PROFILE }) {
   if (timeoutSec === undefined) timeoutSec = profile.defaultTimeoutSec;
   core.checkTimeout(timeoutSec);
   profile.checkPaths(binPath, execPath);

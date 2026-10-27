@@ -53,6 +53,8 @@ const REFUSAL_DETAIL = Object.freeze({
 	backup_failed: "backup_failed",
 	plan_changed: "plan_changed",
 	audit_unavailable: "audit_unavailable",
+	unsafe_target: "unsafe_target",
+	install_unverified: "install_unverified",
 });
 
 const AGENTS = Object.freeze([
@@ -87,14 +89,24 @@ const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
  * group/world-writable, secure parent chain (no symlink components, no foreign owners, no
  * world-writable-without-sticky dirs). It is run with node, so it needs no exec bit.
  */
-function assertTrustedScript(file) {
+function assertTrustedScript(file, platform = process.platform, verifyBundled = defaultVerifyBundled) {
 	if (typeof file !== "string" || !path.isAbsolute(file) || path.normalize(file) !== file) fail();
+	if (platform === "win32") {
+		// No POSIX owner/mode bits on Windows: the bytes must match the install manifest (HU-047).
+		verifyBundled(file);
+		return;
+	}
 	const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 	assertSecurePath(path.dirname(file));
 	const st = fs.lstatSync(file);
 	if (st.isSymbolicLink() || !st.isFile()) fail();
 	if (uid !== undefined && st.uid !== uid && st.uid !== 0) fail();
 	if ((st.mode & 0o022) !== 0) fail();
+}
+
+/** Windows only: the harness verifies the script against the install manifest (sibling package of this install). */
+function defaultVerifyBundled(file) {
+	require("../../desktop-harness/src/win-fs.cjs").verifyBundled(file);
 }
 
 /** SIGKILL the child's whole process group (it is its own leader); ESRCH is fine. */
@@ -133,6 +145,7 @@ class AgentsManager extends EventEmitter {
 		super();
 		this.installerBin = options.installerBin;
 		this.platform = options.platform ?? process.platform;
+		this.verifyBundled = options.verifyBundled ?? defaultVerifyBundled;
 		this.nodeExe = options.nodeExe ?? process.execPath;
 		this.home = options.home;
 		this.islandDir = options.islandDir;
@@ -194,7 +207,7 @@ class AgentsManager extends EventEmitter {
 		const agent = AGENTS.find((a) => a.id === id);
 		if (!agent || (planHash !== undefined && !HASH.test(planHash))) throw new AgentsError("bad_request");
 		if (!remove && ["recap", "statusline"].includes(id) && planHash === undefined) throw new AgentsError("bad_request");
-		if (!["linux", "darwin"].includes(this.platform)) return this.list();
+		if (!["linux", "darwin", "win32"].includes(this.platform)) return this.list();
 		if (!agent.harness || !this.available) return this.list(); // nothing to run: the agent reads unavailable
 		if (this.op) throw new AgentsError("busy");
 		this.op = { id: agent.id };
@@ -280,7 +293,7 @@ class AgentsManager extends EventEmitter {
 
 	/** The state entry of one agent (read-only preview). Never throws. */
 	async entry(agent) {
-		if (!["linux", "darwin"].includes(this.platform)) return this.plain(agent, "unavailable", "unsupported_platform");
+		if (!["linux", "darwin", "win32"].includes(this.platform)) return this.plain(agent, "unavailable", "unsupported_platform");
 		if (!agent.harness || !this.available) return this.plain(agent, "unavailable");
 		try {
 			const pv = await this.inspect(agent, false);
@@ -380,7 +393,9 @@ class AgentsManager extends EventEmitter {
 	// ----- subprocess ------------------------------------------------------------------
 
 	childEnv() {
-		const env = { PATH: CHILD_PATH, HOME: this.home };
+		const env = this.platform === "win32"
+			? { HOME: this.home, USERPROFILE: this.home, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot, PATH: path.win32.join(process.env.SystemRoot, "System32") } : {}) }
+			: { PATH: CHILD_PATH, HOME: this.home };
 		if (typeof process.env.LANG === "string" && process.env.LANG !== "") env.LANG = process.env.LANG;
 		env.ABITO_ISLAND_EXE = fs.realpathSync(this.nodeExe);
 		return env;
@@ -391,7 +406,7 @@ class AgentsManager extends EventEmitter {
 	 * timeout, oversize, garbage or an exit code that disagrees with the JSON verdict.
 	 */
 	async call(_agent, args) {
-		assertTrustedScript(this.installerBin);
+		assertTrustedScript(this.installerBin, this.platform, this.verifyBundled);
 		const { exit, stdout } = await this.runner([this.installerBin, ...args], this.childEnv());
 		const json = parseLine(stdout);
 		if (json.schema !== SCHEMA) fail();
@@ -428,7 +443,7 @@ class AgentsManager extends EventEmitter {
 					stdio: ["ignore", "pipe", "pipe"],
 					env,
 					cwd: this.islandDir,
-					detached: true, // own process group: a timeout kills grandchildren too
+					detached: this.platform !== "win32", // own process group on POSIX: a timeout kills grandchildren too
 					windowsHide: true,
 				});
 			} catch {

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const core = require('./install-claude.cjs');
+const winfs = require('./win-fs.cjs');
 const MANIFEST = '.abito-manifest.json';
 const SCHEMA = 'abito-pi-extension/1';
 const FILES = Object.freeze(['adapter.cjs', 'ask-tool.cjs', 'config.cjs', 'index.ts', 'native-ask.cjs', 'questions.cjs', 'security.cjs', 'windows-transport.cjs']);
@@ -88,6 +89,7 @@ function pruneBackups(root, keep, uid) {
   }
 }
 function planPi({home, uid, remove, execPath, binPath}) {
+  if (winfs.active()) return require('./install-pi-win.cjs').planPi({home, remove, execPath, binPath});
   const parent = parents(home, uid);
   const target = path.join(parent, 'abito-island');
   const root = backupRoot(home, uid);
@@ -123,6 +125,7 @@ function cleanStage(dir) {
   } catch { /* leave evidence, never recursively remove unknown data */ }
 }
 async function applyPi(plan, {backupPath, out, err}) {
+  if (winfs.active()) return require('./install-pi-win.cjs').applyPi(plan, {backupPath, out, err});
   let stage = null, saved = false, published = false;
   try {
     if (!same(plan)) { err('changed since the preview'); return 70; }

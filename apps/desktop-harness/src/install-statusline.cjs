@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const ic = require('./install-claude.cjs');
+const winfs = require('./win-fs.cjs');
 
 const STATUSLINE_BIN = path.resolve(__dirname, '../bin/abito-statusline.cjs');
 const MARKER = 'abito-statusline.cjs';
@@ -16,10 +17,11 @@ const { InstallError, scanSettings, shq, isObj, diffLines } = ic;
 const refuse = ic.InstallErrorRefuse;
 
 const isOurs = v => isObj(v) && typeof v.command === 'string' && v.command.includes(MARKER);
-const previousFile = home => path.join(home, '.abito', 'statusline-previous.json');
+const previousFile = home => (winfs.active() ? path.win32 : path).join(home, '.abito', 'statusline-previous.json');
+const removePrevious = home => { const w = winfs.active(); if (w) w.remove(previousFile(home)); else fs.unlinkSync(previousFile(home)); };
 const ser = (v, style) => JSON.stringify(v, null, style.unit).replace(/\n/g, style.eol + style.mi);
 
-function planStatusLine({ settingsPath, remove = false, execPath = process.execPath, binPath = STATUSLINE_BIN, uid = process.getuid(), home = null }) {
+function planStatusLine({ settingsPath, remove = false, execPath = process.execPath, binPath = STATUSLINE_BIN, uid = winfs.uidOf(), home = null }) {
   ic.checkSettingsSyntax(settingsPath);
   ic.checkParent(settingsPath, uid);
   const cur = ic.readTarget(settingsPath, uid);
@@ -108,6 +110,14 @@ function render(plan, backupPath, apply) {
 }
 
 function writeSaved(home, obj) {
+  const w = winfs.active();
+  if (w) {
+    const dir = path.win32.join(home, '.abito'), file = previousFile(home);
+    w.makeDir(dir);
+    const cur = w.readPrivate(file);
+    w.writePrivate(file, Buffer.from(JSON.stringify(obj) + '\n'), cur ? cur.sha256 : null);
+    return;
+  }
   const dir = path.join(home, '.abito');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = previousFile(home);
@@ -139,7 +149,7 @@ async function runStatusLineInstall(argv, opts = {}) {
       if (!isTTY()) { err('refused: --apply needs an interactive terminal on stdin and stdout; nothing was written\n'); return 77; }
     }
     const plan = planStatusLine({ settingsPath, remove: o.remove, execPath: opts.execPath || process.execPath, binPath: opts.binPath || STATUSLINE_BIN,
-      uid: opts.uid === undefined ? process.getuid() : opts.uid, home });
+      uid: opts.uid === undefined ? winfs.uidOf() : opts.uid, home });
     const now = (opts.now || (() => new Date()))();
     const backupPath = ic.backupPathFor(settingsPath, now);
     out(render(plan, backupPath, o.apply));
@@ -152,10 +162,10 @@ async function runStatusLineInstall(argv, opts = {}) {
     }
     const code = await ic.applyPlan(plan, { backupPath, verify: verify(plan), out, err });
     if (code !== 0) {
-      if (plan.savePrevious) { try { fs.unlinkSync(previousFile(home)); } catch { /* ignore */ } }
+      if (plan.savePrevious) { try { removePrevious(home); } catch { /* ignore */ } }
       return code;
     }
-    if (plan.restorePrevious) { try { fs.unlinkSync(previousFile(home)); } catch { /* ignore */ } }
+    if (plan.restorePrevious) { try { removePrevious(home); } catch { /* ignore */ } }
     return 0;
   } catch (e) {
     if (e instanceof InstallError) { err(e.message + '\n'); return e.exitCode; }
@@ -179,4 +189,4 @@ function parseArgs(argv) {
   return o;
 }
 
-module.exports = { planStatusLine, runStatusLineInstall, STATUSLINE_BIN, isOurs, previousFile, writeSaved, verify, USAGE };
+module.exports = { removePrevious, planStatusLine, runStatusLineInstall, STATUSLINE_BIN, isOurs, previousFile, writeSaved, verify, USAGE };

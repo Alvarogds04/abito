@@ -400,7 +400,7 @@ fn a_plan_that_does_not_look_like_ours_never_reaches_the_page() {
 #[test]
 fn the_three_new_details_are_part_of_the_closed_set() {
     let mut st = ClientState::connected();
-    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform"] {
+    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified"] {
         st.apply(&json!({"type":"agents","agents":[{"id":"codex","state":"error","detail":d}]})).unwrap();
         assert_eq!(serde_json::to_value(&st).unwrap()["agents"][0]["detail"], json!(d), "{d}");
     }

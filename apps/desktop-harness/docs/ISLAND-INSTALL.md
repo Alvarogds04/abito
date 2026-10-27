@@ -88,7 +88,9 @@ Requires `--json` and `--audit-dir`; mutually exclusive with `--apply`; `--audit
 | 70 | `internal` | unexpected failure; nothing was written |
 | 73 | `audit_unavailable` | audit trail could not be opened/appended; **nothing was written to the settings file** |
 | 77 | `not_island` | island guards failed; nothing was read or written |
-| 77 | `unsupported_platform` | automatic installation is unavailable (including Windows); no target/audit/lock/backup reads or writes |
+| 77 | `unsupported_platform` | automatic installation is unavailable on this platform (anything but Linux, macOS and Windows); no target/audit/lock/backup reads or writes |
+| 65 | `unsafe_target` | Windows only: the settings file or its folder is not private to the current user (owner / DACL), goes through a link or junction, or is otherwise unsafe; nothing was written |
+| 65 | `install_unverified` | Windows only: the installed native helper or a bundled script does not match the install manifest (`abito-install.json`); nothing was read or written |
 
 ## Apply sequence (what the CLI does, in order)
 
@@ -149,8 +151,10 @@ Interactive `--apply` still requires a TTY and the typed word.
 
 - Any process of the same uid can already edit `~/.claude/settings.json` by hand, or run this CLI. The guarantee is **"exactly what was shown is applied"** (plan binding plus audit trail), not authentication of the caller.
 - The real human confirmation is the trusted click in the island. Guards (i) and (ii) are **defence in depth**, not a security boundary: the marker list is best-effort, and a same-uid process can spawn the island executable's name or edit the environment of its own children.
-- Automatic installation is enabled on Linux (`/proc`) and macOS (own-uid executable probe). Windows fails closed with `unsupported_platform`; a native parent or target probe alone is not sufficient to authorize filesystem writes. The terminal installer shares the unresolved Windows filesystem limitations; it is not a workaround.
-- Windows read-only `abito-private-session --parent-check <pid>` and `--check-target <agent-id>` probes are retained for follow-up. The latter accepts only claude/codex/copilot/opencode/recap/statusline default targets, never a path; missing parents, reparse ancestors and non-private owner/DACLs refuse. Audit creation, status-line side files and bundled-script trust are still unresolved. No ACL repair or config write is performed by these probes.
+- Automatic installation is enabled on Linux (`/proc`), macOS (own-uid executable probe) and Windows (HU-047).
+- Windows: Node cannot read or set an ACL, so every trust-sensitive fact and write goes through the installed native helper `abito-private-session.exe` (`--check-path`, `--make-dir`, `--write-private <path> --expect none|<sha256>`, `--move`, `--delete`; fixed argv, drive-letter absolute paths only, no UNC or `\\?\` paths). The helper is the installed sibling next to `abito-install.json`, never PATH or cwd, and its sha256 must match that manifest before Node runs it; every bundled script Abito registers (hook, Pi extension files) must match the manifest too. The helper verifies the parent chain (owner = current SID, or BUILTIN\Administrators only for an elevated token; no foreign write ACE; no reparse point on any component), creates the temp file with a protected private DACL at creation, replaces atomically (`MoveFileExW`), and re-verifies the result. The audit file, the apply lock, the status-line side file and the Pi stage/backups all use it. Pi publication across volumes is refused, never copied. Any failed check writes nothing and Ajustes shows the reason (`unsafe_target`, `install_unverified`).
+- The Windows rollback command is not printed (the backup path is reported instead).
+- Windows read-only `abito-private-session --parent-check <pid>` and `--check-target <agent-id>` remain the island-guard probes.
 - The audit log is append-only by convention (`O_APPEND`), not tamper-proof against the same uid.
 - The backup path in the preview is planned; the actual timestamp differs.
 - A crash mid-apply can leave orphan `.<name>.abito-tmp-*` files next to the target (and a stale lock for up to 30 s); they are harmless and can be deleted by hand.

@@ -520,7 +520,7 @@ impl ClientState {
                         _ => "error",
                     };
                     let detail = match a.get("detail").and_then(Value::as_str) {
-                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform")) => json!(d),
+                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform" | "unsafe_target" | "install_unverified")) => json!(d),
                         _ => Value::Null,
                     };
                     // the plan exists only for a state that offers a button, and only when BOTH parts look like ours

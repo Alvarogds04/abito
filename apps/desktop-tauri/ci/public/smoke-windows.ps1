@@ -24,7 +24,7 @@ $recap = Join-Path $localData 'com.abitog.AbitoTauri/recap.json'
 if (Test-Path -LiteralPath $recap) { throw 'Runner already has island recap data; refusing smoke against existing state' }
 if (Test-Path -LiteralPath (Join-Path $localData 'Abito')) { throw 'Runner already has island runtime data; refusing reuse' }
 $originalEnv = @{}
-foreach ($key in @('PATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ABITO_PROJECT_ROOT', 'ABITO_ISLAND_DIR', 'ABITO_DESKTOP_SOCKET')) {
+foreach ($key in @('PATH', 'HOME', 'USERPROFILE', 'ABITO_ISLAND_EXE', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ABITO_PROJECT_ROOT', 'ABITO_ISLAND_DIR', 'ABITO_DESKTOP_SOCKET')) {
     $originalEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
 }
 $process = $null
@@ -139,7 +139,7 @@ try {
     if (@(Compare-Object $expected $actual).Count -ne 0) { throw 'Installed payload differs from closed file set' }
     foreach ($file in $expected) {
         if ($file -eq 'uninstall.exe') { continue }
-        $source = if ($file.EndsWith('.exe')) { Join-Path $PWD "dist/$file" } else { Join-Path $PWD "dist/windows-runtime/$file" }
+        $source = if ($file.EndsWith('.exe') -or $file -eq 'abito-install.json') { Join-Path $PWD "dist/$file" } else { Join-Path $PWD "dist/windows-runtime/$file" }
         if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath (Join-Path $install $file)).Hash) { throw "Installed hash mismatch: $file" }
     }
     Start-Island 'ready'
@@ -164,6 +164,77 @@ try {
     } 'island persisted installed hook receipt'
     Write-Host 'PASS installed hook -> installed authenticated relay -> receiver -> island persisted turn'
     Stop-Island
+
+    # HU-047: install hooks and the Pi extension from the INSTALLED runtime with Windows ACL checks.
+    # The profile below mirrors a real one (protected DACL: current user, SYSTEM, Administrators).
+    $hookCli = Join-Path $install 'desktop-harness/bin/abito-hook.cjs'
+    $agentHome = Join-Path $root 'agent-home'
+    function New-PrivateDir($path) {
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+        & icacls.exe $path /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' 'Administrators:(OI)(CI)F' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "icacls failed for $path" }
+    }
+    function Invoke-Install([string[]]$InstallArgs) {
+        $env:HOME = $agentHome; $env:USERPROFILE = $agentHome
+        $env:ABITO_ISLAND_EXE = (Get-Process -Id $PID).Path
+        $out = & $node $hookCli install @InstallArgs 2> (Join-Path $root 'install.stderr.log')
+        $code = $LASTEXITCODE
+        if ((Get-Item -LiteralPath (Join-Path $root 'install.stderr.log')).Length -ne 0) { throw 'install wrote to stderr' }
+        return [pscustomobject]@{ Code = $code; Json = ($out | ConvertFrom-Json) }
+    }
+    New-PrivateDir $agentHome
+    foreach ($d in @('.claude', '.codex', '.pi', '.pi\agent')) { New-PrivateDir (Join-Path $agentHome $d) }
+    $auditDir = Join-Path $agentHome 'audit'
+    $settings = Join-Path $agentHome '.claude\settings.json'
+    [IO.File]::WriteAllText($settings, "{`n  `"keep`": 1`n}`n")
+    & icacls.exe $settings /inheritance:r /grant:r "${env:USERNAME}:F" 'SYSTEM:F' 'Administrators:F' | Out-Null
+    $pv = Invoke-Install @('claude', '--user', '--json')
+    if ($pv.Code -ne 0 -or -not $pv.Json.ok -or -not $pv.Json.changed) { throw 'Windows claude preview failed' }
+    $ap = Invoke-Install @('claude', '--user', '--json', '--apply-plan', $pv.Json.plan_hash, '--audit-dir', $auditDir)
+    if ($ap.Code -ne 0 -or -not $ap.Json.ok -or $ap.Json.mode -ne 'applied') { throw "Windows claude apply failed: $($ap.Json | ConvertTo-Json -Compress)" }
+    $written = Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json
+    if ($written.keep -ne 1 -or -not (Get-Content -Raw -LiteralPath $settings).Contains('abito-hook.cjs')) { throw 'Windows claude settings not patched as planned' }
+    $auditFile = Join-Path $auditDir 'hook-installs.jsonl'
+    if (@(Get-Content -LiteralPath $auditFile).Count -ne 2) { throw 'Windows audit record missing' }
+    if (@(Get-ChildItem -LiteralPath (Join-Path $agentHome '.claude') -Force | Where-Object { $_.Name -like '*.abito-lock' -or $_.Name -like '*abito-tmp*' }).Count -ne 0) { throw 'Windows install left lock or temp files' }
+    $acl = Get-Acl -LiteralPath $settings
+    if ($acl.AreAccessRulesProtected -ne $true) { throw 'Windows settings file DACL is not protected' }
+    $stranger = @($acl.Access | Where-Object { $_.IdentityReference.Value -match 'Users|Everyone|Authenticated' })
+    if ($stranger.Count -ne 0) { throw 'Windows settings file grants access to other principals' }
+    Write-Host 'PASS Windows install: Claude hooks patched under verified ACLs, private audit record, no leftovers'
+    # Refusals write nothing and say why.
+    $codexTarget = Join-Path $root 'codex-real'; New-PrivateDir $codexTarget
+    Remove-Item -LiteralPath (Join-Path $agentHome '.codex') -Recurse -Force
+    New-Item -ItemType Junction -Path (Join-Path $agentHome '.codex') -Target $codexTarget | Out-Null
+    $r = Invoke-Install @('codex', '--user', '--json')
+    if ($r.Code -eq 0 -or $r.Json.ok -or $r.Json.code -ne 'unsafe_target') { throw "Junction target was not refused: $($r.Json | ConvertTo-Json -Compress)" }
+    if (@(Get-ChildItem -LiteralPath $codexTarget -Force).Count -ne 0) { throw 'Junction refusal wrote into the target' }
+    $openDir = Join-Path $agentHome '.copilot'; New-PrivateDir $openDir; New-PrivateDir (Join-Path $openDir 'hooks')
+    & icacls.exe (Join-Path $openDir 'hooks') /grant 'Users:(OI)(CI)M' | Out-Null
+    $r = Invoke-Install @('copilot', '--user', '--json')
+    if ($r.Code -eq 0 -or $r.Json.ok -or $r.Json.code -ne 'unsafe_target') { throw "Users-writable folder was not refused: $($r.Json | ConvertTo-Json -Compress)" }
+    if (@(Get-ChildItem -LiteralPath (Join-Path $openDir 'hooks') -Force).Count -ne 0) { throw 'Users-writable refusal wrote a file' }
+    Write-Host 'PASS Windows refusals: junction and Users-writable targets write nothing, report unsafe_target'
+    # Pi extension: install, verify the closed payload, then refuse after a bundled file is tampered.
+    $pv = Invoke-Install @('pi', '--user', '--json')
+    if ($pv.Code -ne 0 -or -not $pv.Json.ok) { throw "Windows Pi preview failed: $($pv.Json | ConvertTo-Json -Compress)" }
+    $ap = Invoke-Install @('pi', '--user', '--json', '--apply-plan', $pv.Json.plan_hash, '--audit-dir', $auditDir)
+    if ($ap.Code -ne 0 -or -not $ap.Json.ok) { throw "Windows Pi apply failed: $($ap.Json | ConvertTo-Json -Compress)" }
+    $ext = Join-Path $agentHome '.pi\agent\extensions\abito-island'
+    foreach ($f in @('index.ts', 'adapter.cjs', '.abito-manifest.json')) { if (-not (Test-Path -LiteralPath (Join-Path $ext $f))) { throw "Pi extension file missing: $f" } }
+    $tampered = Join-Path $install 'desktop-pi/adapter.cjs'
+    $original = [IO.File]::ReadAllBytes($tampered)
+    [IO.File]::AppendAllText($tampered, "`n// tamper")
+    try {
+        $r = Invoke-Install @('pi', '--user', '--json')
+        if ($r.Code -eq 0 -or $r.Json.code -ne 'install_unverified') { throw "Tampered bundled file was not refused: $($r.Json | ConvertTo-Json -Compress)" }
+    } finally { [IO.File]::WriteAllBytes($tampered, $original) }
+    $rm = Invoke-Install @('pi', '--user', '--json', '--remove')
+    $rm = Invoke-Install @('pi', '--user', '--json', '--remove', '--apply-plan', $rm.Json.plan_hash, '--audit-dir', $auditDir)
+    if ($rm.Code -ne 0 -or (Test-Path -LiteralPath $ext)) { throw 'Windows Pi removal failed' }
+    Write-Host 'PASS Windows Pi extension: installed, tamper refused (install_unverified), removed'
+    foreach ($key in @('HOME', 'USERPROFILE', 'ABITO_ISLAND_EXE')) { [Environment]::SetEnvironmentVariable($key, $originalEnv[$key], 'Process') }
+
     Start-Island 'explicit-root'
     Wait-For { (Get-Content -Raw -LiteralPath (Join-Path $root 'explicit-root.stderr.log')) -match 'abito-island-daemon: running' } 'explicit Windows root daemon startup'
     Write-Host 'PASS installed receiver and daemon with explicit Windows project root'
