@@ -8,8 +8,9 @@
 //! (an observer may fire while a caller holds the transport guard — the same
 //! rule `questionhost::invalidate` already obeys: never reenter synchronously).
 //!
-//! Non-Unix builds get honest no-op stubs: no tray is created, the pure
-//! derivation in [`crate::tray`] still runs and stays tested everywhere.
+//! HU-048: the tray now exists on Linux, macOS AND Windows (the human: «que abito salga en los iconos oculto abajo a la derecha de
+//! windows»). The menu comes from the pure `tray::menu_spec`; the only difference is «Arrancar al iniciar sesión», offered only where the
+//! autostart toggle works (Unix today). Any other platform keeps the honest no-op: nothing is created, nothing is pretended.
 
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -68,7 +69,7 @@ pub fn refresh(app: &AppHandle, snapshot: &Value) {
     if CURRENT.swap(next as u8, Ordering::SeqCst) == next as u8 {
         return;
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     set_tray_state(app, next);
 }
 
@@ -93,7 +94,7 @@ pub fn note_question_change(app: &AppHandle) {
     });
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn set_tray_state(app: &AppHandle, state: TrayState) {
     if let Some(icon) = app.tray_by_id(TRAY_ID) {
         let glyph = tray::glyph_rgba(state);
@@ -114,7 +115,7 @@ const TRAY_ID: &str = "abito-tray";
 
 /// Keep the returned handle alive: the manager retains the icon, but holding
 /// it here makes the lifetime explicit and independent of Tauri internals.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 static TRAY: std::sync::Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>> = std::sync::Mutex::new(None);
 
 /// The autostart check item's handle: TrayIcon has no menu getter, so the one
@@ -170,7 +171,7 @@ fn toggle_autostart(app: &AppHandle) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn handle_menu(app: &AppHandle, id: &str) {
     match id {
         "tray-show" => crate::restore(app),
@@ -179,40 +180,42 @@ fn handle_menu(app: &AppHandle, id: &str) {
             let _ = crate::dispatch_action(app, &state, crate::Action::Hide, None);
         }
         "tray-quit" => crate::quit_clean(app),
+        #[cfg(unix)]
         "tray-autostart" => toggle_autostart(app),
         _ => {}
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn start(app: &AppHandle) {
-    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
 
     // Every step fails soft: a host without a working tray service must never
     // take the island down — the island runs tray-less and says why.
     let build = || -> Result<tauri::tray::TrayIcon<tauri::Wry>, tauri::Error> {
-        let autostart_on = autostart_entry()
-            .as_deref()
-            .map(crate::autostart::is_enabled_at)
-            .unwrap_or(false);
-        let show = MenuItem::with_id(app, "tray-show", "Mostrar Abito", true, None::<&str>)?;
-        let hide = MenuItem::with_id(app, "tray-hide", "Ocultar", true, None::<&str>)?;
-        let sep = PredefinedMenuItem::separator(app)?;
-        let launch = CheckMenuItem::with_id(
-            app,
-            "tray-autostart",
-            "Arrancar al iniciar sesión",
-            true,
-            autostart_on,
-            None::<&str>,
-        )?;
-        if let Ok(mut slot) = AUTOSTART_CHECK.lock() {
-            *slot = Some(launch.clone());
+        // Offered only where the toggle works: a desktop entry on Unix; Windows has no Run-key implementation (HU-048).
+        let autostart_supported = cfg!(unix);
+        #[cfg(unix)]
+        let autostart_on = autostart_entry().as_deref().map(crate::autostart::is_enabled_at).unwrap_or(false);
+        let menu = Menu::new(app)?;
+        for entry in tray::menu_spec(autostart_supported) {
+            let kind = match entry {
+                tray::MenuEntry::Item(id, text) => MenuItemKind::MenuItem(MenuItem::with_id(app, id, text, true, None::<&str>)?),
+                tray::MenuEntry::Separator => MenuItemKind::Predefined(PredefinedMenuItem::separator(app)?),
+                tray::MenuEntry::Check(id, text) => {
+                    #[cfg(unix)]
+                    {
+                        let launch = CheckMenuItem::with_id(app, id, text, true, autostart_on, None::<&str>)?;
+                        if let Ok(mut slot) = AUTOSTART_CHECK.lock() { *slot = Some(launch.clone()); }
+                        MenuItemKind::Check(launch)
+                    }
+                    #[cfg(not(unix))]
+                    { MenuItemKind::Check(CheckMenuItem::with_id(app, id, text, true, false, None::<&str>)?) }
+                }
+            };
+            menu.append(&kind)?;
         }
-        let sep2 = PredefinedMenuItem::separator(app)?;
-        let quit = MenuItem::with_id(app, "tray-quit", "Salir", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&show, &hide, &sep, &launch, &sep2, &quit])?;
 
         let initial = tray::glyph_rgba(TrayState::from_index(CURRENT.load(Ordering::SeqCst)));
         TrayIconBuilder::with_id(TRAY_ID)
@@ -242,7 +245,7 @@ pub fn start(app: &AppHandle) {
 /// started and needs a moment to write `session.json`; bounded, off the setup
 /// thread, and its landing republishes so the tray (and the page) catch the
 /// connection immediately instead of a second later.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_initial_connect(app: &AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -269,11 +272,11 @@ fn spawn_initial_connect(app: &AppHandle) {
     });
 }
 
-// --- honest non-Unix stubs ---------------------------------------------------
+// --- honest stub for any other platform ---------------------------------------
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[allow(unused_variables)]
 pub fn start(app: &AppHandle) {
-    // No tray off Unix in this round: nothing is created, nothing is pretended.
+    // No tray on this platform: nothing is created, nothing is pretended.
 }
-// `refresh` and `note_question_change` above are platform-neutral (the icon redraw inside is unix-only).
+// `refresh` and `note_question_change` above are platform-neutral (the icon redraw inside is Unix/Windows).

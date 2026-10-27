@@ -44,6 +44,7 @@ pub mod sessionterm;
 pub mod github;
 pub mod githubcmd;
 pub mod daemonhost;
+pub mod piinstall;
 #[cfg(any(debug_assertions, feature = "probe"))]
 pub mod fakebridge;
 #[cfg(any(debug_assertions, feature = "probe"))]

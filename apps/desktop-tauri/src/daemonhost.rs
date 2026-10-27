@@ -44,26 +44,36 @@ pub struct HostSlot {
 impl HostSlot {
     pub fn start(&self) {
         #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-        let result = start();
+        self.start_with(start);
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        let result: Result<(), StartupFailure> = Err(StartupFailure::Unsupported);
-        match result {
-            #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-            Ok(child) => self.adopt(child),
-            #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-            Ok(()) => {}
-            Err(reason) => {
-                eprintln!("island host: no_daemon ({})", reason.code());
-                #[cfg(any(target_os = "macos", windows))]
-                match reason {
-                    StartupFailure::NodeMissing => eprintln!("Falta Node.js: instalalo desde nodejs.org."),
-                    StartupFailure::PiMissing => eprintln!("Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent."),
-                    _ => {}
-                }
-                crate::failure::report("daemon", "daemon-start", crate::failure::Reason::DaemonStartFailed, None);
-                *self.failure.lock().expect("host failure lock") = Some(reason);
-            }
+        self.start_with(|| Err(StartupFailure::Unsupported));
+    }
+    /// `start`, with the launch supplied so a test can drive both outcomes. HU-046: a SUCCESSFUL start forgets the failure of an
+    /// earlier one (Pi installed after «Falta Pi»): `agent_action` answers `startup_failed` for as long as `failure()` is set.
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub fn start_with(&self, launch: impl FnOnce() -> Result<Host, StartupFailure>) {
+        match launch() {
+            Ok(child) => { *self.failure.lock().expect("host failure lock") = None; self.adopt(child) }
+            Err(reason) => self.note_failure(reason),
         }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    pub fn start_with(&self, launch: impl FnOnce() -> Result<(), StartupFailure>) {
+        match launch() {
+            Ok(()) => { *self.failure.lock().expect("host failure lock") = None; }
+            Err(reason) => self.note_failure(reason),
+        }
+    }
+    fn note_failure(&self, reason: StartupFailure) {
+        eprintln!("island host: no_daemon ({})", reason.code());
+        #[cfg(any(target_os = "macos", windows))]
+        match reason {
+            StartupFailure::NodeMissing => eprintln!("Falta Node.js: instalalo desde nodejs.org."),
+            StartupFailure::PiMissing => eprintln!("Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent."),
+            _ => {}
+        }
+        crate::failure::report("daemon", "daemon-start", crate::failure::Reason::DaemonStartFailed, None);
+        *self.failure.lock().expect("host failure lock") = Some(reason);
     }
     pub fn failure(&self) -> Option<StartupFailure> { *self.failure.lock().expect("host failure lock") }
     /// Exit status of a host child that died by itself (early exit, crash, external kill);

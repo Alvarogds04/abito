@@ -855,7 +855,7 @@ fn overview_visual_evidence(app: &AppHandle) {
 /// #304 diagnosis (read-only): what the SYSTEM tells WebKit about motion, and
 /// what the page decides. Reads GtkSettings on the main thread; changes nothing.
 fn motion_diag(app: &AppHandle, tag: &str) {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     let gtk_value = {
         use gtk::prelude::ObjectExt as _;
         let (tx, rx) = std::sync::mpsc::channel();
@@ -865,7 +865,7 @@ fn motion_diag(app: &AppHandle, tag: &str) {
         });
         rx.recv_timeout(Duration::from_secs(2)).ok().flatten()
     };
-    #[cfg(not(unix))]
+    #[cfg(not(target_os = "linux"))]
     let gtk_value = json!({
         "status": "not_run",
         "reason": "unavailable on this platform: GTK settings read-back",
@@ -2563,7 +2563,7 @@ fn capture_visual(app: &AppHandle, name: &str) {
 
 /// Validator-only island route. Same actions/readback/capture as the long probe;
 /// the external harness owns the display, WM and lifetime. No input injection.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn island_validation(app: &AppHandle) {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass, PropMode, AtomEnum, MapState};
@@ -2676,14 +2676,14 @@ fn island_validation(app: &AppHandle) {
     feature_validation(app);
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 fn island_validation(_app: &AppHandle) {
     emit(&json!({"step":"validation_scene","name":"isla","verdict":"unverifiable","reason":"requiere X11"}));
 }
 
 /// T3/T4 use the real WebViews and real IPC. Only the feature-gated probe
 /// includes this driver; XTest remains in the external validator process.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn feature_validation(app: &AppHandle) {
     use tauri::Listener;
     use std::sync::{Arc, Mutex};
@@ -3170,6 +3170,6 @@ mod validator_context {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[path = "../packaging/validate/producer.rs"]
 mod validator_producer;

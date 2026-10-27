@@ -197,6 +197,28 @@ pub fn glyph_rgba(state: TrayState) -> Glyph {
     }
 }
 
+/// One entry of the tray menu: a plain item, a check item (autostart) or a separator. Pure data: the same spec builds the real menu on
+/// every platform and is tested natively everywhere.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuEntry {
+    Item(&'static str, &'static str),
+    Check(&'static str, &'static str),
+    Separator,
+}
+
+/// HU-048: the tray menu. Identical on every platform except for «Arrancar al iniciar sesión», which is offered only where the autostart
+/// toggle really works (`autostart_supported`: a desktop entry on Linux/macOS today). Windows has no Run-key implementation, so the item
+/// and its separator are omitted there rather than shown and failing. «Salir» is always last.
+pub fn menu_spec(autostart_supported: bool) -> Vec<MenuEntry> {
+    let mut menu = vec![MenuEntry::Item("tray-show", "Mostrar Abito"), MenuEntry::Item("tray-hide", "Ocultar"), MenuEntry::Separator];
+    if autostart_supported {
+        menu.push(MenuEntry::Check("tray-autostart", "Arrancar al iniciar sesión"));
+        menu.push(MenuEntry::Separator);
+    }
+    menu.push(MenuEntry::Item("tray-quit", "Salir"));
+    menu
+}
+
 #[cfg(test)]
 #[path = "tray_tests.rs"]
 mod tests;

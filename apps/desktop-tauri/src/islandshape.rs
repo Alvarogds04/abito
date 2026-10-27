@@ -65,6 +65,39 @@ pub(crate) fn input_rects(report: Report, window: (i32, i32), protected: bool) -
     rects
 }
 
+/// A request, an approval card or a question is on screen: such a card must never lose clicks (Linux refuses the thin hidden strip;
+/// Windows/macOS never become click-through while it is shown). Main thread only: it takes the host locks the snapshot takes.
+pub(crate) fn is_protected(app: &tauri::AppHandle, state: &crate::AppState) -> bool {
+    let snap = crate::build_snapshot(app, state);
+    let question = crate::questionhost::question_view(state);
+    !snap["request"].is_null() || snap["card"]["state"] == "pending" || !question["pending"].is_null()
+}
+
+/// The remembered last report (Windows/macOS click-through). Linux keeps the same pair inside its own `SHAPE`.
+#[cfg(not(target_os = "linux"))]
+static LAST: std::sync::Mutex<((i32, i32), Report)> = std::sync::Mutex::new(((288, 32), Report { w: 288, h: 32, settled: true }));
+
+/// Windows/macOS: remember the page's report (`apply` is called from `island_shape`), and read the current rects for the click-through.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn current_rects(window: (i32, i32), protected: bool) -> Vec<(i32, i32, i32, i32)> {
+    let mut state = LAST.lock().expect("island shape lock");
+    shape_rects(&mut state, None, window, protected)
+}
+
+/// The island's input rects for the current report, shared by every platform. `state` = (the last SETTLED destination, the last report):
+/// a settled report is remembered; while moving the rects are the union of the previous and the next shape (plus spring air).
+pub(crate) fn shape_rects(state: &mut ((i32, i32), Report), report: Option<Report>, window: (i32, i32), protected: bool) -> Vec<(i32, i32, i32, i32)> {
+    use abito_island::geometry;
+    if let Some(report) = report { state.1 = report; }
+    let report = state.1;
+    let destination = geometry::clamp_island_shape(report.w, report.h, window);
+    let shape = if report.settled {
+        state.0 = destination;
+        destination
+    } else { geometry::transition_shape(state.0, destination, window) };
+    input_rects(if report.settled { report } else { Report { w: shape.0, h: shape.1, settled: false } }, window, protected)
+}
+
 #[cfg(target_os = "linux")]
 static SHAPE: std::sync::Mutex<((i32, i32), Report)> = std::sync::Mutex::new(
     ((288, 32), Report { w: 288, h: 32, settled: true }));
@@ -78,25 +111,15 @@ pub(crate) fn apply(app: &tauri::AppHandle, report: Option<Report>) {
         gtk::glib::idle_add_local_once(move || {
             use gtk::prelude::*;
             use tauri::Manager;
-            use abito_island::geometry;
             let Some(win) = crate::main_window(&handle) else { return };
             let Ok(gtk_win) = win.gtk_window() else { return };
             gtk_win.realize();
             let Some(gdk) = gtk_win.window() else { return };
             let window = gtk_win.size();
             let mut state = SHAPE.lock().expect("island shape lock");
-            if let Some(report) = report { state.1 = report; }
-            let report = state.1;
-            let destination = geometry::clamp_island_shape(report.w, report.h, window);
-            let shape = if report.settled {
-                state.0 = destination;
-                destination
-            } else { geometry::transition_shape(state.0, destination, window) };
-            let state = handle.state::<crate::AppState>();
-            let snap = crate::build_snapshot(&handle, &state);
-            let question = crate::questionhost::question_view(&state);
-            let protected = !snap["request"].is_null() || snap["card"]["state"] == "pending" || !question["pending"].is_null();
-            let rects: Vec<_> = input_rects(if report.settled { report } else { Report { w:shape.0,h:shape.1,settled:false } }, window, protected)
+            let app_state = handle.state::<crate::AppState>();
+            let protected = is_protected(&handle, &app_state);
+            let rects: Vec<_> = shape_rects(&mut state, report, window, protected)
                 .into_iter().map(|(x, y, w, h)| gtk::cairo::RectangleInt::new(x, y, w, h)).collect();
             let region = gtk::cairo::Region::create_rectangles(&rects);
             gdk.input_shape_combine_region(&region, 0, 0);
@@ -104,8 +127,16 @@ pub(crate) fn apply(app: &tauri::AppHandle, report: Option<Report>) {
     });
 }
 
+/// Windows/macOS: only REMEMBER the page's report; the click-through poller (islandclick) reads it on its own cadence.
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn apply(_app: &tauri::AppHandle, _report: Option<Report>) {}
+pub(crate) fn apply(_app: &tauri::AppHandle, report: Option<Report>) {
+    if let Some(report) = report {
+        let mut state = LAST.lock().expect("island shape lock");
+        state.1 = report;
+        // a settled report also fixes the destination the next transition starts from (same bookkeeping as shape_rects)
+        if report.settled { state.0 = abito_island::geometry::clamp_island_shape(report.w, report.h, abito_island::geometry::ISLAND_WINDOW); }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -275,5 +306,44 @@ mod corners {
         let a = input_rects(Report { w: 720, h: 184, settled: true }, W, false);
         assert_eq!(a, input_rects(Report { w: 720, h: 184, settled: true }, W, false));
         assert!(a.len() < 120, "a handful of row bands, not a pixel list ({})", a.len());
+    }
+}
+
+// ── HU-043: ONE computation of the island's input rects for every platform ──
+// Linux applies them as a GDK input region; Windows and macOS use them to decide when the window ignores the mouse (islandhit). The
+// state machine (settled → remember the destination; moving → union of both endpoints) used to live only inside the Linux `apply`.
+#[cfg(test)]
+mod shared_rects {
+    use super::*;
+    const W: (i32, i32) = (752, 340);
+    /// What the Linux `apply` computed inline before this change, kept verbatim as the reference.
+    fn reference(state: &mut ((i32, i32), Report), report: Option<Report>, protected: bool) -> Vec<(i32, i32, i32, i32)> {
+        use abito_island::geometry;
+        if let Some(report) = report { state.1 = report; }
+        let report = state.1;
+        let destination = geometry::clamp_island_shape(report.w, report.h, W);
+        let shape = if report.settled { state.0 = destination; destination } else { geometry::transition_shape(state.0, destination, W) };
+        input_rects(if report.settled { report } else { Report { w: shape.0, h: shape.1, settled: false } }, W, protected)
+    }
+    #[test]
+    fn the_shared_computation_is_exactly_what_the_linux_apply_computed_inline() {
+        let start = ((288, 32), Report { w: 288, h: 32, settled: true });
+        let sequence = [
+            (Some(Report { w: 288, h: 32, settled: true }), false), (Some(Report { w: 440, h: 32, settled: true }), false),
+            (Some(Report { w: 640, h: 160, settled: false }), false), (Some(Report { w: 720, h: 184, settled: true }), false),
+            (None, false), (Some(Report { w: 288, h: 8, settled: true }), false), (Some(Report { w: 288, h: 8, settled: true }), true),
+            (Some(Report { w: 560, h: 128, settled: false }), true), (Some(Report { w: 10_000, h: 10_000, settled: true }), false), (None, true),
+        ];
+        let (mut shared, mut expected) = (start, start);
+        for (report, protected) in sequence {
+            assert_eq!(shape_rects(&mut shared, report, W, protected), reference(&mut expected, report, protected), "{report:?} protected={protected}");
+            assert_eq!(shared, expected, "the remembered state evolves identically");
+        }
+    }
+    #[test]
+    fn a_report_is_remembered_so_a_repaint_without_one_keeps_the_last_shape() {
+        let mut state = ((288, 32), Report { w: 288, h: 32, settled: true });
+        let first = shape_rects(&mut state, Some(Report { w: 440, h: 32, settled: true }), W, false);
+        assert_eq!(shape_rects(&mut state, None, W, false), first);
     }
 }

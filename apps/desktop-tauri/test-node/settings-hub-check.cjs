@@ -98,8 +98,12 @@ const text = e => [e.textContent || '', ...e.children.map(text)].join(' ');
   assert(/<script type="module" src="\.\/settings-app\.js"><\/script>/.test(html));
   for (const css of ['settings/settings.css', 'hub/hub.css']) assert(html.includes(`vendor/coucou/${css}`));
   const entry = fs.readFileSync(path.join(root, 'frontend/settings-app.js'), 'utf8');
+  // HU-045 (human: «veo que la version que me sale es esta Abito 0.1.0»): the version is the package's, set by Rust before the
+  // page runs (window.__abitoVersion), never a literal written in the page.
+  assert.doesNotMatch(entry, /version:\s*['"]\d/, 'no hardcoded version literal in Ajustes');
+  assert.match(entry, /version:\s*window\.__abitoVersion\b/, 'the shell gets the package version Rust hands the window');
   assert(entry.includes("import { renderAgentSettings }")); assert(entry.includes("import { renderChatSettings }"));
-  assert.equal(entry.match(/const allowed = new Set\(([^;]+)\);/)[1], "['prefs_action', 'hotkey_action', 'settings_window_action', 'agent_action', 'secret_action', 'oauth_action', 'models_action', 'specialists_action', 'daemon_action', 'plan_action', 'recap_action', 'monitor_action', 'sound_action', 'dictation_action', 'voice_action', 'failure_action']", 'only closed host commands, including subscription OAuth');
+  assert.equal(entry.match(/const allowed = new Set\(([^;]+)\);/)[1], "['prefs_action', 'hotkey_action', 'settings_window_action', 'agent_action', 'secret_action', 'oauth_action', 'models_action', 'specialists_action', 'daemon_action', 'pi_install_action', 'plan_action', 'recap_action', 'monitor_action', 'sound_action', 'dictation_action', 'voice_action', 'failure_action']", 'only closed host commands, including subscription OAuth and the closed «Instalar Pi» command of HU-046');
   const guardCalls = [], guardContext = { window: { __TAURI__: { core: { invoke: async (...args) => guardCalls.push(args) } } }, document: {getElementById: () => ({})},
     setInvoke() {}, dictationPage() {}, flowSettingsPage() {}, dictionaryPage() {}, snippetsPage() {}, stylesPage() {}, insightsPage() {}, voicePage() {}, inactivePages: {}, startHub: async () => {}, TextEncoder };
   require('node:vm').runInNewContext(entry.replace(/^import .*;\n/gm, '') + '\nglobalThis.closedInvoke = invoke;', guardContext);

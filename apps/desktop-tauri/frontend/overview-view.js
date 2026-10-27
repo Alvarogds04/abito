@@ -339,8 +339,10 @@
       const code = p.last_error.code;
       if (code === 'node_missing' || code === 'pi_missing') {
         const label = code === 'node_missing' ? 'Falta Node.js' : 'Falta Pi';
-        const help = code === 'node_missing' ? 'instalalo desde nodejs.org.' : 'instalalo con npm install -g @earendil-works/pi-coding-agent.';
-        const view = row('engine', label, 'Revisar', 'accounts:motor', 'Motor');
+        // HU-046 (parent seq36): the island has no install button. For a missing Pi its link points to Ajustes → Chat, where «Instalar Pi» is
+        // (every engine deep link opens Ajustes on the Chat page); the command line lives there, not here.
+        const help = code === 'node_missing' ? 'instalalo desde nodejs.org.' : '«Instalar Pi» está en Ajustes → Chat.';
+        const view = row('engine', label, code === 'pi_missing' ? 'Abrir Chat' : 'Revisar', 'accounts:motor', code === 'pi_missing' ? 'Chat' : 'Motor');
         view.aria = `${label}: ${help} ${view.aria}`;
         return view;
       }

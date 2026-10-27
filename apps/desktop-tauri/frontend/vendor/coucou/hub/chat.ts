@@ -5,7 +5,7 @@ import { statusDot } from '../settings/parts.js';
 import { providerDef, urlExposure } from '../core/providers.js';
 import { notchSection as section, notchTipSection, notchCard, notchRow as row, notchHint as hint, infoTip } from './notch.js';
 import { toggle } from './ui.js';
-import { session, trusted } from './runtime.js';
+import { session, trusted, foldable as foldableCard } from './runtime.js';
 import { t } from './i18n-es.js';
 import { keyAccountCommand, keyAccountId } from './keyaccounts.js';
 const UNAVAILABLE = 'No disponible todavía';
@@ -214,16 +214,8 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
   const engineSlot = (group: string) => engineSlots[group] = h('div', { id: `chat-engine-slot-${group}` });
   // L2 «Chat: A · Proveedores plegables»: each provider card folds to its title row (state badge stays visible). Open by default so no field is
   // ever hidden behind a gesture the human did not make; the fold is a view state only, nothing is stored.
-  const foldable = (card: HTMLElement) => {
-    const title = card.children[0] as HTMLElement, body = () => [...card.children].slice(1) as HTMLElement[];
-    const fold = h('button', { type: 'button', class: 'card-fold', 'aria-expanded': 'true', 'aria-label': 'Plegar proveedor', text: '▾' });
-    fold.addEventListener('click', () => {
-      const open = fold.getAttribute('aria-expanded') !== 'true';
-      fold.setAttribute('aria-expanded', String(open)); fold.setAttribute('aria-label', open ? 'Plegar proveedor' : 'Desplegar proveedor'); fold.textContent = open ? '▾' : '▸';
-      for (const el of body()) el.hidden = !open;
-    });
-    title.append(fold);
-  };
+  // HU-044: the old open-by-default fold (0.2.1 L2 A) is the shared `foldable` of runtime.ts: every Chat apartado now starts folded.
+  const foldable = (card: HTMLElement) => foldableCard(card, card.getAttribute('aria-label') || (card.children[0]?.firstElementChild?.textContent || card.children[0]?.textContent || '').replace(/[▾▸]/g, '').trim());
   const apiSection = notchCard('Claude', api.stateBadge, api.stateLabel, api.r, api.fieldError, api.testReason, row(t('Model'), modelPicker('anthropic')), api.feedback, subscriptionRow('anthropic', 'claude'), engineSlot('anthropic'));
   apiSection.children[0].prepend(api.dot); foldable(apiSection);
   const providerCards: HTMLElement[] = [];
@@ -285,9 +277,11 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
   paintContext();
   const ctxCard = notchTipSection(t('Active window context'), t('When you open the chat, Abito reads the app name and the title of the window you were using and attaches them to your first message. Off by default; nothing is read while it is off. The title goes to the model you chat with.'), ctxBody);
   ctxCard.setAttribute('id', 'chat-window-context'); // S5 (#503): the live-context row lives inside it
+  foldable(ctxCard);
   const localCard = section(t('Local models'), locals);
   localCard.setAttribute('title', t('Chat with a model you run yourself: Ollama or LM Studio (leave the address empty for the usual one on this computer), or any server that speaks the OpenAI API, such as vLLM or llama.cpp. Once connected, pick it above the chat box.'));
   localCard.setAttribute('id', 'chat-local-models');
+  foldable(localCard);
   const engineOthers = h('div', { id: 'chat-engine-others' });
   root.append(apiSection,
     ...providerCards, engineOthers, h('div', { id: 'chat-extras' }), localCard,

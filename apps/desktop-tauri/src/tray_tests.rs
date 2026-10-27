@@ -184,3 +184,50 @@ fn disconnected_is_dimmed_and_slashed() {
     });
     assert!(slash, "disconnected carries a diagonal slash idle lacks");
 }
+
+// --- HU-048: the tray menu, one spec for every platform ------------------------
+// Human, verbatim: «que abito salga en los iconos oculto abajo a la derecha de windows». The tray existed only on Unix (Linux + macOS);
+// Windows had none. The menu is the SAME on every platform except one item: «Arrancar al iniciar sesión» exists only where the autostart
+// toggle really works (a desktop entry on Linux/macOS today; Windows has no Run-key implementation, so the item is omitted, not faked).
+
+#[test]
+fn the_menu_with_autostart_is_the_one_linux_and_macos_have_always_had() {
+    assert_eq!(menu_spec(true), vec![
+        MenuEntry::Item("tray-show", "Mostrar Abito"),
+        MenuEntry::Item("tray-hide", "Ocultar"),
+        MenuEntry::Separator,
+        MenuEntry::Check("tray-autostart", "Arrancar al iniciar sesión"),
+        MenuEntry::Separator,
+        MenuEntry::Item("tray-quit", "Salir"),
+    ]);
+}
+
+#[test]
+fn without_autostart_the_item_and_its_separator_are_gone_and_nothing_else_changes() {
+    assert_eq!(menu_spec(false), vec![
+        MenuEntry::Item("tray-show", "Mostrar Abito"),
+        MenuEntry::Item("tray-hide", "Ocultar"),
+        MenuEntry::Separator,
+        MenuEntry::Item("tray-quit", "Salir"),
+    ]);
+}
+
+#[test]
+fn every_menu_has_show_hide_and_quit_and_ids_are_unique_and_closed() {
+    for autostart in [true, false] {
+        let spec = menu_spec(autostart);
+        let ids: Vec<&str> = spec.iter().filter_map(|e| match e { MenuEntry::Item(id, _) | MenuEntry::Check(id, _) => Some(*id), MenuEntry::Separator => None }).collect();
+        for needed in ["tray-show", "tray-hide", "tray-quit"] { assert!(ids.contains(&needed), "{needed} (autostart={autostart})"); }
+        assert_eq!(ids.contains(&"tray-autostart"), autostart);
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "no duplicate id");
+        assert!(ids.iter().all(|id| id.starts_with("tray-") && id.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')), "{ids:?}");
+        assert!(!matches!(spec.first(), Some(MenuEntry::Separator)) && !matches!(spec.last(), Some(MenuEntry::Separator)), "no separator at either end");
+        assert!(spec.windows(2).all(|w| !(w[0] == MenuEntry::Separator && w[1] == MenuEntry::Separator)), "no two separators in a row");
+    }
+}
+
+#[test]
+fn the_quit_item_is_always_last_so_a_human_can_always_leave() {
+    for autostart in [true, false] { assert_eq!(menu_spec(autostart).last(), Some(&MenuEntry::Item("tray-quit", "Salir"))); }
+}
