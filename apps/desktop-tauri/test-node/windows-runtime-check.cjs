@@ -30,8 +30,14 @@ try {
       assert.ok(files.includes(target), `${f} requires unstaged ${target}`);
     }
   }
-  const macro = fs.readFileSync(path.join(out, 'runtime.nsh'), 'utf8');
-  const installed = [...macro.matchAll(/^  File "\$\{(?:BINDIR|RUNTIMEDIR)\}\/([^"]+)"$/gm)].map(m => m[1]).sort();
+  const macroBytes = fs.readFileSync(path.join(out, 'runtime.nsh'));
+  assert.ok(macroBytes.every(byte => byte < 128), 'generated NSIS include is BOM-free ASCII');
+  const macro = macroBytes.toString('utf8');
+  assert.doesNotMatch(macro, /^  SetOutPath .*\//m);
+  const installed = [...macro.matchAll(/^  File "\$\{(?:BINDIR|RUNTIMEDIR)\}\\([^"]+)"$/gm)].map(m => m[1].replaceAll('\\', '/')).sort();
+  assert.doesNotMatch(macro, /^  File .*\//m, 'NSIS source paths use Windows separators, including on the cross host');
+  const nsis = fs.readFileSync(path.join(crate, 'packaging/windows/abito.nsi'), 'utf8');
+  assert.ok(nsis.includes('!include "${RUNTIMEDIR}\\runtime.nsh"'));
   const deleted = [...macro.matchAll(/^  Delete "\$INSTDIR\\([^"]+)"$/gm)].map(m => m[1].replaceAll('\\', '/')).sort();
   assert.deepEqual(installed, [...files, ...bins].sort());
   assert.deepEqual(deleted, installed);

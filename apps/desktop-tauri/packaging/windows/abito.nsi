@@ -28,12 +28,12 @@ Unicode true
 !endif
 
 !ifndef RUNTIMEDIR
-!define RUNTIMEDIR "${BINDIR}/windows-runtime"
+!define RUNTIMEDIR "${BINDIR}\windows-runtime"
 !endif
-!include "${RUNTIMEDIR}/runtime.nsh"
+!include "${RUNTIMEDIR}\runtime.nsh"
 
 Name "Abito Island"
-OutFile "${OUTDIR}/abito-island-${VERSION}-win-x64-setup.exe"
+OutFile "${OUTDIR}\abito-island-${VERSION}-win-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\abito-island"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "InstallLocation"
 RequestExecutionLevel user

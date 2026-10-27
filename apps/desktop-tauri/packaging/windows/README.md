@@ -12,7 +12,7 @@ The installer contains these sibling executables:
 
 The closed `desktop-daemon` and `desktop-harness` directories live beside them. Node and Pi remain external runtime prerequisites, not bundled dependencies.
 
-For native Windows packaging, stage with Node, copy the three built executables to `dist`, and invoke NSIS with `VERSION`, `BINDIR`, `ICON`, and `OUTDIR`. `RUNTIMEDIR` defaults to `${BINDIR}/windows-runtime`. The same generated include drives both native and cross packaging.
+For native Windows packaging, stage with Node, copy the three built executables to `dist`, and invoke NSIS with `VERSION`, `BINDIR`, `ICON`, and `OUTDIR`. `RUNTIMEDIR` defaults to `${BINDIR}\windows-runtime`; the native workflow passes it explicitly. NSIS source paths, including the generated `File` entries, use backslashes. The generated include is BOM-free ASCII with LF line endings and drives both native and cross packaging. Before native compilation, CI prints the runtime directory argument, staged file list, and include header to distinguish missing payloads from NSIS path resolution failures.
 
 Uninstall deletes only listed payload files and `uninstall.exe`, then removes empty owned directories deepest first. It does not recursively delete directories or remove unrelated files or island user configuration. The per-user shortcut and uninstall registry entry are removed.
 
