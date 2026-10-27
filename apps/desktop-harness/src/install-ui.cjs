@@ -296,6 +296,15 @@ function buildPlan(parsed, opts) {
 }
 
 const WIN_UNVERIFIED = new Set(['helper_failed', 'helper_untrusted', 'script_untrusted']);
+// Helper reasons that are not a privacy/link problem: the plan went stale, or the filesystem was busy/failed (HU-047 L7).
+const WIN_STALE = new Set(['mismatch', 'exists', 'missing']);
+const WIN_FAILED = new Set(['busy', 'io', 'too_large']);
+function winFailure(reason, fail) {
+  if (WIN_UNVERIFIED.has(reason)) return fail(65, 'install_unverified', fixedMessage.unverified);
+  if (WIN_STALE.has(reason)) return fail(70, 'plan_changed', 'the settings changed since the previewed plan; nothing was written');
+  if (WIN_FAILED.has(reason)) return fail(70, 'apply_failed', 'the plan could not be applied');
+  return fail(65, 'unsafe_target', fixedMessage.unsafe);
+}
 const fixedMessage = { unverified: 'the installed Abito files could not be verified; nothing was written', unsafe: 'the target or its folder is not private to this user or goes through a link; nothing was written', usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
 
 // argv: arguments after `install`. Always prints exactly one JSON line through opts.out; returns the exit code.
@@ -338,8 +347,8 @@ async function runInstallUi(argv, opts = {}) {
     return await applyPlanned(parsed, opts, emit, fail);
   } catch (e) {
     if (e instanceof UiError) return fail(e.exitCode, e.code, e.message);
-    if (e instanceof winfs.WinFsError) return fail(65, WIN_UNVERIFIED.has(e.reason) ? 'install_unverified' : 'unsafe_target', WIN_UNVERIFIED.has(e.reason) ? fixedMessage.unverified : fixedMessage.unsafe);
-    if (e instanceof core.InstallError && e.reason) return fail(65, WIN_UNVERIFIED.has(e.reason) ? 'install_unverified' : 'unsafe_target', WIN_UNVERIFIED.has(e.reason) ? fixedMessage.unverified : fixedMessage.unsafe);
+    if (e instanceof winfs.WinFsError) return winFailure(e.reason, fail);
+    if (e instanceof core.InstallError && e.reason) return winFailure(e.reason, fail);
     if (e instanceof core.InstallError) return e.exitCode === 64 ? fail(64, 'usage', fixedMessage.usage) : fail(e.exitCode, 'refused', fixedMessage.refused);
     return fail(70, 'internal', fixedMessage.internal);
   }

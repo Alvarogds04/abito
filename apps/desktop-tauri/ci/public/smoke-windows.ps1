@@ -208,6 +208,14 @@ try {
     $stranger = @($acl.Access | Where-Object { $_.IdentityReference.Value -match 'Users|Everyone|Authenticated' })
     if ($stranger.Count -ne 0) { throw 'Windows settings file grants access to other principals' }
     Write-Host 'PASS Windows install: Claude hooks patched under verified ACLs, private audit record, no leftovers'
+    # L6: the status-line relay command is cmd-quoted on Windows (double quotes around each path).
+    $pv = Invoke-Install @('statusline', '--user', '--json')
+    if ($pv.Code -ne 0 -or -not $pv.Json.ok) { throw "Windows statusline preview failed: $($pv.Json | ConvertTo-Json -Compress)" }
+    $ap = Invoke-Install @('statusline', '--user', '--json', '--apply-plan', $pv.Json.plan_hash, '--audit-dir', $auditDir)
+    if ($ap.Code -ne 0 -or -not $ap.Json.ok) { throw "Windows statusline apply failed: $($ap.Json | ConvertTo-Json -Compress)" }
+    $sl = (Get-Content -Raw -LiteralPath $settings | ConvertFrom-Json).statusLine.command
+    if ($sl -notmatch '^"[A-Za-z]:\\[^"]+" "[A-Za-z]:\\[^"]+abito-statusline\.cjs"$') { throw "Windows statusline command not cmd-quoted: $sl" }
+    Write-Host 'PASS Windows status-line relay installed with cmd-quoted command'
     # Refusals write nothing and say why.
     $codexTarget = Join-Path $root 'codex-real'; New-PrivateDir $codexTarget
     Remove-Item -LiteralPath (Join-Path $agentHome '.codex') -Recurse -Force

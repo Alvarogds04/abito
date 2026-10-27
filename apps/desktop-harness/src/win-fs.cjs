@@ -23,10 +23,10 @@ class WinFsError extends Error {
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 
 // Same lexical rule as winpolicy::fs_path_ok in Rust: X:\a\b, no UNC/device/stream/dot components/reserved names.
-const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])$/i;
 function pathOk(p) {
   if (typeof p !== 'string' || p.length > 520 || !/^[A-Za-z]:\\/.test(p) || p.length < 4) return false;
-  return p.slice(3).split('\\').every(c => c !== '' && c !== '.' && c !== '..' && !/[ .]$/.test(c) && !/[\x00-\x1f<>:"|?*/]/.test(c) && !RESERVED.test(c.split('.')[0]));
+  return p.slice(3).split('\\').every(c => c !== '' && c !== '.' && c !== '..' && !/[ .]$/.test(c) && !/[\x00-\x1f<>:"|?*/~]/.test(c) && !RESERVED.test(c.split('.')[0]));
 }
 const need = p => { if (!pathOk(p)) throw new WinFsError('unsafe_path'); return p; };
 
@@ -41,8 +41,11 @@ function closed(value) {
   return value;
 }
 
-function createWinFs({ helper, exec = execFileSync }) {
+function createWinFs({ helper, exec = execFileSync, verify = () => {} }) {
   function run(args, input) {
+    // M2: re-hash the helper immediately before EVERY spawn. Node cannot deny writes to the file, so the window between
+    // this check and CreateProcess is the documented residual (same-user race), not a cached verdict.
+    verify();
     let raw;
     try {
       raw = exec(helper, args, { encoding: 'utf8', timeout: 15000, maxBuffer: 65536, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'], ...(input === undefined ? {} : { input }) });
@@ -109,6 +112,17 @@ function manifestFiles(deps) {
   for (const h of Object.values(manifest.files)) if (typeof h !== 'string' || !HEX64.test(h)) throw new WinFsError('helper_untrusted', 'install manifest malformed');
   return { files: manifest.files, readFile, root };
 }
+// Single resolver for the native helper: the installed sibling next to the manifest, hash-checked right now.
+// `dev` (tests only; installed builds never pass it) additionally allows explicit development candidates.
+function resolveHelper(deps = {}) {
+  try { return trustedHelper(deps); } catch { /* fall through to the explicit dev path */ }
+  if (deps.dev !== true) return undefined;
+  const readFile = deps.readFile || fs.readFileSync;
+  for (const candidate of deps.devCandidates || []) {
+    try { if (readFile(candidate).length > 0) return candidate; } catch { /* next */ }
+  }
+  return undefined;
+}
 function trustedHelper(deps = {}) {
   const { files, readFile, root } = manifestFiles({ root: defaultRoot(), ...deps });
   const file = path.win32.join(root, HELPER_NAME);
@@ -146,6 +160,11 @@ function relativeToRoot(abs, deps = {}) {
   return rel.split('\\').join('/');
 }
 function verifyBundled(abs, deps = {}) { readVerified(relativeToRoot(abs, deps), deps); }
+// L6: Windows command lines use double quotes. Refuse characters cmd would expand or that end the quoted string.
+function quoteWindowsCommandPath(p) {
+  if (typeof p !== 'string' || !/^[A-Za-z]:\\/.test(p) || /["%^&|<>\x00-\x1f]/.test(p)) throw new WinFsError('unsafe_path', 'unsafe character in a command path');
+  return `"${p}"`;
+}
 function defaultRoot() { return path.resolve(__dirname, '..', '..'); }
 
 // ---- active backend: real on win32, injectable in tests ----
@@ -153,10 +172,10 @@ let forced = null, cached = null;
 function active() {
   if (forced) return forced;
   if (process.platform !== 'win32') return null;
-  if (!cached) cached = createWinFs({ helper: trustedHelper() });
+  if (!cached) { const helper = trustedHelper(); cached = createWinFs({ helper, verify: () => { if (trustedHelper() !== helper) throw new WinFsError('helper_untrusted'); } }); }
   return cached;
 }
 function useForTests(backend) { forced = backend; }
 const uidOf = () => (active() ? 'win' : process.getuid());
 
-module.exports = { readVerified, verifyBundled, relativeToRoot, WinFsError, createWinFs, trustedHelper, verifyScript, pathOk, active, useForTests, uidOf, sha256, MANIFEST_FILE, MANIFEST_SCHEMA, HELPER_NAME, MAX_FILE };
+module.exports = { resolveHelper, quoteWindowsCommandPath, readVerified, verifyBundled, relativeToRoot, WinFsError, createWinFs, trustedHelper, verifyScript, pathOk, active, useForTests, uidOf, sha256, MANIFEST_FILE, MANIFEST_SCHEMA, HELPER_NAME, MAX_FILE };

@@ -70,8 +70,8 @@ pub fn install_acl_private(owner: &str, current_user: &str, elevated: bool, allo
         && allowed_entries.is_some_and(|e| e.iter().all(|sid| sid == current_user || sid == SID_SYSTEM || sid == SID_ADMINISTRATORS))
 }
 
-const RESERVED: [&str; 22] = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
+const RESERVED: [&str; 30] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "COM\u{b9}", "COM\u{b2}", "COM\u{b3}", "LPT\u{b9}", "LPT\u{b2}", "LPT\u{b3}"];
 
 /// Target paths the native filesystem helper accepts: `X:\a\b`, normalized, no
 /// UNC, device (`\\?\`, `\\.\`), stream (`:`), reserved-name, `.`/`..` or
@@ -81,7 +81,7 @@ pub fn fs_path_ok(path: &str) -> bool {
     if path.len() > 520 || b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' { return false; }
     path[3..].split('\\').all(|c| {
         !c.is_empty() && c != "." && c != ".." && !c.ends_with(['.', ' '])
-            && !c.chars().any(|ch| ch.is_control() || "<>:\"|?*/".contains(ch))
+            && !c.chars().any(|ch| ch.is_control() || "<>:\"|?*/~".contains(ch))
             && !RESERVED.contains(&c.split('.').next().unwrap_or("").to_ascii_uppercase().as_str())
     })
 }
@@ -195,7 +195,7 @@ mod tests {
     fn fs_paths_are_plain_drive_letter_absolute() {
         for ok in [r"C:\Users\a\.claude\settings.json", r"d:\x\y", r"C:\a b\c.json"] { assert!(fs_path_ok(ok), "{ok}"); }
         for bad in ["", r"C:\", r"C:", "C:/x/y", r"\\server\share\x", r"\\?\C:\x", r"\\.\pipe\x", r"rel\x", r"C:\a\..\b", r"C:\a\.\b",
-            r"C:\a\\b", r"C:\a\b\", r"C:\a\b.txt:ads", "C:\\a\\b\0", r"C:\a\NUL", r"C:\a\com1.txt", r"C:\a\b ", r"C:\a\b.", r"C:\a\b*", "C:\\a\\\u{1}"] {
+            r"C:\a\\b", r"C:\a\b\", r"C:\a\b.txt:ads", "C:\\a\\b\0", r"C:\a\NUL", r"C:\a\com1.txt", r"C:\a\b ", r"C:\a\b.", r"C:\a\b*", "C:\\a\\\u{1}", "C:\\a\\COM\u{b9}", "C:\\a\\lpt\u{b2}.txt", r"C:\a\PROGRA~1\x", "C:\\a\\CONIN$"] {
             assert!(!fs_path_ok(bad), "{bad:?}");
         }
         assert!(!fs_path_ok(&format!(r"C:\{}", "a".repeat(600))));

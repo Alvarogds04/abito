@@ -117,3 +117,42 @@ test('Windows flow: Pi extension installs, replaces and removes through the help
   assert.equal(await piwin.applyPi(rm, { backupPath: bk, out: () => {}, err: () => {} }), 0);
   assert.equal(fs.existsSync(target), false);
 });
+
+test('Windows flow (verifier M1): the saved status-line file is read only through the helper checks; a foreign or linked one is ignored', t => {
+  const d = tmp(t);
+  winfs.useForTests(fakeBackend());
+  const statusline = require('../src/install-statusline.cjs');
+  fs.mkdirSync(path.join(d, '.abito'), { mode: 0o700 });
+  const file = path.join(d, '.abito', 'statusline-previous.json');
+  fs.writeFileSync(file, '{"type":"command","command":"evil"}\n', { mode: 0o666 }); // not private: the helper contract refuses it
+  const settings = path.join(d, 'settings.json');
+  fs.writeFileSync(settings, '{"statusLine":{"type":"command","command":"node /x/abito-statusline.cjs"}}\n', { mode: 0o600 });
+  const plan = statusline.planStatusLine({ settingsPath: settings, remove: true, home: d, binPath: '/x/abito-statusline.cjs', execPath: process.execPath, uid: 'win' });
+  assert.ok(!/evil/.test(plan.after), 'a non-private side file must never be restored into settings');
+  fs.chmodSync(file, 0o600);
+  const ok = statusline.planStatusLine({ settingsPath: settings, remove: true, home: d, binPath: '/x/abito-statusline.cjs', execPath: process.execPath, uid: 'win' });
+  assert.match(ok.after, /evil/, 'a private side file is still honoured');
+});
+
+test('L6: on Windows the status-line command is double-quoted for cmd and a path with an apostrophe or quote stays safe', t => {
+  const d = tmp(t);
+  winfs.useForTests(fakeBackend());
+  const statusline = require('../src/install-statusline.cjs');
+  const settings = path.join(d, 'settings.json');
+  fs.writeFileSync(settings, '{}\n', { mode: 0o600 });
+  const plan = statusline.planStatusLine({ settingsPath: settings, home: d, binPath: 'C:\\Users\\O\'Neil\\Abito\\abito-statusline.cjs', execPath: 'C:\\Program Files\\nodejs\\node.exe', uid: 'win' });
+  assert.match(plan.after, /"command": "\\"C:\\\\Program Files\\\\nodejs\\\\node.exe\\" \\"C:\\\\Users\\\\O'Neil\\\\Abito\\\\abito-statusline.cjs\\""/);
+  assert.throws(() => statusline.planStatusLine({ settingsPath: settings, home: d, binPath: 'C:\\a"b\\abito-statusline.cjs', execPath: 'C:\\n.exe', uid: 'win' }), /refused|unsafe/);
+});
+
+test('L7: mismatch/busy/io/exists/missing helper reasons get their own Ajustes detail instead of unsafe_target', async t => {
+  const d = tmp(t);
+  const settings = path.join(d, 'settings.json'); fs.writeFileSync(settings, '{}\n', { mode: 0o600 });
+  for (const [reason, code] of [['mismatch', 'plan_changed'], ['busy', 'apply_failed'], ['io', 'apply_failed'], ['not_private', 'unsafe_target'], ['reparse', 'unsafe_target']]) {
+    const b = fakeBackend();
+    b.readPrivate = () => { throw new winfs.WinFsError(reason); };
+    winfs.useForTests(b);
+    const r = await run(['claude', '--settings', settings, '--json']);
+    assert.equal(r.json.code, code, reason);
+  }
+});

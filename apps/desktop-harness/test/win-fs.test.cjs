@@ -111,3 +111,40 @@ test('readVerified returns manifest-matching bytes only; verifyBundled maps an a
   assert.doesNotThrow(() => wf.verifyBundled('C:\\Abito\\desktop-harness\\bin\\abito-hook.cjs', deps));
   assert.throws(() => wf.verifyBundled('C:\\Other\\abito-hook.cjs', deps), /script_untrusted/);
 });
+
+test('pathOk refuses superscript device names, CONIN$/CONOUT$ and 8.3 short names (verifier L1; mirrors winpolicy::fs_path_ok)', () => {
+  for (const bad of ['C:\\a\\COM\u00b9', 'C:\\a\\lpt\u00b2.txt', 'C:\\a\\PROGRA~1\\x', 'C:\\a\\CONIN$', 'C:\\a\\conout$.x']) assert.equal(wf.pathOk(bad), false, bad);
+  assert.equal(wf.pathOk('C:\\Users\\a\\.claude\\settings.json'), true);
+});
+
+test('M2: the helper is re-verified before EVERY spawn and a failed re-check never executes it', () => {
+  const calls = []; let verifies = 0, trusted = true;
+  const exec = (bin, args) => { calls.push(args); return JSON.stringify({ schema: 'abito-fs/1', ok: true, path: args[1], parent_ok: true, exists: false, kind: 'none', reparse: false, private: false, nlink: 0, size: 0, mtime_ms: 0, elevated: false }); };
+  const w = wf.createWinFs({ helper: H, exec, verify: () => { verifies++; if (!trusted) throw new wf.WinFsError('helper_untrusted'); } });
+  w.checkPath('C:\\Users\\a\\x'); w.checkPath('C:\\Users\\a\\y');
+  assert.equal(verifies, 2);
+  trusted = false;
+  assert.throws(() => w.checkPath('C:\\Users\\a\\z'), e => e.reason === 'helper_untrusted');
+  assert.equal(calls.length, 2, 'the swapped helper was never executed');
+});
+
+test('M2: one resolver — installed sibling only; a dev build is never a candidate unless a test passes dev:true', () => {
+  const bytes = Buffer.from('MZ');
+  const manifest = { schema: 'abito-install/1', files: { 'abito-private-session.exe': sha(bytes) } };
+  const seen = [];
+  const deps = { root: 'C:\\Abito', readFile: f => { seen.push(f); if (f.endsWith('.json')) return Buffer.from(JSON.stringify(manifest)); if (f === 'C:\\Abito\\abito-private-session.exe') return bytes; throw new Error('ENOENT'); } };
+  assert.equal(wf.resolveHelper(deps), 'C:\\Abito\\abito-private-session.exe');
+  assert.ok(seen.every(f => !/target/i.test(f)));
+  assert.equal(wf.resolveHelper({ ...deps, readFile: () => { throw new Error('x'); } }), undefined);
+  assert.equal(wf.resolveHelper({ ...deps, readFile: f => (f.endsWith('.json') ? Buffer.from(JSON.stringify(manifest)) : Buffer.from('other')) }), undefined);
+  const dev = 'C:\\repo\\desktop-tauri\\target\\debug\\abito-private-session.exe';
+  assert.equal(wf.resolveHelper({ ...deps, readFile: f => (f === dev ? bytes : deps.readFile(f)) }), 'C:\\Abito\\abito-private-session.exe');
+  assert.equal(wf.resolveHelper({ root: 'C:\\Abito', dev: true, devCandidates: [dev], readFile: f => { if (f.endsWith('.json') || f === 'C:\\Abito\\abito-private-session.exe') throw new Error('absent'); if (f === dev) return bytes; throw new Error('x'); } }), dev);
+});
+
+test('L6: the Windows status-line command quotes paths for cmd (double quotes) and refuses unsafe characters', () => {
+  assert.equal(wf.quoteWindowsCommandPath('C:\\Program Files\\nodejs\\node.exe'), '"C:\\Program Files\\nodejs\\node.exe"');
+  for (const bad of ['C:\\a"b\\n.exe', 'C:\\a%PATH%\\n.exe', 'C:\\a\nb', 'rel\\n.exe', "C:\\Users\\O'Neil\\x"]) {
+    if (bad.includes("'")) assert.equal(wf.quoteWindowsCommandPath(bad), `"${bad}"`); else assert.throws(() => wf.quoteWindowsCommandPath(bad), /unsafe/);
+  }
+});

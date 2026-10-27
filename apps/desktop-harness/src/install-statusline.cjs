@@ -17,7 +17,7 @@ const { InstallError, scanSettings, shq, isObj, diffLines } = ic;
 const refuse = ic.InstallErrorRefuse;
 
 const isOurs = v => isObj(v) && typeof v.command === 'string' && v.command.includes(MARKER);
-const previousFile = home => (winfs.active() ? path.win32 : path).join(home, '.abito', 'statusline-previous.json');
+const previousFile = home => path.join(home, '.abito', 'statusline-previous.json');
 const removePrevious = home => { const w = winfs.active(); if (w) w.remove(previousFile(home)); else fs.unlinkSync(previousFile(home)); };
 const ser = (v, style) => JSON.stringify(v, null, style.unit).replace(/\n/g, style.eol + style.mi);
 
@@ -44,7 +44,8 @@ function planStatusLine({ settingsPath, remove = false, execPath = process.execP
   const ours = member && isOurs(existing);
   let patch = null, action = 'unchanged', savePrevious = null, restorePrevious = false, value;
   if (!remove) {
-    const command = `${shq(execPath)} ${shq(binPath)}`;
+    // Windows runs the status line through cmd: double-quoted paths, with characters cmd would expand refused (HU-047 L6).
+    const command = winfs.active() ? `${winfs.quoteWindowsCommandPath(execPath)} ${winfs.quoteWindowsCommandPath(binPath)}` : `${shq(execPath)} ${shq(binPath)}`;
     value = { ...(existing || {}), type: existing && existing.type ? existing.type : 'command', command };
     if (!existing || !ours || existing.command !== command) {
       action = member ? 'replace' : 'add';
@@ -71,6 +72,16 @@ function planStatusLine({ settingsPath, remove = false, execPath = process.execP
     profile: { postNotes: () => [], previewNotes: () => [] }, actions: [{ event: 'statusLine', action }], entries: [], binPath, execPath, timeoutSec: null };
 }
 function readSaved(home) {
+  const w = winfs.active();
+  if (w) {
+    // Windows: owner/DACL/reparse/nlink verdicts come from the native helper; anything unverifiable is treated as absent.
+    try {
+      const got = w.readPrivate(previousFile(home));
+      if (!got || got.size > 64 * 1024) return null;
+      const v = JSON.parse(got.buf.toString('utf8'));
+      return isObj(v) ? v : null;
+    } catch { return null; }
+  }
   try {
     const st = fs.lstatSync(previousFile(home));
     if (!st.isFile() || st.size > 64 * 1024) return null;
@@ -112,7 +123,7 @@ function render(plan, backupPath, apply) {
 function writeSaved(home, obj) {
   const w = winfs.active();
   if (w) {
-    const dir = path.win32.join(home, '.abito'), file = previousFile(home);
+    const dir = path.join(home, '.abito'), file = previousFile(home);
     w.makeDir(dir);
     const cur = w.readPrivate(file);
     w.writePrivate(file, Buffer.from(JSON.stringify(obj) + '\n'), cur ? cur.sha256 : null);
