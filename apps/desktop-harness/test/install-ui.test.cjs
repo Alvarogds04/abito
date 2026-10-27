@@ -146,6 +146,11 @@ test('island guard: needs ABITO_ISLAND_EXE equal to the parent executable', () =
   const ok = ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => exe);
   assert.equal(ok, true);
   assert.equal(ui.checkIslandGuards({}, 42, () => exe), false);
+  // HU-047: Windows paths are case-insensitive; the same executable spelled with another case is the same parent.
+  const w = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+  assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: w }, 42, () => w.toLowerCase(), 'win32', p => p), true);
+  assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: w }, 42, () => 'C:\\Other\\pwsh.exe', 'win32', p => p), false);
+  assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => exe.toUpperCase()), false, 'Linux comparison stays case-sensitive');
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: 'relative/node' }, 42, () => exe), false);
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: '/bin/sh' }, 42, () => exe), false);
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => { throw new Error('no /proc'); }), false);

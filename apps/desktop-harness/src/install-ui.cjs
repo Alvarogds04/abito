@@ -63,15 +63,19 @@ function defaultReadExe(pid) {
   const platform = require('./installer-platform.cjs');
   const executable = process.platform === 'darwin' ? platform.darwinParentExecutable(pid)
     : process.platform === 'win32' ? platform.windowsParentExecutable(pid) : undefined;
-  return executable ? fs.realpathSync(executable) : undefined;
+  // Windows: GetFinalPathNameByHandle canonicalization (long names, no 8.3 aliases) on both sides of the comparison.
+  return executable ? (process.platform === 'win32' ? fs.realpathSync.native : fs.realpathSync)(executable) : undefined;
 }
 // The actual parent is the app-owned Node adapter/daemon, not the Tauri executable.
 // Canonical executable identity AND no agent marker are required. Non-Linux probes also require own uid/SID.
-function checkIslandGuards(env, ppid, readExe = defaultReadExe) {
+function checkIslandGuards(env, ppid, readExe = defaultReadExe, platform = process.platform, realpath = platform === 'win32' ? fs.realpathSync.native : fs.realpathSync) {
   try {
     const exe = env.ABITO_ISLAND_EXE;
-    if (typeof exe !== 'string' || exe === '' || !path.isAbsolute(exe)) return false;
-    if (fs.realpathSync(exe) !== readExe(ppid)) return false;
+    const win = platform === 'win32';
+    if (typeof exe !== 'string' || exe === '' || !(win ? path.win32 : path).isAbsolute(exe)) return false;
+    const mine = realpath(exe), theirs = readExe(ppid);
+    // Windows paths are case-insensitive; every other platform compares byte for byte (unchanged).
+    if (win ? typeof theirs !== 'string' || mine.toLowerCase() !== theirs.toLowerCase() : mine !== theirs) return false;
   } catch { return false; }
   for (const k of Object.keys(env)) {
     const u = k.toUpperCase(); // case-insensitive: 'claudecode' counts as much as 'CLAUDECODE'
