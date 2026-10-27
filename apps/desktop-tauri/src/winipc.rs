@@ -120,9 +120,9 @@ impl EndpointMeta {
     }
 }
 
-/// A DACL is owner-only when its owner is the caller and every access-ALLOWED
+/// A DACL is owner-only when its owner is the caller and every understood
 /// entry names the caller and nobody else. A missing DACL (everyone access)
-/// is refused; deny entries never widen access. STRICTER than
+/// is refused; the native reader checks allow and deny principals. STRICTER than
 /// [`crate::winpolicy::dacl_private`]: not even SYSTEM or Administrators are
 /// accepted, because we always publish with an explicit protected DACL that
 /// grants exactly the owner.
@@ -170,7 +170,7 @@ pub mod ffi {
         PSID, SECURITY_ATTRIBUTES, TokenUser, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, GetFileAttributesW, MoveFileExW, ReadFile, WriteFile, CREATE_NEW,
+        CreateDirectoryW, CreateFileW, GetFileAttributesW, MoveFileExW, ReadFile, WriteFile, CREATE_NEW,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, INVALID_FILE_ATTRIBUTES,
         MOVEFILE_REPLACE_EXISTING, PIPE_ACCESS_DUPLEX,
@@ -292,8 +292,12 @@ pub mod ffi {
 
     /// Owner + DACL of a file or directory against policy: `owner_only` uses
     /// the strict metadata verdict, otherwise the winpolicy private verdict
-    /// (owner, SYSTEM, Administrators). Any API failure refuses.
+    /// (user or Administrators owner; user/SYSTEM/Administrators principals).
+    /// Any API failure, NULL DACL or reparse path refuses.
     pub fn directory_private(target: &Path, current: &str, owner_only: bool) -> bool {
+        if !plain_path(target) { return false; }
+        let attributes = unsafe { GetFileAttributesW(wide(&target.to_string_lossy()).as_ptr()) };
+        if !owner_only && attributes & FILE_ATTRIBUTE_DIRECTORY == 0 { return false; }
         let Some((owner, allowed)) = owner_and_dacl(target) else { return false };
         if owner_only {
             dacl_owner_only(&owner, current, Some(&allowed))
@@ -317,6 +321,9 @@ pub mod ffi {
         }
         let verdict = (|| {
             let owner = sid_to_string(owner)?;
+            // NULL DACL grants Everyone full control, unlike an empty DACL.
+            // Refuse before collecting entries for BOTH file and directory policy.
+            if dacl.is_null() { return None; }
             let mut allowed = Vec::new();
             if !dacl.is_null() {
                 let mut info: ACL_SIZE_INFORMATION = unsafe { std::mem::zeroed() };
@@ -334,11 +341,10 @@ pub mod ffi {
                     }
                     let header = unsafe { &*(ace as *const ACE_HEADER) };
                     match header.AceType {
-                        0 => { // ACCESS_ALLOWED_ACE_TYPE
+                        0 | 1 => { // Standard allow/deny ACEs share the SID layout.
                             let ace = unsafe { &*(ace as *const ACCESS_ALLOWED_ACE) };
                             allowed.push(sid_to_string((&ace.SidStart as *const u32).cast_mut().cast())?);
                         }
-                        1 => {} // ACCESS_DENIED: never widens access
                         _ => return None, // object/callback/unknown ACEs: not understood, refuse
                     }
                 }
@@ -350,19 +356,71 @@ pub mod ffi {
     }
 
 
-    /// Create the notices directory (no symlink anywhere) and require a
-    /// private DACL (owner, SYSTEM, Administrators only). Created fresh, it
-    /// inherits the user-only profile DACL; we verify rather than trust.
+    /// Never follow a junction, symlink or other reparse point, including in
+    /// ancestors. Shared by daemon file checks and receiver directory checks.
+    fn plain_path(target: &Path) -> bool {
+        target.is_absolute() && target.ancestors().all(|path| {
+            let attributes = unsafe { GetFileAttributesW(wide(&path.to_string_lossy()).as_ptr()) };
+            attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+        })
+    }
+
+    /// Create missing directories with an explicit owner and protected DACL
+    /// AT CREATION, never an inherited-ACL window followed by chmod/ACL repair.
+    /// Existing directories are checked, never rewritten.
     pub fn prepare_runtime(root: &Path, sid: &str) -> io::Result<()> {
-        match std::fs::symlink_metadata(root) {
-            Ok(meta) if meta.file_type().is_symlink() || !meta.file_type().is_dir() => {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "notices root exists and is not a plain directory"))
-            }
-            Ok(_) => {}
-            Err(_) => std::fs::create_dir_all(root)?,
+        // Profile ancestors are not ours: their ACLs may contain legitimate
+        // domain/capability entries. Only Abito and its descendants use our
+        // private policy; every path component still rejects reparse points.
+        let canonical = winpolicy::island_root(None, std::env::var("LOCALAPPDATA").ok().as_deref());
+        let boundary = canonical.as_deref().filter(|base| root.starts_with(base)).unwrap_or(root);
+        if boundary != root { prepare_private_directory(boundary, sid, boundary)?; }
+        prepare_private_directory(root, sid, boundary)
+    }
+
+    fn prepare_private_directory(root: &Path, sid: &str, boundary: &Path) -> io::Result<()> {
+        if !root.is_absolute() || !sid_shape_ok(sid) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid private directory identity"));
         }
+        match std::fs::symlink_metadata(root) {
+            Ok(meta) => {
+                if root != boundary && root.starts_with(boundary) {
+                    let parent = root.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "directory has no parent"))?;
+                    prepare_private_directory(parent, sid, boundary)?;
+                }
+                let accepted = if root.starts_with(boundary) {
+                    directory_private(root, sid, false)
+                } else {
+                    meta.is_dir() && plain_path(root)
+                };
+                if !accepted {
+                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, "runtime root is not a private directory of ours"));
+                }
+                return Ok(());
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        let parent = root.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "directory has no parent"))?;
+        prepare_private_directory(parent, sid, boundary)?;
+        let descriptor = wide(&format!("O:{sid}D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)"));
+        let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptor.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) } == 0 {
+            return Err(last_error());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd,
+            bInheritHandle: 0,
+        };
+        let created = unsafe { CreateDirectoryW(wide(&root.to_string_lossy()).as_ptr(), &attributes) };
+        let error = last_error();
+        unsafe { LocalFree(sd.cast()); }
+        // A concurrent creator gets no ACL rewrite: accept only if its directory
+        // independently passes the same policy, otherwise fail closed.
+        if created == 0 && error.kind() != io::ErrorKind::AlreadyExists { return Err(error); }
         if !directory_private(root, sid, false) {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "notices root is not a private directory of ours"));
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "created runtime directory is not private"));
         }
         Ok(())
     }

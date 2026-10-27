@@ -90,6 +90,9 @@ jobs:
       - name: Native receiver and authenticated relay integration
         timeout-minutes: 10
         run: |
+          cargo test --locked --test windows_directory -- `
+            --test-threads=1 --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --test windows_notice -- `
             --test-threads=1 --nocapture
           exit $LASTEXITCODE

@@ -41,9 +41,10 @@ function genericError(error) {
 	const code = ["EACCES", "EPERM", "ENOENT", "EEXIST", "ENOTDIR", "EISDIR", "EINVAL", "ENOSPC", "EPIPE", "ECONNREFUSED", "ETIMEDOUT", "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"].includes(error?.code) ? error.code : "unknown";
 	const prefixes = ["refusing island root", "refusing symlink component in island path", "refusing island path, not a directory", "refusing island path", "refusing world-writable component without the sticky bit", "refusing to write through a symlink", "refusing to write, not a regular file"];
 	const prefix = prefixes.find(text => String(error?.message).startsWith(`${text}:`));
-	const fixed = ["agent exited during startup", "agent session is unavailable", "agent recovery session is unavailable", "agent recovery session was not confirmed", "engine is not ready"].find(text => error?.message === text);
+	const fixed = ["agent exited during startup", "agent session is unavailable", "agent recovery session is unavailable", "agent recovery session was not confirmed", "engine is not ready", "native session helper not found (abito-private-session.exe)", "session payload over the helper size bound", "native session helper failed to run", "native session helper refused the session"].find(text => error?.message === text);
 	const detail = fixed ?? (prefix ? `${prefix} [details redacted]` : code !== "unknown" ? "system operation failed" : "details redacted");
-	return `failed (see the island directory permissions and the daemon log) [${name}/${code}: ${detail}]`;
+	const operation = ["spawn", "open", "mkdir", "chmod", "read", "write", "rename", "lstat", "stat", "realpath", "unlink", "scandir"].includes(error?.syscall) ? `${error.syscall}; ` : "";
+	return `failed (see the island directory permissions and the daemon log) [${name}/${code}: ${operation}${detail}]`;
 }
 
 /** The live daemon's session, or undefined; a stale session.json of a dead pid is removed. */

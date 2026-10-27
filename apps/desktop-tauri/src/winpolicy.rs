@@ -13,12 +13,12 @@ pub fn pipe_endpoint_ok(endpoint: &str) -> bool {
 pub const SID_SYSTEM: &str = "S-1-5-18";
 pub const SID_ADMINISTRATORS: &str = "S-1-5-32-544";
 
-/// A directory is private when its owner is the current user and every
-/// access-ALLOWED entry of its DACL names only the current user, SYSTEM or
-/// Administrators. A missing DACL (`None`) grants everyone access: refused.
-/// Deny entries never widen access and are ignored by the caller.
+/// A directory is private when owned by the current user or Administrators
+/// (the default owner for elevated tokens), and every understood DACL entry
+/// names only the current user, SYSTEM or Administrators. A missing/NULL DACL
+/// grants everyone access and is refused. Metadata files retain owner-only policy.
 pub fn dacl_private(owner: &str, current_user: &str, allowed_entries: Option<&[String]>) -> bool {
-    if owner != current_user { return false }
+    if owner != current_user && owner != SID_ADMINISTRATORS { return false }
     let Some(entries) = allowed_entries else { return false };
     entries.iter().all(|sid| sid == current_user || sid == SID_SYSTEM || sid == SID_ADMINISTRATORS)
 }
@@ -78,6 +78,15 @@ mod tests {
         assert!(!dacl_private(ME, ME, Some(&v(&[ME, "S-1-1-0"])))); // Everyone
         assert!(!dacl_private(ME, ME, Some(&v(&[ME, "S-1-5-32-545"])))); // Users
         assert!(!dacl_private(ME, ME, Some(&v(&[ME, "S-1-5-21-1-2-3-1002"])))); // another user
+    }
+    #[test]
+    fn elevated_profile_owner_is_private_but_broad_aces_are_not() {
+        assert!(dacl_private(SID_ADMINISTRATORS, ME, Some(&v(&[SID_SYSTEM, SID_ADMINISTRATORS, ME]))));
+        for broad in ["S-1-1-0", "S-1-5-32-545", "S-1-5-11", "S-1-5-21-1-2-3-1002"] {
+            assert!(!dacl_private(SID_ADMINISTRATORS, ME, Some(&v(&[ME, SID_SYSTEM, broad]))));
+        }
+        assert!(!dacl_private(SID_SYSTEM, ME, Some(&v(&[ME]))));
+        assert!(!dacl_private(SID_ADMINISTRATORS, ME, None));
     }
     #[test]
     fn a_foreign_owner_or_a_null_dacl_is_refused() {

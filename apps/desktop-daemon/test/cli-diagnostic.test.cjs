@@ -9,15 +9,18 @@ const path = require("node:path");
 test("CLI startup diagnostics name failures without paths or secrets", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "abito-cli-diagnostic-"));
   try {
-    for (const [message, code, expected] of [
+    for (const [message, code, expected, syscall] of [
       ["EACCES: permission denied, open C:\\Users\\private\\token-secret", "EACCES", "Error/EACCES: system operation failed"],
       ["refusing symlink component in island path: /private/token-secret", undefined, "Error/unknown: refusing symlink component in island path [details redacted]"],
       ["token-secret /private/account", "token-secret", "Error/unknown: details redacted"],
+      ["native session helper refused the session", undefined, "Error/unknown: native session helper refused the session"],
+      ["ENOENT /private/token-secret", "ENOENT", "Error/ENOENT: spawn; system operation failed", "spawn"],
+      ["secret", "ENOENT", "Error/ENOENT: system operation failed", "spawn /private/token-secret"],
       ["daemon already running", undefined, null],
     ]) {
       const source = `
         const { Daemon } = require('./src/daemon.cjs');
-        Daemon.prototype.start = async function () { throw Object.assign(new Error(${JSON.stringify(message)}), { code: ${JSON.stringify(code)} }); };
+        Daemon.prototype.start = async function () { throw Object.assign(new Error(${JSON.stringify(message)}), { code: ${JSON.stringify(code)}, syscall: ${JSON.stringify(syscall)} }); };
         Daemon.prototype.stop = async function () {};
         Daemon.prototype.cleanupSync = function () {};
         require('./src/cli.cjs').main(['run']).then(code => { process.exitCode = code; });
