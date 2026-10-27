@@ -20,6 +20,59 @@ pub fn dev_manifest_dir() -> Option<&'static str> {
     None
 }
 
+// Validate lexically before canonicalization: Windows components() normalizes
+// away interior `.` segments, and rooted/drive-relative paths are not absolute.
+#[cfg(any(windows, test))]
+fn windows_absolute_normalized(text: &str) -> bool {
+    let normalized = text.replace('/', "\\");
+    let bytes = normalized.as_bytes();
+    let tail = if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':' && bytes[2] == b'\\' {
+        if bytes.len() == 3 { return true; }
+        &normalized[3..]
+    } else if let Some(unc) = normalized.strip_prefix("\\\\") {
+        if unc.split('\\').count() < 2 { return false; }
+        unc
+    } else {
+        return false;
+    };
+    tail.split('\\').all(|segment| {
+        !segment.is_empty() && segment != "." && segment != ".."
+            && !segment.ends_with(['.', ' '])
+            && !segment.chars().any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
+    })
+}
+
+#[cfg(windows)]
+fn absolute_normalized(text: &str) -> bool {
+    windows_absolute_normalized(text)
+}
+
+#[cfg(test)]
+mod windows_path_tests {
+    #[test]
+    fn explicit_windows_root_is_absolute_and_normalized() {
+        for accepted in [r"C:\Users\x\proj", r"C:\", "C:/Users/x/proj", r"\\server\share\proj"] {
+            assert!(super::windows_absolute_normalized(accepted), "{accepted}");
+        }
+        for rejected in ["", "relative", r"C:relative", r"\rooted", "/unix", r"C:\a\..\b", r"C:\a\.\b", r"C:\a\\b", r"C:\a\", r"C:\a ", r"C:\a.", r"C:\a:stream", r"\\?\C:\a", r"\\.\pipe\a", r"\\server", r"\\server\share\..\a"] {
+            assert!(!super::windows_absolute_normalized(rejected), "{rejected}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn installed_explicit_root_resolves_existing_windows_directory() {
+        let root = std::env::temp_dir();
+        let explicit = root.to_str().expect("temporary path is Unicode").trim_end_matches(['\\', '/']);
+        assert_eq!(super::project_root_for(None, Some(explicit)), std::fs::canonicalize(&root).ok());
+        for rejected in ["", "relative", r"C:\a\..\b"] {
+            assert_eq!(super::project_root_for(None, Some(rejected)), None);
+        }
+    }
+}
+
+#[cfg(not(windows))]
 fn absolute_normalized(text: &str) -> bool {
     text.starts_with('/')
         && text

@@ -18,6 +18,11 @@ The Linux Tauri app starts this host as its direct child with
 requests shutdown, including EOF received during startup. Plain `run` retains its
 foreground SIGINT/SIGTERM behavior; `status`, `stop` and config commands are unchanged.
 
+Generic CLI failures append a bounded diagnostic with an allowlisted error name/code
+and a fixed, path-redacted category. Unknown exception details are omitted, not
+printed after best-effort redaction: they may contain tokens or account data. The
+app-owned daemon inherits the island's stderr; it does not create a separate daemon.log.
+
 **The app never restarts the host, so app→host has no restart loop, and the daemon
 alone owns the bounded backoff for pi.** This means a capped retry delay, not a
 fixed retry count. App-side host crashes degrade through `no_daemon`; app shutdown

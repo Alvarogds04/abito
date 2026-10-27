@@ -47,4 +47,10 @@ for (const diagnostic of [
   assert.ok(installer.indexOf(diagnostic) < installer.indexOf('& $nsis /V2'));
 }
 assert.doesNotMatch(installer, /Remove-Item|New-Item/);
+assert.match(workflow, /cargo test --locked --lib identity::windows_path_tests/);
+assert.match(smoke, /if \(\$Mode -eq 'explicit-root'\) \{ \$env:ABITO_PROJECT_ROOT = \$workspace \}\s+else \{ Remove-Item Env:ABITO_PROJECT_ROOT/);
+assert.match(smoke, /Start-Island 'explicit-root'/);
+assert.match(smoke, /\} catch \{\s+Show-SmokeDiagnostics\s+throw\s+\} finally/);
+assert.match(smoke, /Get-Content -LiteralPath \$log.FullName -Tail 80/);
+assert.doesNotMatch(smoke, /Get-Content[^\n]*session\.json/);
 console.log('PASS: hosted-Windows guards and independent install continuation (structural only)');

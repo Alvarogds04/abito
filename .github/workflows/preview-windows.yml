@@ -84,6 +84,8 @@ jobs:
           cargo test --locked --lib winipc::tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --lib winpolicy::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --lib identity::windows_path_tests
           exit $LASTEXITCODE
       - name: Native receiver and authenticated relay integration
         timeout-minutes: 10

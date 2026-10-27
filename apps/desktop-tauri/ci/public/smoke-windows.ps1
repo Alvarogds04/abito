@@ -28,6 +28,26 @@ foreach ($key in @('PATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ABITO_PRO
     $originalEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
 }
 $process = $null
+function Show-SmokeDiagnostics {
+    Write-Host 'Installed smoke diagnostics (no session/token/config contents)'
+    if ($null -ne $script:process) {
+        Write-Host "Island pid=$($script:process.Id), exited=$($script:process.HasExited)"
+    }
+    $logs = @(Get-ChildItem -LiteralPath $root -Filter '*.log' -File)
+    foreach ($log in $logs) {
+        Write-Host "--- $($log.Name) ---"
+        Get-Content -LiteralPath $log.FullName -Tail 80 | ForEach-Object { Write-Host $_ }
+    }
+    Write-Host 'The app-owned daemon inherits island stderr; generic startup exceptions have a redacted diagnostic suffix.'
+    foreach ($dir in @((Join-Path $env:LOCALAPPDATA 'Abito'), (Join-Path $env:LOCALAPPDATA 'Abito/runtime'), (Join-Path $env:LOCALAPPDATA 'Abito/notices'))) {
+        if (Test-Path -LiteralPath $dir) {
+            Write-Host "Directory: $dir"
+            Get-ChildItem -LiteralPath $dir -Force | Select-Object Name,Length,Mode | Format-Table | Out-String | Write-Host
+            try { Write-Host "ACL: $((Get-Acl -LiteralPath $dir).Sddl)" } catch { Write-Host 'ACL diagnostic unavailable' }
+        } else { Write-Host "Directory absent: $dir" }
+    }
+    Write-Host 'No separate daemon.log/failure-record writer is used by the app-owned daemon; session.json is deliberately not printed.'
+}
 function Wait-For([scriptblock]$Condition, [string]$Description) {
     $deadline = [DateTime]::UtcNow.AddSeconds(40)
     do {
@@ -48,8 +68,9 @@ function Stop-Island {
 function Start-Island([string]$Mode) {
     # The ready scenario must prove the real default profile ACL works. Never
     # rewrite it to make the test pass. Missing-runtime scenarios use fresh roots.
-    $data = if ($Mode -eq 'ready') { $localData } else { Join-Path $root $Mode }
-    if ($Mode -ne 'ready') {
+    $ready = $Mode -eq 'ready' -or $Mode -eq 'explicit-root'
+    $data = if ($ready) { $localData } else { Join-Path $root $Mode }
+    if (-not $ready) {
         New-Item -ItemType Directory -Path $data | Out-Null
         $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
         $acl = [System.Security.AccessControl.DirectorySecurity]::new()
@@ -60,11 +81,12 @@ function Start-Island([string]$Mode) {
         Set-Acl -LiteralPath $data -AclObject $acl
     }
     $env:LOCALAPPDATA = $data
-    $env:APPDATA = if ($Mode -eq 'ready') { $roaming } else { $empty }
+    $env:APPDATA = if ($ready) { $roaming } else { $empty }
     $env:ProgramFiles = $empty
     $systemPath = "$env:SystemRoot\System32;$env:SystemRoot"
     $env:PATH = if ($Mode -eq 'no-node') { $systemPath } else { "$nodeDir;$systemPath" }
-    $env:ABITO_PROJECT_ROOT = $workspace
+    if ($Mode -eq 'explicit-root') { $env:ABITO_PROJECT_ROOT = $workspace }
+    else { Remove-Item Env:ABITO_PROJECT_ROOT -ErrorAction SilentlyContinue }
     Remove-Item Env:ABITO_ISLAND_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:ABITO_DESKTOP_SOCKET -ErrorAction SilentlyContinue
     $script:process = Start-Process -FilePath (Join-Path $install 'abito-island.exe') -WorkingDirectory $workspace -PassThru `
@@ -109,6 +131,10 @@ try {
     } 'island persisted installed hook receipt'
     Write-Host 'PASS installed hook -> installed authenticated relay -> receiver -> island persisted turn'
     Stop-Island
+    Start-Island 'explicit-root'
+    Wait-For { (Get-Content -Raw -LiteralPath (Join-Path $root 'explicit-root.stderr.log')) -match 'abito-island-daemon: running' } 'explicit Windows root daemon startup'
+    Write-Host 'PASS installed receiver and daemon with explicit Windows project root'
+    Stop-Island
     foreach ($case in @(
         @{ mode = 'no-pi'; message = 'Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent.' },
         @{ mode = 'no-node'; message = 'Falta Node.js: instalalo desde nodejs.org.' }
@@ -129,6 +155,9 @@ try {
     if ([IO.File]::ReadAllText($unrelated) -ne 'must survive uninstall') { throw 'Uninstall changed unrelated file' }
     if ((Get-FileHash -LiteralPath $script:acceptedRecap).Hash -ne $recapHash) { throw 'Uninstall changed island user data' }
     Write-Host 'PASS full install, native runtime, missing runtimes and exact preserving uninstall'
+} catch {
+    Show-SmokeDiagnostics
+    throw
 } finally {
     Stop-Island
     foreach ($key in $originalEnv.Keys) { [Environment]::SetEnvironmentVariable($key, $originalEnv[$key], 'Process') }

@@ -35,7 +35,15 @@ function genericError(error) {
 	if (error instanceof config.ConfigError) return error.message;
 	if (/already running/.test(String(error?.message))) return "daemon already running";
 	if (/^busy/.test(String(error?.message))) return "busy: finish or abort the current turn first";
-	return "failed (see the island directory permissions and the daemon log)";
+	// Closed diagnostic vocabulary: arbitrary exception text can contain paths,
+	// credentials or model content. Never echo it, even after regex redaction.
+	const name = ["Error", "TypeError", "RangeError", "SyntaxError"].includes(error?.name) ? error.name : "Error";
+	const code = ["EACCES", "EPERM", "ENOENT", "EEXIST", "ENOTDIR", "EISDIR", "EINVAL", "ENOSPC", "EPIPE", "ECONNREFUSED", "ETIMEDOUT", "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"].includes(error?.code) ? error.code : "unknown";
+	const prefixes = ["refusing island root", "refusing symlink component in island path", "refusing island path, not a directory", "refusing island path", "refusing world-writable component without the sticky bit", "refusing to write through a symlink", "refusing to write, not a regular file"];
+	const prefix = prefixes.find(text => String(error?.message).startsWith(`${text}:`));
+	const fixed = ["agent exited during startup", "agent session is unavailable", "agent recovery session is unavailable", "agent recovery session was not confirmed", "engine is not ready"].find(text => error?.message === text);
+	const detail = fixed ?? (prefix ? `${prefix} [details redacted]` : code !== "unknown" ? "system operation failed" : "details redacted");
+	return `failed (see the island directory permissions and the daemon log) [${name}/${code}: ${detail}]`;
 }
 
 /** The live daemon's session, or undefined; a stale session.json of a dead pid is removed. */
