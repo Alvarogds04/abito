@@ -7,7 +7,9 @@ process.stdout.write(JSON.stringify({
     active: true,
     icon: ['icons/icon-macos.png'],
     category: 'Productivity',
-    macOS: { minimumSystemVersion: '12.0' },
+    // signingIdentity '-' = ad-hoc seal of the whole .app (free, no Apple account): Gatekeeper then shows
+    // «unidentified developer» instead of «damaged». Hardened runtime adds nothing without a team identity.
+    macOS: { minimumSystemVersion: '12.0', signingIdentity: '-', hardenedRuntime: false },
     resources: Object.fromEntries([
       ...DAEMON_FILES.map(file => [`../desktop-daemon/${file}`, `desktop-daemon/${file}`]),
       ...HARNESS_FILES.map(file => [`../desktop-harness/${file}`, `desktop-harness/${file}`]),

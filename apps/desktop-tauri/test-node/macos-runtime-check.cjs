@@ -39,7 +39,14 @@ try {
   assert.deepEqual(config.bundle.resources, expected);
   assert.equal(config.bundle.active, true);
   assert.equal(config.bundle.macOS.minimumSystemVersion, '12.0');
+  // Ad-hoc seal of the whole bundle (no Apple account): Gatekeeper reports «unidentified developer», never «damaged».
+  assert.equal(config.bundle.macOS.signingIdentity, '-');
+  assert.equal(config.bundle.macOS.hardenedRuntime, false);
   for (const file of Object.keys(expected)) assert.ok(fs.statSync(path.resolve(crate, file)).isFile(), file);
   assert.deepEqual(fs.readdirSync(dir), [], 'generator writes no files in its caller cwd');
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-console.log('macos-runtime: 3 rules passed (missing runtime UI, existing states, exact bundle resources)');
+// The island is a menu-bar accessory: no Dock icon on macOS (LSUIElement), the tray keeps Mostrar/Ocultar/Salir.
+const plist = fs.readFileSync(path.join(crate, 'Info.plist'), 'utf8');
+assert.match(plist, /<key>LSUIElement<\/key>\s*<true\/>/);
+assert.match(plist, /<key>NSMicrophoneUsageDescription<\/key>/);
+console.log('macos-runtime: 5 rules passed (missing runtime UI, existing states, exact bundle resources, ad-hoc seal, no Dock icon)');
