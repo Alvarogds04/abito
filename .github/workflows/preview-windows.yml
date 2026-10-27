@@ -31,6 +31,10 @@ jobs:
               $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
             throw 'Windows preview requires a disposable hosted runner'
           }
+          git config --global core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git config --global core.eol lf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/checkout@v4
       - name: Parse Windows scripts before any account operation
         shell: pwsh -NoProfile -File {0}
