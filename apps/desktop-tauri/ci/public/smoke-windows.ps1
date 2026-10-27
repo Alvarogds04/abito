@@ -91,7 +91,14 @@ function Start-Island([string]$Mode) {
     Remove-Item Env:ABITO_DESKTOP_SOCKET -ErrorAction SilentlyContinue
     $script:process = Start-Process -FilePath (Join-Path $install 'abito-island.exe') -WorkingDirectory $workspace -PassThru `
         -RedirectStandardOutput (Join-Path $root "$Mode.stdout.log") -RedirectStandardError (Join-Path $root "$Mode.stderr.log")
-    Wait-For { (Test-Path -LiteralPath (Join-Path $data 'Abito/notices/endpoint.json')) } "$Mode receiver metadata"
+    # A forced stop can leave the previous process's metadata. Wait for this
+    # launch to publish its own record; existence alone is not readiness.
+    Wait-For {
+        try {
+            $candidate = Get-Content -Raw -LiteralPath (Join-Path $data 'Abito/notices/endpoint.json') | ConvertFrom-Json
+            return $candidate.pid -eq $script:process.Id
+        } catch { return $false }
+    } "$Mode receiver metadata"
     $metadata = Get-Content -Raw -LiteralPath (Join-Path $data 'Abito/notices/endpoint.json') | ConvertFrom-Json
     if ($metadata.pid -ne $script:process.Id) { throw 'Receiver metadata does not belong to installed island process' }
 }
