@@ -25,7 +25,7 @@ const { createAgentHooks } = require("./agent-hooks.cjs");
 const { ConnectorsControl, ConnectorsView } = require("./connectors.cjs");
 const { AgentsManager } = require("./agents.cjs");
 const { ConnectorHostSupervisor } = require("./connector-host.cjs");
-const { ensureIsland, ensurePrivateDir, islandPaths, writePrivateFile } = require("./isolation.cjs");
+const { ensureIsland, ensurePrivateDir, islandPaths, writePrivateFile, windowsIslandRootViolation } = require("./isolation.cjs");
 const { ProfileStore } = require("./profiles.cjs");
 const { scanSessions, sessionScope } = require("./sessions.cjs");
 const { runPs } = require("./procinfo.cjs");
@@ -40,6 +40,78 @@ const SESSION_FILE = "session.json";
 /** What a daemon process's command line contains (Linux /proc ownership check). */
 const DAEMON_CMDLINE = /(abito-island-daemon|cli\.cjs)/;
 
+/** stdin size bound and timeout for the native session helper (Windows). */
+const SESSION_HELPER_LIMIT = 4096;
+const SESSION_HELPER_TIMEOUT_MS = 5000;
+
+/**
+ * Fixed sibling locations of the native Windows session helper
+ * (`abito-private-session.exe`, L6). Never PATH, never the working directory:
+ * the helper is found exactly where the repo layout or the installer puts it.
+ * Empty off Windows.
+ */
+function sessionHelperCandidates(srcDir = __dirname) {
+	if (process.platform !== "win32") return [];
+	return [
+		// Installed layout: the helper ships next to the daemon package root.
+		path.resolve(srcDir, "..", "..", "abito-private-session.exe"),
+		// Development/CI layout: the sibling desktop-tauri crate's debug build.
+		path.resolve(srcDir, "..", "..", "desktop-tauri", "target", "debug", "abito-private-session.exe"),
+	];
+}
+
+/** The first existing helper candidate, or undefined (fail closed). */
+function findSessionHelper(deps = {}) {
+	for (const candidate of sessionHelperCandidates()) {
+		try {
+			if ((deps.stat ?? fs.statSync)(candidate).isFile()) return candidate;
+		} catch {}
+	}
+	return undefined;
+}
+
+/**
+ * Windows (L6): session.json carries the launch token, and Node cannot set a
+ * Windows ACL — so the file is written by the native helper, which creates the
+ * temp file with an explicit protected owner-only DACL AT CREATION and replaces
+ * the target atomically. The token travels on the helper's STDIN only: never
+ * argv, never the environment, never a log. The daemon root is passed as
+ * ABITO_ISLAND_DIR (the same var the daemon itself honours); the helper refuses
+ * any root that bypasses the canonical protected %LOCALAPPDATA%\Abito root.
+ * Fails closed: without the helper or without a zero exit, NO session is
+ * published and the boot fails.
+ */
+function publishSessionWindows(root, payload, deps = {}) {
+	const spawnSync = deps.spawnSync ?? require("node:child_process").spawnSync;
+	const exe = deps.helperPath ?? findSessionHelper(deps);
+	if (!exe) throw new Error("native session helper not found (abito-private-session.exe)");
+	const input = Buffer.from(JSON.stringify(payload), "utf8");
+	if (input.length > SESSION_HELPER_LIMIT) throw new Error("session payload over the helper size bound");
+	const result = spawnSync(exe, [], {
+		input,
+		timeout: SESSION_HELPER_TIMEOUT_MS,
+		windowsHide: true,
+		env: { ...process.env, ABITO_ISLAND_DIR: path.resolve(root) },
+	});
+	if (result.error) throw new Error("native session helper failed to run");
+	if (result.status !== 0) throw new Error("native session helper refused the session");
+	return true;
+}
+
+/** Read-only native ACL/server identity/ready proof. No token leaves Node. */
+function verifySessionWindows(root, deps = {}) {
+    const exe = deps.helperPath ?? findSessionHelper(deps);
+    if (!exe) return false;
+    try {
+        const result = (deps.spawnSync ?? require("node:child_process").spawnSync)(exe, ["--verify"], {
+            timeout: SESSION_HELPER_TIMEOUT_MS, windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe"], maxBuffer: 4096,
+            env: { ...process.env, ABITO_ISLAND_DIR: path.resolve(root) },
+        });
+        return !result.error && result.status === 0 && !result.stdout?.length && !result.stderr?.length;
+    } catch { return false; }
+}
+
 const uid = () => (typeof process.getuid === "function" ? process.getuid() : undefined);
 
 function sessionPath(root) {
@@ -51,7 +123,7 @@ function readSession(root) {
 	const file = sessionPath(root);
 	try {
 		const stats = fs.lstatSync(file);
-		if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o077) !== 0 || stats.size > 4096) return undefined;
+		if (!stats.isFile() || stats.isSymbolicLink() || (process.platform !== "win32" && (stats.mode & 0o077) !== 0) || stats.size > 4096) return undefined;
 		if (uid() !== undefined && stats.uid !== uid()) return undefined;
 		const value = JSON.parse(fs.readFileSync(file, "utf8"));
 		if (value?.protocol !== PROTOCOL || typeof value.endpoint !== "string" || typeof value.token !== "string") return undefined;
@@ -91,6 +163,9 @@ function pidState(pid) {
 		const info = runPs(pid);
 		return info === undefined ? "unknown" : info.state === "Z" ? "dead" : "alive";
 	}
+	// Windows has no /proc: a pid that answers signal 0 is alive. Identity is NEVER inferred from it
+	// (isDaemonProcess stays false there), so this cannot authorise signalling a foreign process.
+	if (process.platform === "win32") return "alive";
 	try {
 		// An exited-but-unreaped child (zombie) is not alive for our purposes.
 		const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -112,6 +187,7 @@ function pidAlive(pid) {
  * Fails closed on every missing or unreadable piece (including no /proc).
  */
 function isDaemonProcess(pid, procStart) {
+	if (process.platform === "win32") return false; // no /proc identity: fail closed (never signal on a bare pid)
 	if (typeof procStart !== "string" || !/^[0-9]+$/.test(procStart)) return false;
 	if (!pidAlive(pid)) return false;
 	if (procStartTicks(pid) !== procStart) return false;
@@ -203,8 +279,17 @@ async function classifySession(root, deps = {}) {
 	if (!session) return { state: "stale", reason: "bad_session" };
 	// Probe BEFORE trusting anything else: even a dead recorded pid must never
 	// hide a live endpoint (GD029: never overwrite a session that answers ready).
-	const ready = (await probeEndpoint(session)) === "ready";
+	const platform = deps.platform ?? process.platform;
+	// Windows never sends the token through the unverified Node probe. The
+	// native helper checks file ACL + pipe server pid/SID before hello→ready.
+	const ready = platform === "win32"
+		? (deps.nativeVerify ?? verifySessionWindows)(root) === true
+		: (await probeEndpoint(session)) === "ready";
 	if (pidState(session.pid) !== "alive") return { state: "stale", reason: "pid_dead", ready };
+	if (platform === "win32") {
+		return ready ? { state: "healthy", reason: "ready", ready: true }
+			: { state: "foreign", reason: "identity_unconfirmed", ready: false };
+	}
 	if (session.pid !== process.pid) {
 		let cmdline = "";
 		if (process.platform === "darwin") cmdline = runPs(session.pid)?.command ?? "";
@@ -243,6 +328,8 @@ class Daemon extends EventEmitter {
 		super();
 		this.env = options.env ?? process.env;
 		this.root = path.resolve(options.root ?? defaultIslandRoot(this.env));
+		// Platform seam for tests ONLY: production always runs the real platform.
+		this.platform = options.platform ?? process.platform;
 		this.log = options.log ?? (() => {});
 		this.options = options;
 		this.state = "stopped";
@@ -269,6 +356,11 @@ class Daemon extends EventEmitter {
 	}
 
 	async boot() {
+		// Windows (B5/S6): validate the island root against the canonical
+		// protected %LOCALAPPDATA%\Abito root BEFORE ensureIsland, config or ANY
+		// directory write — a forbidden root must never get files created in it.
+		const violation = windowsIslandRootViolation(this.root, this.env, this.platform);
+		if (violation) throw new Error(`refusing island root: ${violation}`);
 		ensureIsland(this.root);
 		const cfg = config.loadConfig(this.root, { env: this.env }); // fail-closed before anything spawns
 		const existing = readSession(this.root);
@@ -394,12 +486,23 @@ class Daemon extends EventEmitter {
 		const { endpoint } = await this.server.start();
 		this.endpoint = endpoint;
 		this.startedAt = Date.now();
-		writePrivateFile(
-			this.sessionFile,
-			// R8: the boot-time parent pid lets a later launch detect reparenting
-			// (an orphan under systemd --user lands on the user subreaper, ppid != 1).
-			`${JSON.stringify({ protocol: PROTOCOL, endpoint, token: this.token, pid: process.pid, procStart: procStartTicks(process.pid), startedAt: this.startedAt, ppid: ppidOf(process.pid) })}\n`,
-		);
+		// R8: the boot-time parent pid lets a later launch detect reparenting
+		// (an orphan under systemd --user lands on the user subreaper, ppid != 1).
+		const session = {
+			protocol: PROTOCOL,
+			endpoint,
+			token: this.token,
+			pid: process.pid,
+			procStart: procStartTicks(process.pid),
+			startedAt: this.startedAt,
+			ppid: ppidOf(process.pid),
+		};
+		if (process.platform === "win32") {
+			// Windows (L6): the native helper owns the token file's protected DACL.
+			publishSessionWindows(this.root, session);
+		} else {
+			writePrivateFile(this.sessionFile, `${JSON.stringify(session)}\n`);
+		}
 		this.wroteSession = true;
 		this.recordLaunch({ reason: replaced ? "stale_replaced" : "ok", outcome: "started", ...(replaced ? { incumbentPid: existing.pid } : {}) });
 		// R5: a boot never consumes the interrupted-work record; it is exposed
@@ -778,4 +881,20 @@ class Daemon extends EventEmitter {
 	}
 }
 
-module.exports = { DAEMON_CMDLINE, Daemon, PROTOCOL, classifySession, isDaemonProcess, pidAlive, pidState, probeEndpoint, procStartTicks, readSession, sessionPath };
+module.exports = {
+	DAEMON_CMDLINE,
+	Daemon,
+	PROTOCOL,
+	classifySession,
+	findSessionHelper,
+	isDaemonProcess,
+	pidAlive,
+	pidState,
+	publishSessionWindows,
+	verifySessionWindows,
+	probeEndpoint,
+	procStartTicks,
+	readSession,
+	sessionHelperCandidates,
+	sessionPath,
+};

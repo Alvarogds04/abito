@@ -1,13 +1,22 @@
 //! App-owned island host. No host restart loop; only the daemon supervises Pi.
-//! Linux has kernel parent-death protection. Other platforms fail closed until
-//! an equivalent, independently verified lifetime mechanism exists.
+//! Linux has kernel parent-death protection (PR_SET_PDEATHSIG); Windows has a
+//! Job Object with KILL_ON_JOB_CLOSE (`daemonhost_win.rs`). Other platforms fail
+//! closed until an equivalent, independently verified lifetime mechanism exists.
+#[cfg(windows)]
+#[path = "daemonhost_win.rs"]
+mod win;
+#[cfg(windows)]
+pub use win::Host;
+// Windows runtime lookups (T2/S4): re-exported for the integration tests.
+#[cfg(windows)]
+pub use win::{discover_node, discover_pi};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Bounded cadence of the runtime reap poll (#390): short enough that a dead
 /// daemon is never a zombie for long, long enough to cost nothing.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 const REAP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,7 +33,7 @@ impl StartupFailure {
 
 #[derive(Default)]
 pub struct HostSlot {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     child: Arc<Mutex<Option<Host>>>,
     failure: Mutex<Option<StartupFailure>>,
     /// #390: the exit status of a host child that died ON ITS OWN while the app lived.
@@ -32,17 +41,23 @@ pub struct HostSlot {
 }
 impl HostSlot {
     pub fn start(&self) {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         let result = start();
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let result: Result<(), StartupFailure> = Err(StartupFailure::Unsupported);
         match result {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", windows))]
             Ok(child) => self.adopt(child),
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
             Ok(()) => {}
             Err(reason) => {
                 eprintln!("island host: no_daemon ({})", reason.code());
+                #[cfg(any(target_os = "macos", windows))]
+                match reason {
+                    StartupFailure::NodeMissing => eprintln!("Falta Node.js: instalalo desde nodejs.org."),
+                    StartupFailure::PiMissing => eprintln!("Falta Pi: instalalo con npm install -g @earendil-works/pi-coding-agent."),
+                    _ => {}
+                }
                 crate::failure::report("daemon", "daemon-start", crate::failure::Reason::DaemonStartFailed, None);
                 *self.failure.lock().expect("host failure lock") = Some(reason);
             }
@@ -56,16 +71,16 @@ impl HostSlot {
     /// runtime reap already took a child that died. Read only for the restart verdict
     /// (#390 fix); it is never exposed to the page.
     pub fn pid(&self) -> Option<u32> {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         let pid = self.child.lock().expect("host child lock").as_ref().map(Host::pid);
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let pid = None;
         pid
     }
     /// Take ownership of a spawned host and reap it at runtime if it exits by itself:
     /// a bounded `try_wait` poll (no unbounded `wait`), so a dead daemon is never left
     /// as a zombie and its early exit becomes visible via [`exit_status`].
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     pub fn adopt(&self, host: Host) {
         *self.child.lock().expect("host child lock") = Some(host);
         let (child, exited) = (Arc::clone(&self.child), Arc::clone(&self.exited));
@@ -83,31 +98,53 @@ impl HostSlot {
         });
     }
     pub fn stop(&self) {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         drop(self.child.lock().expect("host child lock").take());
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[path = "daemonhost_discovery_mac.rs"]
+mod mac_discovery;
+
 /// Session PATH first; only these canonical locations are tried afterwards.
 /// Empty/relative PATH components are ignored: no working-directory execution.
 pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Result<PathBuf, String> {
-    let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
-        .filter(|p| p.is_absolute()).map(|p| p.join(name)).collect();
-    match name {
-        "node" => {
-            #[cfg(target_os = "macos")]
-            candidates.push(PathBuf::from("/opt/homebrew/bin/node"));
-            candidates.extend([PathBuf::from("/usr/local/bin/node"), PathBuf::from("/usr/bin/node")]);
+    // Windows lookup lives entirely in `daemonhost_win.rs` (node.exe and the
+    // npm package CLI JS — never a .cmd shim); the unix/macOS logic below is
+    // untouched.
+    #[cfg(windows)]
+    return win::discover(name, path, home);
+    #[cfg(not(windows))]
+    {
+        let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
+            .filter(|p| p.is_absolute()).map(|p| p.join(name)).collect();
+        // Finder does not inherit shell npm prefixes. These are bounded, customary
+        // user install locations, not a shell invocation or a recursive disk search.
+        #[cfg(target_os = "macos")]
+        if matches!(name, "node" | "pi") {
+            if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) {
+                candidates.push(home.join(".local/bin").join(name));
+                candidates.push(home.join(".npm-global/bin").join(name));
+                candidates.extend(mac_discovery::candidates(name, home));
+            }
         }
-        "pi" => {
-            if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) { candidates.push(home.join(".local/bin/pi")); }
-            #[cfg(target_os = "macos")]
-            candidates.push(PathBuf::from("/opt/homebrew/bin/pi"));
-            candidates.extend([PathBuf::from("/usr/local/bin/pi"), PathBuf::from("/usr/bin/pi")]);
+        match name {
+            "node" => {
+                #[cfg(target_os = "macos")]
+                candidates.push(PathBuf::from("/opt/homebrew/bin/node"));
+                candidates.extend([PathBuf::from("/usr/local/bin/node"), PathBuf::from("/usr/bin/node")]);
+            }
+            "pi" => {
+                if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) { candidates.push(home.join(".local/bin/pi")); }
+                #[cfg(target_os = "macos")]
+                candidates.push(PathBuf::from("/opt/homebrew/bin/pi"));
+                candidates.extend([PathBuf::from("/usr/local/bin/pi"), PathBuf::from("/usr/bin/pi")]);
+            }
+            _ => {}
         }
-        _ => {}
+        candidates.into_iter().find(|p| executable(p)).ok_or_else(|| format!("{name} missing (PATH and canonical locations)"))
     }
-    candidates.into_iter().find(|p| executable(p)).ok_or_else(|| format!("{name} missing (PATH and canonical locations)"))
 }
 fn executable(path: &Path) -> bool {
     let Ok(meta) = std::fs::metadata(path) else { return false };
@@ -128,13 +165,26 @@ pub fn runtime_path(path: Option<&OsStr>, node: &Path, pi: &Path) -> Result<std:
     std::env::join_paths(dirs)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+/// Release layout: Tauri puts resources beside MacOS/, not beside the binary.
+/// Other platforms retain their adjacent desktop-daemon layout.
+pub fn installed_daemon_cli(exe: &Path) -> Option<PathBuf> {
+    let directory = exe.parent()?;
+    #[cfg(target_os = "macos")]
+    let directory = directory.parent()?.join("Resources");
+    Some(directory.join("desktop-daemon/src/cli.cjs"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn start() -> Result<Host, StartupFailure> {
-    let path = std::env::var_os("PATH"); let home = std::env::var_os("HOME");
+    let path = std::env::var_os("PATH");
+    #[cfg(windows)]
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME");
     let node = discover("node", path.as_deref(), home.as_deref()).map_err(|_| StartupFailure::NodeMissing)?;
     let pi = discover("pi", path.as_deref(), home.as_deref()).map_err(|_| StartupFailure::PiMissing)?;
     let exe = std::env::current_exe().map_err(|_| StartupFailure::HostMissing)?;
-    let mut cli = exe.parent().ok_or(StartupFailure::HostMissing)?.join("desktop-daemon/src/cli.cjs");
+    let mut cli = installed_daemon_cli(&exe).ok_or(StartupFailure::HostMissing)?;
     #[cfg(debug_assertions)]
     if !cli.is_file() { cli = Path::new(env!("CARGO_MANIFEST_DIR")).join("../desktop-daemon/src/cli.cjs"); }
     if !cli.is_file() { return Err(StartupFailure::HostMissing) }

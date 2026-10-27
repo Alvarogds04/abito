@@ -98,7 +98,7 @@ async function handleCodexHook({ event, input, env = {}, argv = [], now, clientF
     }
 
     let config;
-    try { config = resolveConfig(env, process.getuid()); } catch { return none(); }
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none(); }
     if (!config.endpoint) return none(); // no island: Codex's own prompt is still the only prompt, nothing breaks
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd, sessionId: sessionToken(data.session_id),
       agent: 'codex', onDiagnostic: () => {}, connectTimeoutMs: NOTICE_CONNECT_MS, handshakeTimeoutMs: NOTICE_HANDSHAKE_MS };

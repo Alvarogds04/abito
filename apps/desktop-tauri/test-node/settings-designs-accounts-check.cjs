@@ -37,6 +37,20 @@ test('S26 Conexiones: the engine banner is the FIRST thing, with icon + word fro
   }
 });
 
+test('S2 missing runtimes show installation advice as visible Motor text, not only aria', async () => {
+  for (const [code, name, advice] of [
+    ['node_missing', 'Falta Node.js', 'instalalo desde nodejs.org.'],
+    ['pi_missing', 'Falta Pi', 'instalalo con npm install -g @earendil-works/pi-coding-agent.'],
+  ]) {
+    const { ui } = await mount(base({ connection: 'no_daemon', last_error: { code, n: 1 } }));
+    const banner = byId(ui, 'engine-status');
+    assert(words(banner).includes(name), 'runtime name is text content');
+    const hint = all(banner).find(e => e.className === 'hint' && e.textContent === advice);
+    assert(hint, `${code}: install advice is a rendered text node`);
+    assert(!hint.hidden && hint.attrs['aria-hidden'] !== 'true', 'advice is not hidden from sighted users');
+  }
+});
+
 test('S26 Conexiones: an engine failure offers «Reintentar» through the SAME closed restart command; a healthy engine does not', async () => {
   const bad = await mount(base({ connection: 'lost' }));
   const retry = btn(byId(bad.ui, 'engine-status'), 'Reintentar'); assert(retry, 'retry sits with the failure');

@@ -6,6 +6,7 @@
 const net = require('node:net');
 const { randomUUID } = require('node:crypto');
 const { verifyEndpoint } = require('./security.cjs');
+const { createWindowsConnection } = require('./windows-transport.cjs');
 const { projectId, sessionToken, displayFields } = require('./identity.cjs');
 
 const QUESTION_FRAME_BYTES = 4096, STRUCTURED_FRAME_BYTES = 16384, NOTICE_FRAME_BYTES = 512;
@@ -107,10 +108,25 @@ function normalizeAttention(input) {
   return { title, detail };
 }
 
+// Windows (T2/S3): the connection is the native stdio relay child (never a
+// direct named-pipe connection); Unix keeps net.createConnection unchanged.
+function openConnection(endpoint, platform) {
+  return platform === 'win32'
+    ? createWindowsConnection(endpoint)
+    : net.createConnection(endpoint);
+}
+
+// `platform` is an explicit seam (tests simulate win32 on Linux); production
+// never passes it, so the choice is process.platform.
+const options_platform = platform => platform ?? process.platform;
+
 class IslandClient {
   constructor({ endpoint, runtime, cwd, sessionId, agent, projectName, onDiagnostic, connectTimeoutMs = 3000,
-    handshakeTimeoutMs = 3000, clock } = {}) {
+    handshakeTimeoutMs = 3000, clock, open, platform } = {}) {
     this.endpoint = endpoint; this.runtime = runtime; this.cwd = cwd; this.sessionId = sessionId; this.agent = agent; this.projectName = projectName;
+    // `open` is an explicit seam (tests); production picks by platform.
+    this.open = typeof open === 'function' ? open : undefined;
+    this.platform = options_platform(platform);
     this.onDiagnostic = typeof onDiagnostic === 'function' ? onDiagnostic : () => {};
     this.connectTimeoutMs = connectTimeoutMs; this.handshakeTimeoutMs = handshakeTimeoutMs;
     this.clock = clock ?? { now: Date.now, setTimer: setTimeout, clearTimer: clearTimeout };
@@ -162,12 +178,12 @@ class IslandClient {
         scope = { project: projectId(this.cwd), sessionId: sessionToken(this.sessionId) };
       } catch { this.asking = false; resolve({ status: 'unavailable' }); return; }
       let file;
-      try { file = verifyEndpoint(this.endpoint, this.runtime); } catch {
+      try { file = verifyEndpoint(this.endpoint, this.runtime, { platform: this.platform }); } catch {
         this.diagnostic('endpoint_rejected'); this.asking = false; resolve({ status: 'unavailable' }); return;
       }
       let stage = 'connect', settled = false, timer, expiryTimer, live = null, buf = Buffer.alloc(0);
       const gate = createFrameGate(clock.now);
-      const socket = net.createConnection(this.endpoint);
+      const socket = (this.open ?? (endpoint => openConnection(endpoint, this.platform)))(this.endpoint, this.runtime);
       const stopTimer = () => { if (timer !== undefined) clock.clearTimer(timer); timer = undefined; };
       const stageTimer = ms => { stopTimer(); timer = clock.setTimer(() => violation('timeout'), ms); };
       // `at` can be pinned by the caller so a frame's `at` and `expiresAt` come from ONE clock read.
@@ -304,7 +320,7 @@ class IslandClient {
       socket.on('close', () => { if (!settled) finish(failure()); });
       socket.on('connect', () => {
         try {
-          const after = verifyEndpoint(this.endpoint, this.runtime);
+          const after = verifyEndpoint(this.endpoint, this.runtime, { platform: this.platform });
           if (after.dev !== file.dev || after.ino !== file.ino) throw new Error('Endpoint changed');
         } catch { this.diagnostic('endpoint_changed'); finish({ status: 'unavailable' }); return; }
         stage = 'ready';

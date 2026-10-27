@@ -13,10 +13,13 @@ Get the latest build from **[Releases](https://github.com/Alvarogds04/abito/rele
 | Platform | File | Notes |
 | --- | --- | --- |
 | Linux x86_64 | `abito-linux-x64.tar.gz` | `tar -xzf abito-linux-x64.tar.gz && sh abito-linux-x64/install.sh abito-linux-x64/abito-island --project-root ~/your-project` |
-| macOS (Apple Silicon) | `Abito-macos-arm64.dmg` / `.zip` | **unsigned**: first open with right click → *Open*, or `xattr -dr com.apple.quarantine /Applications/Abito.app` |
+| macOS (Apple Silicon) | `Abito-macos-arm64.dmg` / `.zip` | **not notarized**: open it once, then *System Settings → Privacy & Security → Open Anyway*. Step-by-step guide (Spanish): [docs/mac-guide.es.md](docs/mac-guide.es.md) |
 | Windows x64 | `abito-windows-x64-setup.exe` | **unsigned**: SmartScreen → *More info* → *Run anyway* |
 
-The macOS and Windows builds are not signed or notarized. They are meant for testing.
+The macOS build is ad-hoc signed but not notarized; the Windows build is not signed. They are meant for testing.
+
+**Agents need [Node.js](https://nodejs.org) and Pi** (`npm install -g @earendil-works/pi-coding-agent`). Without them the
+island still opens and shows notices, and *Ajustes → Motor* says which one is missing.
 
 ## Connect your agents
 

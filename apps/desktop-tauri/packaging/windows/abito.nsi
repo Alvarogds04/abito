@@ -27,16 +27,19 @@ Unicode true
 !error "OUTDIR must be passed with -DOUTDIR"
 !endif
 
+!ifndef RUNTIMEDIR
+!define RUNTIMEDIR "${BINDIR}\windows-runtime"
+!endif
+!include "${RUNTIMEDIR}\runtime.nsh"
+
 Name "Abito Island"
-OutFile "${OUTDIR}/abito-island-${VERSION}-win-x64-setup.exe"
+OutFile "${OUTDIR}\abito-island-${VERSION}-win-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\abito-island"
-InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "InstallLocation"
 RequestExecutionLevel user
 
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
-!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -44,7 +47,8 @@ RequestExecutionLevel user
 
 Section "Abito Island"
   SetOutPath "$INSTDIR"
-  File "${BINDIR}/abito-island.exe"
+  !insertmacro AbitoInstallPayload
+  SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Abito Island"
   CreateShortCut "$SMPROGRAMS\Abito Island\Abito Island.lnk" "$INSTDIR\abito-island.exe"
@@ -56,7 +60,7 @@ Section "Abito Island"
 SectionEnd
 
 Section "Uninstall"
-  Delete "$INSTDIR\abito-island.exe"
+  !insertmacro AbitoUninstallPayload
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR" ; succeeds only when the folder is empty — never silent-recursion
   Delete "$SMPROGRAMS\Abito Island\Abito Island.lnk"

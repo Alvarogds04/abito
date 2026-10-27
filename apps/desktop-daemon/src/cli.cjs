@@ -21,7 +21,7 @@ const path = require("node:path");
 
 const config = require("./config.cjs");
 const { Daemon, classifySession, isDaemonProcess, pidAlive, pidState, readSession, sessionPath } = require("./daemon.cjs");
-const { ensureIsland, defaultIslandRoot } = require("./isolation.cjs");
+const { ensureIsland, defaultIslandRoot, windowsIslandRootViolation } = require("./isolation.cjs");
 
 const USAGE = "usage: abito-island-daemon run [--app-owned] | status | stop | config get | config set-workspace <absolute-path> | config set-hotkey <combo>|--clear";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,7 +35,16 @@ function genericError(error) {
 	if (error instanceof config.ConfigError) return error.message;
 	if (/already running/.test(String(error?.message))) return "daemon already running";
 	if (/^busy/.test(String(error?.message))) return "busy: finish or abort the current turn first";
-	return "failed (see the island directory permissions and the daemon log)";
+	// Closed diagnostic vocabulary: arbitrary exception text can contain paths,
+	// credentials or model content. Never echo it, even after regex redaction.
+	const name = ["Error", "TypeError", "RangeError", "SyntaxError"].includes(error?.name) ? error.name : "Error";
+	const code = ["EACCES", "EPERM", "ENOENT", "EEXIST", "ENOTDIR", "EISDIR", "EINVAL", "ENOSPC", "EPIPE", "ECONNREFUSED", "ETIMEDOUT", "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"].includes(error?.code) ? error.code : "unknown";
+	const prefixes = ["refusing island root", "refusing symlink component in island path", "refusing island path, not a directory", "refusing island path", "refusing world-writable component without the sticky bit", "refusing to write through a symlink", "refusing to write, not a regular file"];
+	const prefix = prefixes.find(text => String(error?.message).startsWith(`${text}:`));
+	const fixed = ["agent exited during startup", "agent session is unavailable", "agent recovery session is unavailable", "agent recovery session was not confirmed", "engine is not ready", "native session helper not found (abito-private-session.exe)", "session payload over the helper size bound", "native session helper failed to run", "native session helper refused the session"].find(text => error?.message === text);
+	const detail = fixed ?? (prefix ? `${prefix} [details redacted]` : code !== "unknown" ? "system operation failed" : "details redacted");
+	const operation = ["spawn", "open", "mkdir", "chmod", "read", "write", "rename", "lstat", "stat", "realpath", "unlink", "scandir"].includes(error?.syscall) ? `${error.syscall}; ` : "";
+	return `failed (see the island directory permissions and the daemon log) [${name}/${code}: ${operation}${detail}]`;
 }
 
 /** The live daemon's session, or undefined; a stale session.json of a dead pid is removed. */
@@ -143,12 +152,20 @@ async function stop(root) {
 async function main(argv) {
 	const [command, sub, arg, ...rest] = argv;
 	const root = defaultIslandRoot(process.env);
+	// Windows (B5/S6): no command may create or touch an island outside the
+	// canonical protected root — refused before any ensureIsland/config write.
+	const violation = windowsIslandRootViolation(root);
+	if (violation) return fail(1, `refusing island root: ${violation}`);
 	try {
 		if (command === "run" && (argv.length === 1 || (argv.length === 2 && sub === "--app-owned"))) return await run(root, sub === "--app-owned");
 		if (command === "status" && argv.length === 1) {
 			// #390 GD014: classify BEFORE liveSession (its stale cleanup may unlink the file)
 			const verdict = await classifySession(root);
-			const session = liveSession(root);
+			// Windows status is read-only after native proof. Never run the
+			// POSIX liveSession stale-file cleanup or enable bare-pid signalling.
+			const session = process.platform === "win32"
+				? (verdict.state === "healthy" && verdict.ready === true ? readSession(root) : undefined)
+				: liveSession(root);
 			if (!session) return fail(3, `not running (${verdict.state}: ${verdict.reason})`);
 			const cfg = config.loadConfig(root);
 			process.stdout.write(

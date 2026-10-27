@@ -68,7 +68,65 @@ function currentUid() {
 
 /** The island root: `ABITO_ISLAND_DIR` or `~/.abito-island`. */
 function defaultIslandRoot(env = process.env) {
-	return env[ISLAND_ROOT_ENV] || path.join(env.HOME || homedir(), ".abito-island");
+	if (env[ISLAND_ROOT_ENV]) return env[ISLAND_ROOT_ENV];
+	// Windows (W1): %LOCALAPPDATA%\\Abito is user-private by default (inherited ACL), which is the
+	// only privacy node can rely on there; the Rust host verifies owner and DACL before trusting it.
+	if (process.platform === "win32" && env.LOCALAPPDATA) return path.join(env.LOCALAPPDATA, "Abito");
+	return path.join(env.HOME || homedir(), ".abito-island");
+}
+
+/**
+ * Windows (B5/S6): is `root` a forbidden island root? Returns a fixed refusal
+ * reason, or null when the root is acceptable. On Windows the root MUST be the
+ * canonical protected `%LOCALAPPDATA%\\Abito` or sit inside it — the same
+ * policy the Rust reader (`winpolicy::island_root`) and the native session
+ * helper enforce — so a non-canonical, climbing or relative root is refused
+ * BEFORE the daemon creates anything in it. Off Windows: null (Unix behavior
+ * unchanged). Pure and platform-injected: production passes `process.env` and
+ * the real platform; only tests inject them.
+ */
+function windowsIslandRootViolation(root, env = process.env, platform = process.platform) {
+	if (platform !== "win32") return null;
+	const local = env.LOCALAPPDATA;
+	if (typeof local !== "string" || !absoluteDrivePath(local)) {
+		return "LOCALAPPDATA is missing or not an absolute drive path";
+	}
+	if (typeof root !== "string" || !absoluteDrivePath(root)) {
+		return "island root is not an absolute drive path";
+	}
+	const canonical = path.join(local, "Abito");
+	if (!withinCanonicalRoot(root, canonical)) {
+		return "island root bypasses the canonical protected root";
+	}
+	return null;
+}
+
+/** An absolute Windows drive path (no control characters), OS-free by shape. */
+function absoluteDrivePath(s) {
+	return (
+		s.length >= 3 &&
+		/[A-Za-z]/.test(s[0]) &&
+		s[1] === ":" &&
+		(s[2] === "\\" || s[2] === "/") &&
+		!/\p{C}/u.test(s)
+	);
+}
+
+/**
+ * OS-free containment (mirrors the Rust `within_canonical`): true only when
+ * `candidate` IS the canonical root or sits inside it, with no `.`/`..` and no
+ * empty component that could climb out textually.
+ */
+function withinCanonicalRoot(candidate, canonical) {
+	const norm = (s) => s.replaceAll("\\", "/");
+	const c = norm(candidate);
+	const base = norm(canonical).replace(/\/+$/, "");
+	if (c === base) return true;
+	if (!c.startsWith(`${base}/`)) return false;
+	return c
+		.slice(base.length + 1)
+		.split("/")
+		.every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 /** Where everything private lives inside the island. */
@@ -114,7 +172,8 @@ function assertSecurePath(target, options = {}) {
 			throw error;
 		}
 		if (stats.isSymbolicLink()) throw new Error(`refusing symlink component in island path: ${dir}`);
-		if ((stats.mode & 0o002) !== 0 && (stats.mode & 0o1000) === 0) {
+		// Windows has no POSIX mode bits (lstat reports 0o666/0o777): privacy there comes from the profile ACL.
+		if (process.platform !== "win32" && (stats.mode & 0o002) !== 0 && (stats.mode & 0o1000) === 0) {
 			throw new Error(`refusing world-writable component without the sticky bit: ${dir}`);
 		}
 		if (uid !== undefined && stats.uid !== uid && stats.uid !== 0) {
@@ -278,5 +337,6 @@ module.exports = {
 	ensurePrivateDir,
 	islandPaths,
 	isolatedEnv,
+	windowsIslandRootViolation,
 	writePrivateFile,
 };

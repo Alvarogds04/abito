@@ -6,6 +6,46 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Windows (T2/S3): the island publishes the notice endpoint metadata at the
+// canonical `%LOCALAPPDATA%\Abito\notices\endpoint.json`. The hook clients
+// never read it as authority — the native relay re-verifies it — so config
+// only resolves the path (no /proc, no uid, no directory-chain walk).
+const DRIVE_RE = /^[A-Za-z]:[\\/]/;
+const MAX_WINDOWS_PATH = 4096;
+const noControl = value => ![...value].some(ch => {
+  const code = ch.codePointAt(0);
+  return code < 0x20 || code === 0x7f;
+});
+function windowsAbsolute(value) {
+  return typeof value === 'string' && value.length >= 3 && DRIVE_RE.test(value) &&
+    value.length <= MAX_WINDOWS_PATH && noControl(value);
+}
+// The metadata path the relay accepts as its argument: an absolute, normalized
+// Windows path NAMED endpoint.json (the only name the island publishes).
+function windowsEndpointShape(endpoint) {
+  return windowsAbsolute(endpoint) && !endpoint.endsWith('\\') && !endpoint.endsWith('/') &&
+    path.win32.normalize(endpoint) === endpoint &&
+    path.win32.basename(endpoint) === 'endpoint.json';
+}
+function resolveConfigWindows(env, options = {}) {
+  const stat = options.stat ?? fs.lstatSync;
+  const explicit = env.ABITO_DESKTOP_SOCKET;
+  if (explicit !== undefined) {
+    // The override only chooses WHICH metadata file the relay verifies — it
+    // never bypasses the relay itself.
+    if (!windowsEndpointShape(explicit)) throw new Error('Unexpected endpoint');
+    return { runtime: path.win32.dirname(explicit), endpoint: explicit, source: 'env' };
+  }
+  if (!windowsAbsolute(env.LOCALAPPDATA)) return { runtime: undefined, endpoint: undefined, source: undefined };
+  const runtime = path.win32.join(env.LOCALAPPDATA, 'Abito', 'notices');
+  const endpoint = path.win32.join(runtime, 'endpoint.json');
+  try {
+    const st = stat(endpoint);
+    if (!st.isFile() || st.isSymbolicLink()) return { runtime, endpoint: undefined, source: undefined };
+  } catch { return { runtime, endpoint: undefined, source: undefined }; }
+  return { runtime, endpoint, source: 'handoff' };
+}
+
 function normalized(value) {
   return typeof value === 'string' && value !== '/' && path.isAbsolute(value) &&
     path.normalize(value) === value && !value.endsWith('/') && !value.includes('\0');
@@ -94,7 +134,9 @@ function readHandoff(runtime, owner, procExists, procState, procStart) {
   }
 }
 // Resolving configuration never creates a directory or connects a socket.
+// `options.platform` is an explicit seam (tests); production uses process.platform.
 function resolveConfig(env, owner, options = {}) {
+  if ((options.platform ?? process.platform) === 'win32') return resolveConfigWindows(env, options);
   if (!Number.isInteger(owner) || owner < 0) throw new Error('Linux uid required');
   const runtime = defaultRuntime(env, owner);
   if (!normalized(runtime)) throw new Error('Invalid ABITO_SOCKET_DIR');
@@ -109,4 +151,4 @@ function resolveConfig(env, owner, options = {}) {
   const endpoint = readHandoff(runtime, owner, procExists, procState, procStart);
   return { runtime, endpoint, source: endpoint === undefined ? undefined : 'handoff' };
 }
-module.exports = { resolveConfig, endpointShape };
+module.exports = { resolveConfig, endpointShape, windowsEndpointShape };
