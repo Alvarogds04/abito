@@ -4,7 +4,8 @@
 wrap Abito's clay character in its `idle` pose, rendered from `frontend/clay-engine.js` (seed 505, no shadow), on a
 dark rounded tile. Rasterize each SVG at 1024×1024 and derive:
 
-- `icons/icon-macos.png`: 1024×1024 from `abito-icon.svg`.
+- `icons/icon.icns`: every macOS size (16–512 plus @2x, i.e. up to 1024) from `abito-icon.svg`; this is what the .app uses.
+- `icons/icon-macos.png`: 512×512 from `abito-icon.svg` (kept for previews).
 - `icons/icon.png`: 256×256 from `abito-icon-full.svg` (Linux launcher and window icon).
 - `icons/icon.ico`: 16, 24, 32, 48, 64, 128 and 256 px from `abito-icon-full.svg` (Windows exe and installer).
 

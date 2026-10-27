@@ -5,7 +5,7 @@ const { DAEMON_FILES, HARNESS_FILES } = require('./lib.cjs');
 process.stdout.write(JSON.stringify({
   bundle: {
     active: true,
-    icon: ['icons/icon-macos.png'],
+    icon: ['icons/icon.icns'],
     category: 'Productivity',
     // signingIdentity '-' = ad-hoc seal of the whole .app (free, no Apple account): Gatekeeper then shows
     // «unidentified developer» instead of «damaged». Hardened runtime adds nothing without a team identity.

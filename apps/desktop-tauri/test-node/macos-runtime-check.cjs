@@ -42,6 +42,13 @@ try {
   // Ad-hoc seal of the whole bundle (no Apple account): Gatekeeper reports «unidentified developer», never «damaged».
   assert.equal(config.bundle.macOS.signingIdentity, '-');
   assert.equal(config.bundle.macOS.hardenedRuntime, false);
+  // tauri-bundler only maps PNGs it has an IconType for (≤512 + @2x); ship a real .icns with every macOS size.
+  assert.deepEqual(config.bundle.icon, ['icons/icon.icns']);
+  const icns = fs.readFileSync(path.join(crate, 'icons/icon.icns'));
+  assert.equal(icns.subarray(0, 4).toString('latin1'), 'icns');
+  assert.equal(icns.readUInt32BE(4), icns.length);
+  const types = []; for (let i = 8; i < icns.length; i += icns.readUInt32BE(i + 4)) types.push(icns.subarray(i, i + 4).toString('latin1'));
+  for (const t of ['ic07', 'ic08', 'ic09', 'ic10', 'ic11', 'ic12', 'ic13', 'ic14']) assert.ok(types.includes(t), `icns has ${t}`);
   for (const file of Object.keys(expected)) assert.ok(fs.statSync(path.resolve(crate, file)).isFile(), file);
   assert.deepEqual(fs.readdirSync(dir), [], 'generator writes no files in its caller cwd');
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -49,4 +56,4 @@ try {
 const plist = fs.readFileSync(path.join(crate, 'Info.plist'), 'utf8');
 assert.match(plist, /<key>LSUIElement<\/key>\s*<true\/>/);
 assert.match(plist, /<key>NSMicrophoneUsageDescription<\/key>/);
-console.log('macos-runtime: 5 rules passed (missing runtime UI, existing states, exact bundle resources, ad-hoc seal, no Dock icon)');
+console.log('macos-runtime: 6 rules passed (missing runtime UI, existing states, exact bundle resources, ad-hoc seal, icns icon, no Dock icon)');
