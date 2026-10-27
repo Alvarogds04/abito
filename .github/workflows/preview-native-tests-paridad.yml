@@ -83,10 +83,23 @@ jobs:
           $old = $false
           [void][W.S]::SystemParametersInfo($GET, 0, [ref]$old, 0)
           Write-Host "client-area animations before: $old"
-          $page = 'data:text/html,<body><script>document.body.textContent="REDUCED="+matchMedia("(prefers-reduced-motion: reduce)").matches</script>'
-          $edge = "${env:ProgramFiles(x86)}\\Microsoft\\Edge\\Application\\msedge.exe"
+          $html = Join-Path $env:RUNNER_TEMP 'motion.html'
+          $js = 'document.body.textContent=' +
+            '"REDUCED="+matchMedia("(prefers-reduced-motion: reduce)").matches'
+          "<body><script>$js</script></body>" | Set-Content $html
+          $url = ([Uri]$html).AbsoluteUri
+          $edge = @(
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+            "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $edge) { throw 'msedge.exe not found on the runner' }
+          Write-Host "edge: $edge"
           function Probe {
-            $out = & $edge --headless=new --disable-gpu --dump-dom $page 2>$null
+            $prof = Join-Path $env:RUNNER_TEMP ("edge-" + [guid]::NewGuid())
+            $out = & $edge --headless=new --disable-gpu --no-first-run `
+              --user-data-dir=$prof --virtual-time-budget=3000 `
+              --dump-dom $url 2>&1
+            Write-Host "edge exit: $LASTEXITCODE"
             ($out | Out-String).Trim()
           }
           try {
