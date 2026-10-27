@@ -24,6 +24,12 @@ function serve() {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
+// HU-045: the version the real window is told (settingswindow.rs version_script = CARGO_PKG_VERSION = tauri.conf.json).
+function packageVersion() {
+  try { return JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '../tauri.conf.json'), 'utf8')).version; }
+  catch (error) { throw new Error(`settings-layout-harness: cannot read the package version from tauri.conf.json (${error.message})`); }
+}
+
 /** scenario = { width, height, statusDelayMs, page } ; page = a hub page id to open (via the Rust-provided hint, like a deep link) */
 async function open(scenario = {}) {
   const pw = findPlaywright();
@@ -32,9 +38,11 @@ async function open(scenario = {}) {
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await pw.chromium.launch({ args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: scenario.width || 960, height: scenario.height || 640 } });
-  await page.addInitScript(({ scenario }) => {
+  await page.addInitScript(({ scenario, version }) => {
     const listeners = {}; const calls = []; window.__calls = calls;
     if (scenario.page) window.__abitoHubPage = scenario.page;
+    // HU-045: the real settings window gets the package version from Rust (settingswindow.rs version_script) before any script runs
+    window.__abitoVersion = version;
     const delay = ms => new Promise(r => setTimeout(r, ms));
     const prefs = { sound: true, gain: .12, autoCloseSeconds: 15, absenceSeconds: 10, openOnHover: false, declaredPills: ['agent_codex', 'ai_google', 'integration_github', 'integration_vercel'], pillColors: {}, avatarColors: {}, mainPill: 'integration_claude', theme: 'system', displayName: 'Alvaro', monitor: null, chosenModels: {}, windowContext: false, windowContextAvailable: true, abitoInstructions: '', islandAgents: [], showPlanInNotch: false, showCodexPlanInNotch: false, openSettingsAtLaunch: false };
     const dictation = { prefs: { enabled: true, key: 'right_ctrl', edge: 'bottom', mic: '', keepDays: 30, cleanup: false, defaultStyle: 'natural' }, models: { parakeet: { state: 'ready' }, downloadMb: 612 }, keys: 'ok', hasClaudeKey: false, mics: [{ name: 'Micrófono USB', default: true }], platform: 'linux', autostarted: false };
@@ -82,16 +90,17 @@ async function open(scenario = {}) {
         if (cmd === 'voice_action') return { prefs: { enabled: false, output: 'system', gender: 'female', sensitivity: 50 }, vad: { state: 'ready' }, parakeet: { state: 'ready' }, listening: false, error: null };
         if (cmd === 'agent_action') {
           if (failInstall && a === 'agent_connect') throw new Error('host refused');
-          const base = { connection: 'connected', providers: [{ id: 'pi', name: 'Pi', configured: false, methods: ['api_key'] }, { id: 'claude', name: 'Claude', configured: true, methods: ['oauth'] }], accounts: [{ accountId: 'acc-claude', provider: 'claude', configured: true, label: 'dev@x' }], ownedAccounts: noAccounts ? { accounts: [] } : { accounts: [] }, auth: {}, connectors: { items: [] }, sessions: { rows: [], truncated: false } };
+          const base = { connection: scenario.piMissing && !window.__piInstalled ? 'no_daemon' : 'connected', ...(scenario.piMissing && !window.__piInstalled ? { last_error: { code: 'pi_missing', n: 1 } } : {}), providers: [{ id: 'pi', name: 'Pi', configured: false, methods: ['api_key'] }, { id: 'claude', name: 'Claude', configured: true, methods: ['oauth'] }], accounts: [{ accountId: 'acc-claude', provider: 'claude', configured: true, label: 'dev@x' }], ownedAccounts: noAccounts ? { accounts: [] } : { accounts: [] }, auth: {}, connectors: { items: [] }, sessions: { rows: [], truncated: false } };
           return a === 'agents_list' || a === 'hooks_preview' ? { ...base, agents } : base;
         }
+        if (cmd === 'pi_install_action') { if (a === 'run') { window.__piRuns = (window.__piRuns || 0) + 1; return { action: 'status', phase: 'running' }; } return { action: 'status', phase: 'idle' }; }
         if (cmd === 'daemon_action') return { ok: true };
         return {};
       } },
       event: { listen: async (name, fn) => { (listeners[name] ||= []).push(fn); return () => {}; } },
     };
     window.__emit = (name, payload) => (listeners[name] || []).forEach(fn => fn({ payload }));
-  }, { scenario });
+  }, { scenario, version: packageVersion() });
   const began = Date.now();
   await page.goto(`${base}/settings.html`);
   return {

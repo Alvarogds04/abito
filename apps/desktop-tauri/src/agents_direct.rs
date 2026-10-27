@@ -162,8 +162,14 @@ fn read_capped(reader: &mut impl Read, cap: usize) -> Result<Vec<u8>, RunFailure
 /// answer, a non-zero exit, or a descendant that keeps the pipe after the child exited kills the whole tree and
 /// fails. Cleanup adds at most one second of bounded reaping; the reader thread is never joined.
 pub fn run_bounded(program: &Path, args: &[String], env: &[(String, String)], limit: Duration, cap: usize) -> Result<Vec<u8>, RunFailure> {
+    run_bounded_in(program, args, env, None, limit, cap)
+}
+/// [`run_bounded`] in a chosen working directory (`None` = the app's own). HU-046: npm reads project config from its working
+/// directory, so the installer runs it somewhere the user owns instead of wherever the app happened to be launched.
+pub fn run_bounded_in(program: &Path, args: &[String], env: &[(String, String)], cwd: Option<&Path>, limit: Duration, cap: usize) -> Result<Vec<u8>, RunFailure> {
     use std::sync::mpsc::{sync_channel, RecvTimeoutError};
     let mut command = Command::new(program);
+    if let Some(dir) = cwd { command.current_dir(dir); }
     command.args(args).env_clear().envs(env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(unix)]
     {

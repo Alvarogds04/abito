@@ -533,6 +533,21 @@ pub(crate) fn daemon_connect(
     (connection, own_gone)
 }
 
+/// HU-046: Pi was just installed. Start the chat host WITHOUT restarting the app: the same sequence as `daemon_action restart`
+/// (old client first, bounded stop, fresh start, connect with a bounded wait). `HostSlot::start` now forgets the earlier
+/// «pi_missing» failure on success. Returns whether the host is running.
+pub(crate) fn start_host_after_install(handle: &AppHandle) -> bool {
+    let state = handle.state::<AppState>();
+    let Some(root) = island_root(std::env::var("ABITO_ISLAND_DIR").ok().as_deref(), std::env::var("HOME").ok().as_deref()) else { return false };
+    let old = state.settings.agent.lock().expect("agent lock").take();
+    drop(old);
+    let slot = handle.state::<abito_island::daemonhost::HostSlot>();
+    slot.stop();
+    slot.start();
+    daemon_connect(handle, &state, &root, Some(RESTART_WAIT), Some(&*slot));
+    slot.failure().is_none() && slot.pid().is_some()
+}
+
 /// The pid in `<root>/runtime/session.json`, read ONLY to compare it with our own
 /// child inside Rust (#390 fix). It never crosses to the page.
 fn session_pid(root: &std::path::Path) -> Option<u32> {
