@@ -174,8 +174,8 @@ pub async fn hotkey_action(
 }
 
 /// A real WM_HOTKEY press lands here (pump thread → main thread), and the
-/// probe calls the same function: one route, the Unix `on_press` minus the
-/// X11 focus hand-back that has no twin here.
+/// probe calls the same function: one route, the Unix `on_press`, with its
+/// X11 focus hand-back replaced by `hotkey::foreground` (HU-049).
 #[allow(dead_code)]
 pub(crate) fn press_target_from_action(app: &AppHandle, _target: abito_island::hotkey::Target) { press_on_main(app); }
 
@@ -198,7 +198,22 @@ pub(crate) fn press_on_main(app: &AppHandle) {
         let hidden = *state.phase.lock().expect("phase lock") == abito_island::desktop::IslandState::Hidden;
         let pending = crate::questionhost::with_pending(&state, |pending| pending);
         match hotkey::toggle_decision(hidden, pending) {
-            hotkey::ToggleDecision::Show => crate::restore(&inner),
+            hotkey::ToggleDecision::Show => {
+                // HU-049: the human is typing elsewhere. Remember who has the keyboard, show
+                // the island and, if the OS gave it the keyboard anyway, hand it straight back
+                // (the twin of the Unix host's X11 give_focus_back).
+                let before = hotkey::foreground::current();
+                crate::restore(&inner);
+                if before.is_none() { return; }
+                let Some(win) = crate::main_window(&inner) else { return };
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    let focused = win.is_focused().unwrap_or(false);
+                    if let Some(previous) = hotkey::foreground::hand_back(focused, false, before) {
+                        let _ = hotkey::foreground::give_back(previous);
+                    }
+                });
+            }
             hotkey::ToggleDecision::Hide => {
                 let _ = crate::dispatch_verb(&inner, &state, bridge::Action::Hide, None);
             }

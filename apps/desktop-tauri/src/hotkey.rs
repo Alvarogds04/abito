@@ -20,6 +20,7 @@ use std::fmt;
 #[path = "hotkey_tests.rs"]
 mod tests;
 
+pub mod foreground;
 pub mod gnome;
 pub mod portal;
 pub mod x11;

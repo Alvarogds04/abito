@@ -143,7 +143,15 @@ fn context_extension_available() -> bool {
     #[cfg(target_os = "linux")]
     { abito_island::contextwin::dbus::available(None) }
     #[cfg(not(target_os = "linux"))]
-    { false }
+    { true } // HU-050: Windows/macOS read the native window list, no extension needed
+}
+
+/// HU-050: set only where the OS withholds window titles (macOS without Screen Recording access).
+/// Abito never asks for that permission; the page says so instead.
+fn context_title_note() -> Option<&'static str> {
+    #[cfg(not(target_os = "linux"))]
+    { if !abito_island::contextwin::titles_allowed() { return Some("sin título: falta permiso de Grabación de pantalla"); } }
+    None
 }
 
 fn view_prefs(p: &Prefs) -> Value {
@@ -162,7 +170,7 @@ fn view_prefs(p: &Prefs) -> Value {
         "showCodexPlanInNotch": p.show_codex_plan_in_notch(),
         "windowContext": p.window_context(),
         "liveContext": p.live_context(),
-        "windowContextAvailable": context_extension_available(),
+        "windowContextAvailable": context_extension_available(), "windowContextNote": context_title_note(), "windowContextNative": cfg!(not(target_os = "linux")),
         "openSettingsAtLaunch": p.open_settings_at_launch(),
         "settingsWindow": true})
 }
