@@ -79,6 +79,7 @@ jobs:
             --test-threads=1 --nocapture
           exit $LASTEXITCODE
       - name: Native daemon session security and runtime discovery
+        id: native-daemon
         timeout-minutes: 10
         run: |
           cargo test --locked --bin abito-private-session
@@ -100,10 +101,14 @@ jobs:
         if: always()
         run: pwsh -NoProfile -File ci/public/foreign-user.ps1 cleanup
       - name: Build native release island and helpers
+        id: release-build
+        if: ${{ !cancelled() && steps.native-daemon.outcome == 'success' }}
         run: |
           cargo build --release --locked --bins --features tauri/custom-protocol
           exit $LASTEXITCODE
       - name: Stage closed runtime and build full installer
+        id: installer-build
+        if: ${{ !cancelled() && steps.release-build.outcome == 'success' }}
         run: |
           $ErrorActionPreference = 'Stop'
           node test-node/windows-runtime-check.cjs
@@ -138,6 +143,7 @@ jobs:
           node packaging/windows/stage-win.cjs --check
           exit $LASTEXITCODE
       - name: Full install, hooks, diagnostics and uninstall smoke
+        if: ${{ !cancelled() && steps.installer-build.outcome == 'success' }}
         timeout-minutes: 15
         run: |
           $config = Get-Content -Raw tauri.conf.json | ConvertFrom-Json

@@ -13,4 +13,21 @@ assert.ok(firstStep.indexOf('throw ') < firstStep.indexOf('\n          }'));
 assert.doesNotMatch(firstStep, /continue-on-error|choco|npm|uses:/);
 const smoke = fs.readFileSync(path.join(ci, 'smoke-windows.ps1'), 'utf8');
 assert.match(smoke.slice(0, smoke.indexOf('New-Item')), /if \(-not \$IsWindows -or \$env:GITHUB_ACTIONS -ne 'true' -or \$env:RUNNER_ENVIRONMENT -ne 'github-hosted'\) \{\s+throw /);
-console.log('PASS: hosted-Windows guards precede workflow setup and smoke mutations (structural only)');
+// Explicit status function avoids GitHub's implicit success() gate after a
+// foreign-account failure; each install step still requires its own prerequisite.
+for (const [name, dependency] of [
+  ['Build native release island and helpers', 'native-daemon'],
+  ['Stage closed runtime and build full installer', 'release-build'],
+  ['Full install, hooks, diagnostics and uninstall smoke', 'installer-build'],
+]) {
+  const step = workflow.split(`      - name: ${name}\n`)[1]?.split('      - name:')[0];
+  assert.ok(step?.includes(`if: \${{ !cancelled() && steps.${dependency}.outcome == 'success' }}`), `${name} must be independent of foreign-account failure`);
+}
+assert.match(workflow, /name: Remove only this run's owned probe account\s+if: always\(\)/);
+const foreign = fs.readFileSync(path.join(ci, 'foreign-user.ps1'), 'utf8');
+assert.doesNotMatch(foreign, /RandomNumberGenerator\]::Fill\(/);
+assert.match(foreign, /\$rng\.GetBytes\(\$random\)/);
+assert.match(foreign, /finally \{ \$rng\.Dispose\(\) \}/);
+assert.match(foreign, /Probe setup failed at \$setupStage \(\$errorType, \$errorCode\)/);
+assert.doesNotMatch(foreign, /\$_.Exception.Message|Write-(?:Host|Output|Error).*\$password/);
+console.log('PASS: hosted-Windows guards and independent install continuation (structural only)');

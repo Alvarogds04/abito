@@ -94,26 +94,38 @@ if ($mode -eq 'setup') {
         $file.Write($bytes, 0, $bytes.Length)
         $file.Flush($true)
     } finally { $file.Dispose() }
+    $setupStage = 'random-password'
     try {
         $random = [byte[]]::new(24)
-        [Security.Cryptography.RandomNumberGenerator]::Fill($random)
+        # Use the byte[] overload: PowerShell cannot bind the static Span<byte>
+        # Fill API reliably. No password bytes are printed on any error path.
+        $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $rng.GetBytes($random) } finally { $rng.Dispose() }
         $password = 'Aa1!' + [Convert]::ToBase64String($random)
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
         $password = $null
         $description = 'Abito CI ' + $record.run + ' ' + $record.nonce
+        $setupStage = 'create-account'
         $account = New-LocalUser -Name $name -Password $secure `
             -Description $description -PasswordNeverExpires -AccountNeverExpires
+        $setupStage = 'users-membership'
         $users = Get-LocalGroup -SID 'S-1-5-32-545'
         $member = Get-LocalGroupMember -Group $users |
             Where-Object { $_.SID -eq $account.SID }
         if (-not $member) { Add-LocalGroupMember -Group $users -Member $account }
+        $setupStage = 'encrypt-credential'
         ConvertFrom-SecureString $secure |
             Set-Content -LiteralPath $credPath -Encoding ascii
+        $setupStage = 'publish-environment'
         Add-Content -LiteralPath $env:GITHUB_ENV -Value "ABITO_FU_USER=$name"
         Add-Content -LiteralPath $env:GITHUB_ENV -Value "ABITO_FU_CRED=$credPath"
     } catch {
+        # Keep only bounded diagnostic metadata; never emit the exception
+        # message, invocation, arguments, password, or credential contents.
+        $errorType = $_.Exception.GetType().Name
+        $errorCode = $_.Exception.HResult
         Remove-OwnedAccount
-        throw 'Probe setup failed; owned resources were cleaned.'
+        throw "Probe setup failed at $setupStage ($errorType, $errorCode); owned resources were cleaned."
     }
     Write-Output "Probe account ready: $name"
     exit 0
