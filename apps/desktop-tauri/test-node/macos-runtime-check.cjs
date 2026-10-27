@@ -52,8 +52,11 @@ try {
   for (const file of Object.keys(expected)) assert.ok(fs.statSync(path.resolve(crate, file)).isFile(), file);
   assert.deepEqual(fs.readdirSync(dir), [], 'generator writes no files in its caller cwd');
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+// The crate ships several binaries (island + Windows helpers): tauri-bundler needs the
+// main one named or it refuses to bundle («failed to find main binary»).
+assert.match(fs.readFileSync(path.join(crate, 'Cargo.toml'), 'utf8'), /^\[package\][\s\S]*?^default-run = "abito-island"$/m);
 // The island is a menu-bar accessory: no Dock icon on macOS (LSUIElement), the tray keeps Mostrar/Ocultar/Salir.
 const plist = fs.readFileSync(path.join(crate, 'Info.plist'), 'utf8');
 assert.match(plist, /<key>LSUIElement<\/key>\s*<true\/>/);
 assert.match(plist, /<key>NSMicrophoneUsageDescription<\/key>/);
-console.log('macos-runtime: 6 rules passed (missing runtime UI, existing states, exact bundle resources, ad-hoc seal, icns icon, no Dock icon)');
+console.log('macos-runtime: 7 rules passed (missing runtime UI, existing states, exact bundle resources, ad-hoc seal, icns icon, main binary, no Dock icon)');

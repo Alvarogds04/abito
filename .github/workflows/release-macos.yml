@@ -29,7 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          # A published release builds its own tag. A manual run builds the commit it
+          # was dispatched on and attaches to `inputs.tag` (no tag is ever rewritten).
+          ref: ${{ github.event.release.tag_name || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
