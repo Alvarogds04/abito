@@ -51,6 +51,14 @@ class InstallError extends Error {
   constructor(exitCode, message) { super(message); this.exitCode = exitCode; }
 }
 const refuse = m => new InstallError(65, 'refused: ' + m);
+// HU-047: a folder that is the problem (another user/group can change it, it is not ours, its Windows ACL is not private).
+// Carries the exact folder and a reason so every surface can name it; never used for links (those keep the generic refusal).
+function unsafeFolder(dir, reason) {
+  const WHY = { foreign_owner: 'settings directory is not owned by the current user', writable: 'settings directory is writable by other users', acl: 'settings directory is not private to the current user' };
+  const e = refuse(WHY[reason] || 'settings directory is unsafe');
+  e.unsafeFolder = { dir, reason };
+  return e;
+}
 const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const shq = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
@@ -85,8 +93,8 @@ function checkParent(settingsPath, uid) {
   try { st = fs.lstatSync(dir); real = fs.realpathSync(dir); } catch { throw refuse('settings directory does not exist'); }
   if (st.isSymbolicLink() || real !== dir) throw refuse('settings directory path contains a symlink');
   if (!st.isDirectory()) throw refuse('settings directory is not a directory');
-  if (st.uid !== uid) throw refuse('settings directory is not owned by the current user');
-  if (st.mode & 0o002) throw refuse('settings directory is world-writable');
+  if (st.uid !== uid) throw unsafeFolder(dir, 'foreign_owner');
+  if (st.mode & 0o002) throw unsafeFolder(dir, 'writable');
 }
 
 // ---- Windows (HU-047): the native helper decides owner/DACL/reparse; Node only reads and refuses ----
@@ -102,7 +110,7 @@ function winRefuse(e, what) {
 function winCheckParent(w, settingsPath) {
   let f;
   try { f = w.checkPath(settingsPath); } catch (e) { throw winRefuse(e, 'settings directory'); }
-  if (!f.parent_ok) { const err = refuse('settings directory does not exist or is not private to the current user'); err.reason = 'not_private'; throw err; }
+  if (!f.parent_ok) { const err = unsafeFolder(path.dirname(settingsPath), 'acl'); err.reason = 'not_private'; throw err; }
 }
 function winReadTarget(w, settingsPath) {
   let got;
@@ -608,4 +616,4 @@ async function runInstall(argv, opts = {}) {
   }
 }
 
-module.exports = { winRefuse, numberIsLossless, readTarget, checkParent, detectStyle, sameSig, DIFF_LINES, diffLines, changedOutsidePatch, checkTimeout, CLAUDE_PROFILE, InstallErrorRefuse: refuse, shq, isObj, askLine, promptTimeoutFromEnv, scanSettings, defaultVerify, BIN_PATH, USAGE, InstallError, planClaudeSettings, renderPreview, runInstall, applyPlan, resolveUserSettings, checkSettingsSyntax, parseInstallArgs, backupPathFor, MAX_BYTES };
+module.exports = { winRefuse, numberIsLossless, readTarget, checkParent, detectStyle, sameSig, DIFF_LINES, diffLines, changedOutsidePatch, checkTimeout, CLAUDE_PROFILE, InstallErrorRefuse: refuse, unsafeFolder, shq, isObj, askLine, promptTimeoutFromEnv, scanSettings, defaultVerify, BIN_PATH, USAGE, InstallError, planClaudeSettings, renderPreview, runInstall, applyPlan, resolveUserSettings, checkSettingsSyntax, parseInstallArgs, backupPathFor, MAX_BYTES };

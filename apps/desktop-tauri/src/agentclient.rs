@@ -520,7 +520,7 @@ impl ClientState {
                         _ => "error",
                     };
                     let detail = match a.get("detail").and_then(Value::as_str) {
-                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform" | "unsafe_target" | "install_unverified" | "foreign_extension")) => json!(d),
+                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform" | "unsafe_target" | "install_unverified" | "foreign_extension" | "unsafe_folder")) => json!(d),
                         _ => Value::Null,
                     };
                     // the plan exists only for a state that offers a button, and only when BOTH parts look like ours
@@ -531,12 +531,19 @@ impl ClientState {
                         (true, Some(h), Some(t)) => (json!(h), json!(t)),
                         _ => (Value::Null, Value::Null),
                     };
-                    out.push(json!({
+                    // HU-047: the refused folder travels only with its closed reason and only for that detail (the user's own path, bounded).
+                    let folder = a.get("folder").and_then(Value::as_str).filter(|f| detail == json!("unsafe_folder") && !f.is_empty() && f.chars().count() <= 400 && !has_control(f));
+                    let folder_reason = a.get("folder_reason").and_then(Value::as_str).filter(|r| matches!(*r, "writable" | "foreign_owner" | "acl"));
+                    let (folder, folder_reason) = match (folder, folder_reason) { (Some(f), Some(r)) => (json!(f), json!(r)), _ => (Value::Null, Value::Null) };
+                    let mut entry = json!({
                         "id": id, "state": state, "backup": a.get("backup").and_then(Value::as_bool).unwrap_or(false), "detail": detail,
                         "plan_hash": plan_hash, "summary": plan_summary,
                         "reviewable": a.get("reviewable").and_then(Value::as_bool).unwrap_or(true),
                         "trust_review": a.get("trust_review").and_then(Value::as_bool).unwrap_or(false),
-                    }));
+                    });
+                    if !folder.is_null() { entry["folder"] = folder; entry["folder_reason"] = folder_reason; }
+                    out.push(entry);
+
                 }
                 self.agents = Value::Array(out);
             }
