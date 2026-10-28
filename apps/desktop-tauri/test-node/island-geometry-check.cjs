@@ -309,9 +309,12 @@ function noOverlaps(list, why) {
     for (const title of ['Conexión caída', 'Conexión caída con el motor del agente local: reintentando en segundo plano']) {
       const r = await H.open({ notices: 1, noticeTitle: title, engine: 'account', github: true });
       try {
-        const cap = (await r.measure('#notice-pill'))[0], blobs = (await r.measure('#blobs'))[0];
+        // Since abito-avisos-ux S1 (human: «que salga abajo como sale los avisos de sin cuenta», edb3bd76) the notice capsule is the
+        // 700x32 «Avisos · N» strip under the cards, not a capsule inside the blobs column: it must stay INSIDE THE ISLAND, under the cards.
+        const cap = (await r.measure('#notice-pill'))[0], isl = (await r.measure('#island'))[0], blobs = (await r.measure('#blobs'))[0];
         assert.ok(cap && cap.shown, 'the notice capsule is shown');
-        assert.ok(cap.left >= blobs.left - 0.5 && cap.right <= blobs.right + 0.5, `the capsule stays inside the blobs column: ${label(cap)} vs ${label(blobs)}`);
+        assert.ok(cap.left >= isl.left - 0.5 && cap.right <= isl.right + 0.5 && cap.bottom <= isl.bottom + 0.5, `the strip stays inside the island: ${label(cap)} vs ${label(isl)}`);
+        assert.ok(cap.top >= blobs.bottom - 0.5, `the strip sits under the cards, not over the blobs column: ${label(cap)} vs ${label(blobs)}`);
         const parts = [];
         for (const sel of ['#notice-ring', '#notice-title', '#notice-sub', '#notice-action', '#notice-dismiss']) for (const b of await r.measure(sel)) if (b.shown) {
           // the × keeps a 44px hit box over a 28px band: compare what is DRAWN (its 16px glyph), not the hit area

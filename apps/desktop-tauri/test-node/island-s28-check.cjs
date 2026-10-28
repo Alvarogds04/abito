@@ -10,7 +10,9 @@ const alpha = c => { const m = /rgba?\(([^)]+)\)/.exec(c); if (!m) return 1; con
 
 (async () => {
   for (const theme of ['dark', 'light']) {
-    const r = await H.open({ github: true, notices: 2, theme, engine: 'ok' });
+    // S28 is the BASE island (720x184). Since abito-avisos-ux S1 (human: «que salga abajo como sale los avisos de sin cuenta», commit
+    // edb3bd76) retained notices add the 700x32 Avisos strip (+36 => 220), so the base size is measured with no notices.
+    const r = await H.open({ github: true, notices: 0, theme, engine: 'ok' });
     try {
       const isl = (await r.measure('#island'))[0];
       assert.equal(Math.round(isl.w), 720, `${theme}: island width`);
@@ -30,6 +32,14 @@ const alpha = c => { const m = /rgba?\(([^)]+)\)/.exec(c); if (!m) return 1; con
       assert.deepEqual(bad, [], `${theme}: texts overflow their line: ${bad.join(' | ')}`);
       const below = (await r.measure('.card-left'))[0];
       assert.ok(below && below.bottom <= 174.5 && below.h >= 131, `${theme}: card row is 132 high (y42..174), got ${JSON.stringify(below && [below.top, below.bottom])}`);
+    } finally { await r.close(); }
+  }
+  {
+    const r = await H.open({ github: true, notices: 2, theme: 'dark', engine: 'ok' });
+    try {
+      const isl = (await r.measure('#island'))[0];
+      assert.equal(Math.round(isl.w), 720, 'with notices: width unchanged');
+      assert.equal(Math.round(isl.h), 220, 'with notices: the Avisos strip adds 36px (abito-avisos-ux S1)');
     } finally { await r.close(); }
   }
   console.log('island-s28-check: ok');

@@ -35,7 +35,19 @@ fn now_ms() -> u64 {
 /// Fixtures are ours: leftovers from a previous run of the same test are
 /// stale test artifacts and are cleaned before recreating.
 fn runtime_root(tag: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(tag);
+    // sockaddr_un.sun_path holds 107 bytes and the endpoint is `<root>/p-XXXXXX/s`. The cargo target tmp dir lives under the
+    // checkout, so a long checkout path (a worktree, a CI workspace) overflowed it (PathTooLong; the Node adapter also refuses
+    // endpoints over 107 bytes). Use the cargo dir when the longest endpoint fits, else the short per-user runtime dir
+    // (`$XDG_RUNTIME_DIR`, 0700 and owned by us, so it passes the receiver's directory-chain check; a world-writable /tmp would not).
+    let cargo = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(tag);
+    const ENDPOINT_TAIL: usize = "/p-XXXXXX/s".len();
+    let dir = if cargo.as_os_str().len() + ENDPOINT_TAIL <= 100 { cargo } else {
+        let base = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        base.join(format!("abito-tr-{}", std::process::id())).join(tag)
+    };
+    if let Some(parent) = dir.parent() {
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).expect("create fixture parent");
+    }
     if dir.exists() {
         std::fs::remove_dir_all(&dir).expect("clean previous fixture");
     }
