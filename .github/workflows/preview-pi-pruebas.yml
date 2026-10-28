@@ -36,7 +36,19 @@ jobs:
       - name: Install the real Pi (loader tests must run, never skip)
         shell: bash
         run: |
-          npm i -g @earendil-works/pi-coding-agent
+          # Pinned: the Pi version the tests were developed and verified against (a new Pi release must not silently change what CI
+          # tests; bump it on purpose). Retried ONLY on registry/network errors (e.g. ETARGET while a transitive version propagates,
+          # seen on run 40748226941); any other npm failure fails at once.
+          PI_VERSION=1.4.0
+          for attempt in 1 2 3 4 5 6; do
+            if npm i -g "@earendil-works/pi-coding-agent@$PI_VERSION" 2>&1 | tee "$RUNNER_TEMP/npm-pi.log"; then break; fi
+            if ! grep -qE 'npm error code (ETARGET|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|E5[0-9][0-9]|ESOCKETTIMEDOUT|EPIPE)|network (timeout|socket)' "$RUNNER_TEMP/npm-pi.log"; then
+              echo "npm failed with a non-network error: not retrying"; exit 1
+            fi
+            if [ "$attempt" = 6 ]; then echo "npm install of Pi kept failing on network errors"; exit 1; fi
+            echo "registry/network error on attempt $attempt; retrying in $((attempt * 20))s"; sleep $((attempt * 20))
+          done
+          test "$(node -p "require('$(npm root -g)/@earendil-works/pi-coding-agent/package.json').version")" = "$PI_VERSION"
           ROOT="$(npm root -g)/@earendil-works/pi-coding-agent"
           test -f "$ROOT/dist/core/extensions/loader.js"
           echo "PI_CODING_AGENT_ROOT=$ROOT" >> "$GITHUB_ENV"
@@ -130,3 +142,28 @@ jobs:
         run: |
           cargo test --locked --test windows_notice -- --nocapture
           exit $LASTEXITCODE
+
+  # HU-062: the Claude Code / Codex / Copilot / OpenCode hook clients and their installers (apps/desktop-harness) on all three OS.
+  harness-suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: desktop-harness full suite
+        working-directory: apps/desktop-harness
+        shell: bash
+        run: |
+          npm test 2>&1 | tee "$RUNNER_TEMP/harness.log"
+          status="${PIPESTATUS[0]}"
+          echo "---- failing tests ----"
+          grep -E '^[[:space:]]*not ok ' "$RUNNER_TEMP/harness.log" | cut -c1-200 || true
+          echo "---- skipped tests ----"
+          grep -E '# SKIP' "$RUNNER_TEMP/harness.log" | cut -c1-200 || true
+          exit "$status"

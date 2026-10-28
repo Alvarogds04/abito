@@ -52,8 +52,10 @@ function normalized(value) {
   return typeof value === 'string' && value !== '/' && path.isAbsolute(value) &&
     path.normalize(value) === value && !value.endsWith('/') && !value.includes('\0');
 }
-function endpointShape(endpoint, runtime) {
-  return normalized(endpoint) && Buffer.byteLength(endpoint) <= 107 &&
+// sockaddr_un.sun_path: 108 bytes on Linux, 104 on macOS, both including the NUL (same rule as apps/desktop-pi/config.cjs).
+const sunPathMax = platform => (platform ?? process.platform) === 'darwin' ? 103 : 107;
+function endpointShape(endpoint, runtime, options = {}) {
+  return normalized(endpoint) && Buffer.byteLength(endpoint) <= sunPathMax(options.platform) &&
     path.dirname(path.dirname(endpoint)) === runtime && path.basename(endpoint) === 's' &&
     /^p-[a-zA-Z0-9]{6}$/.test(path.basename(path.dirname(endpoint)));
 }

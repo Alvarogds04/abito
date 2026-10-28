@@ -785,12 +785,26 @@ fn r21_review_origin_resolution_does_not_hold_the_question_mutex() {
     send(&mut stream,&json!({"v":1,"type":"question","questionVersion":1,"project":project,"sessionId":"session-1","at":now_ms(),
         "id":"3f2b8a40-1c2d-4e5f-8a6b-7c8d9e0f1a2b","kind":"question","text":"Choose",
         "options":[{"value":"a","label":"A","description":""},{"value":"b","label":"B","description":""}],"allowFreeText":false,"expiresAt":now_ms()+30000})).unwrap();
+    // Linux freezes the kernel peer's birth identity from /proc and resolves its terminal (herdr) through the injected resolver, so the
+    // resolver runs while the question is admitted. macOS has no /proc: the peer pid is 0, the origin stays unknown (HU-065) and the
+    // resolver must NEVER run; the same guarantee («snapshots stay available while a question is admitted») then holds trivially and
+    // is asserted below without waiting for a resolution that cannot happen.
+    #[cfg(target_os = "linux")]
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(entered_rx.try_recv().is_err(), "no /proc: the origin resolver is never invoked on this platform");
+    }
     let t = transport.clone(); let (read_tx,read_rx) = mpsc::channel();
     let reader = std::thread::spawn(move || { let pending = t.question_snapshot().pending.is_some(); read_tx.send(pending).unwrap(); });
     let unlocked = read_rx.recv_timeout(Duration::from_millis(200));
     release_tx.send(()).unwrap(); reader.join().unwrap(); transport.close().unwrap();
+    #[cfg(target_os = "linux")]
     assert_eq!(unlocked,Ok(false),"question snapshots/answers must remain available while herdr is resolving");
+    // macOS twin: the question was admitted (pending) and readable at once, with no resolver in the way.
+    #[cfg(not(target_os = "linux"))]
+    assert_eq!(unlocked,Ok(true),"question snapshots/answers must remain available while a question is admitted");
 }
 
 /// HU-065 (registered gap: «Ver» does not yet reach the agent's terminal on macOS). macOS has no /proc to freeze a birth identity from,
