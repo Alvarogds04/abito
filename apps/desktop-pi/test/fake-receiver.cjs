@@ -112,7 +112,12 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
 }
 function harness(registerAdapter, options) {
   const handlers = new Map();
-  const pi = { on: (name, handler) => handlers.set(name, handler) };
+  // ABITO_TEST_DIAG=1: log every Pi lifecycle event the test delivers and whether the handler threw (CI evidence only).
+  const traced = (name, handler) => !DIAG ? handler : (...args) => {
+    diag(`pi event ${name}`);
+    try { return handler(...args); } catch (error) { diag(`pi event ${name} THREW ${error?.message}`); throw error; }
+  };
+  const pi = { on: (name, handler) => handlers.set(name, traced(name, handler)) };
   const controller = registerAdapter(pi, { retryMs: 20, heartbeatMs: 30, ...options });
   const ctx = { cwd: path.resolve(__dirname, '..'), sessionManager: { getSessionId: () => 'test-session' } };
   return { pi, handlers, controller, ctx };

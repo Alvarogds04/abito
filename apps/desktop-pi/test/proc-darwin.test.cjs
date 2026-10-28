@@ -12,9 +12,11 @@ const daemon = require('../../desktop-daemon/src/procinfo.cjs');
 const harness = require('../../desktop-harness/src/config.cjs');
 
 test('the pid probe is identical in the daemon, desktop-pi and desktop-harness copies', () => {
+  // Git may check the files out with CRLF on Windows: compare the code, not the line endings.
+  const code = fn => fn.toString().replace(/\r\n/g, '\n');
   for (const name of ['runPs', 'parsePsLine']) {
-    assert.equal(darwinProc[name].toString(), daemon[name].toString(), name);
-    assert.equal(harness.darwinProc[name].toString(), daemon[name].toString(), name);
+    assert.equal(code(darwinProc[name]), code(daemon[name]), name);
+    assert.equal(code(harness.darwinProc[name]), code(daemon[name]), name);
   }
   assert.equal(darwinProc.PS, '/bin/ps');
   assert.deepEqual(darwinProc.PS_ARGS, daemon.PS_ARGS);

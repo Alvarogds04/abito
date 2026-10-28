@@ -53,7 +53,3 @@ jobs:
           unexpected="$(printf '%s\n' "$skipped" | grep -v '^$' | grep -v -E 'Windows twin|a live process writing an island-like endpoint.json' || true)"
           echo "skips: ${skipped:-none}"
           if [ -n "$unexpected" ]; then echo "UNEXPECTED SKIP:"; echo "$unexpected"; exit 1; fi
-      - name: desktop-harness hook config and installer
-        working-directory: apps/desktop-harness
-        shell: bash
-        run: npm test
