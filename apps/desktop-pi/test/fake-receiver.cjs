@@ -11,6 +11,26 @@ const { EventEmitter } = require('node:events');
 // production uses in between is covered by windows-transport.test.cjs and the island's Rust tests).
 // `runtime` (optional) binds a SECOND receiver under an existing private root: the handoff test needs the same
 // runtime to publish a different endpoint, exactly as an island restart does.
+// Bounded CI diagnostics (HU-054): with ABITO_TEST_DIAG=1 the Windows pipe path logs, per client write, writableLength before and
+// after, the write-callback latency, 'drain' events, and each frame the server actually reads. Off by default; never alters timing.
+const DIAG = process.env.ABITO_TEST_DIAG === '1';
+const t0 = Date.now();
+let diagLines = 0;
+const diag = message => { if (DIAG && diagLines++ < 400) console.log(`# diag +${Date.now() - t0}ms ${message}`); };
+function instrument(socket) {
+  if (!DIAG) return socket;
+  const write = socket.write.bind(socket);
+  socket.write = (data, ...rest) => {
+    const before = socket.writableLength, started = Date.now();
+    const text = String(data).slice(0, 40).replace(/\n/g, '');
+    const callback = typeof rest.at(-1) === 'function' ? rest.pop() : undefined;
+    const ok = write(data, ...rest, (...args) => { diag(`client write cb ${text} after ${Date.now() - started}ms, writableLength=${socket.writableLength}`); callback?.(...args); });
+    diag(`client write ${text} len-before=${before} len-after=${socket.writableLength} returned=${ok}`);
+    return ok;
+  };
+  socket.on('drain', () => diag('client drain'));
+  return socket;
+}
 async function fakeReceiver(t, { questions = false, busyReason = false, structured = false, runtime: parent } = {}) {
   const runtime = parent ?? fs.mkdtempSync(path.join(path.resolve(__dirname, '..'), '.test-'));
   const windows = process.platform === 'win32';
@@ -19,7 +39,7 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
     listenOn = `\\\\.\\pipe\\abito-test-${process.pid}-${require('node:crypto').randomBytes(6).toString('hex')}`;
     endpoint = path.win32.join(runtime, 'endpoint.json');
     fs.writeFileSync(endpoint, JSON.stringify({ v: 1, pipe: listenOn }));
-    transport = { platform: 'win32', open: () => net.createConnection(listenOn) };
+    transport = { platform: 'win32', open: () => instrument(net.createConnection(listenOn)) };
   } else {
     fs.chmodSync(runtime, 0o700);
     directory = fs.mkdtempSync(path.join(runtime, 'p-'));
@@ -39,7 +59,9 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
       while ((end = bytes.indexOf('\n')) >= 0) {
         const raw = bytes.slice(0, end); rawFrames.push(raw + '\n');
         const frame = JSON.parse(raw); bytes = bytes.slice(end + 1);
-        frames.push(frame); events.emit('frame', frame);
+        frames.push(frame);
+        events.emit('frame', frame);
+        diag(`server read frame ${frame.type}`);
         if (frame.type === 'hello') {
           socket.write('{"v":1,"type":"ready"}\n');
 

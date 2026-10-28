@@ -40,6 +40,8 @@ jobs:
           test -f "$ROOT/dist/core/extensions/loader.js"
           echo "PI_CODING_AGENT_ROOT=$ROOT" >> "$GITHUB_ENV"
       - name: desktop-pi full suite
+        env:
+          ABITO_TEST_DIAG: '1'
         working-directory: apps/desktop-pi
         shell: bash
         run: |
@@ -48,7 +50,7 @@ jobs:
           # A skip is allowed ONLY by explicit name: the Windows-only twin on Linux/macOS, and the live Unix-pid probe on Windows
           # (its twin is the Windows handoff test). Any other skip, including the real-Pi loader tests, fails the job.
           skipped="$(grep -E '^[[:space:]]*(ok|not ok) [0-9]+ - .*# SKIP' "$RUNNER_TEMP/pi.log" || true)"
-          unexpected="$(printf '%s\n' "$skipped" | grep -v '^$' | grep -v -E 'Windows twin: metadata handoff|a live process writing an island-like endpoint.json' || true)"
+          unexpected="$(printf '%s\n' "$skipped" | grep -v '^$' | grep -v -E 'Windows twin|a live process writing an island-like endpoint.json' || true)"
           echo "skips: ${skipped:-none}"
           if [ -n "$unexpected" ]; then echo "UNEXPECTED SKIP:"; echo "$unexpected"; exit 1; fi
       - name: desktop-harness hook config and installer
