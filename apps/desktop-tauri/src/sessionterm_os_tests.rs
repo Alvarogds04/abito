@@ -4,10 +4,10 @@ use super::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-struct Fake { procs: RefCell<HashMap<u32, ProcInfo>>, terms: &'static [&'static str] }
+struct Fake { procs: RefCell<HashMap<u32, ProcInfo>>, terms: &'static [&'static str], windowless: RefCell<Vec<u32>> }
 impl Fake {
     fn new(terms: &'static [&'static str], rows: &[(u32, &str, u32, u64)]) -> Self {
-        let f = Fake { procs: RefCell::new(HashMap::new()), terms };
+        let f = Fake { procs: RefCell::new(HashMap::new()), terms, windowless: RefCell::new(vec![]) };
         for (pid, comm, ppid, start) in rows { f.set(*pid, comm, *ppid, *start); }
         f
     }
@@ -18,7 +18,8 @@ impl Fake {
 }
 impl ProcTable for Fake {
     fn read(&self, pid: u32) -> Option<ProcInfo> { self.procs.borrow().get(&pid).cloned() }
-    fn terminals(&self) -> &'static [&'static str] { self.terms }
+    fn is_terminal(&self, p: &ProcInfo) -> bool { exact_name_matches(&p.comm, self.terms) }
+    fn hosts_window(&self, pid: u32) -> bool { !self.windowless.borrow().contains(&pid) }
 }
 fn no_herdr(_: &[&str]) -> Option<String> { panic!("no herdr outside Linux") }
 
@@ -41,7 +42,7 @@ fn macos_every_listed_terminal_app_matches_and_non_terminals_never_do() {
         let t = Fake::new(MAC_TERMINAL_COMMS, &[(10, name, 1, 1), (30, "node", 10, 2)]);
         assert!(capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).is_some(), "{name}");
     }
-    let t = Fake::new(MAC_TERMINAL_COMMS, &[(10, "launchd", 1, 1), (20, "Finder", 10, 2), (30, "node", 20, 3)]);
+    let t = Fake::new(MAC_TERMINAL_COMMS, &[(10, "terminal-notifier", 1, 1), (20, "Finder", 10, 2), (30, "node", 20, 3)]);
     assert!(capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).is_none(), "unknown origin is not invented");
 }
 
@@ -58,8 +59,6 @@ fn windows_relay_as_pipe_client_resolves_the_hooks_terminal_never_the_relay_or_t
     // The relay started by the island itself (no terminal above it): nothing is invented.
     let t = Fake::new(WIN_TERMINAL_COMMS, &[(10, "explorer.exe", 1, 1), (20, "Abito.exe", 10, 2), (40, "abito-notice-relay.exe", 20, 3)]);
     assert!(capture_origin(&t, &t.read(40).unwrap(), &mut no_herdr).is_none());
-    assert!(terminal_in(&[ProcInfo { pid: 1, ppid: 0, comm: "abito-notice-relay.exe".into(), starttime: 1 }], WIN_TERMINAL_COMMS).is_none());
-    assert!(terminal_in(&[ProcInfo { pid: 1, ppid: 0, comm: "Abito.exe".into(), starttime: 1 }], WIN_TERMINAL_COMMS).is_none());
 }
 
 #[test]
@@ -68,7 +67,7 @@ fn windows_exe_suffix_matches_and_prefix_lookalikes_do_not() {
         let t = Fake::new(WIN_TERMINAL_COMMS, &[(10, name, 1, 1), (30, "node.exe", 10, 2)]);
         assert!(capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).is_some(), "{name}");
     }
-    for name in ["codeserver.exe", "terminal-fake.exe", "conhostile.exe"] {
+    for name in ["codeserver.exe", "terminal-fake.exe", "conhostile.exe", "code-server.exe", "code-tunnel.exe", "warp-svc.exe", "abito-notice-relay.exe", "Abito.exe"] {
         let t = Fake::new(WIN_TERMINAL_COMMS, &[(10, name, 1, 1), (30, "node.exe", 10, 2)]);
         assert!(capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).is_none(), "{name}");
     }
@@ -122,12 +121,44 @@ fn macos_peer_pid_of_a_unix_socket_pair_is_this_process_and_raise_without_main_t
     let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
     assert_eq!(crate::sessionterm_mac::peer_pid(a.as_raw_fd()), Some(std::process::id()));
     assert_eq!(crate::sessionterm_mac::peer_pid(-1), None);
-    assert_eq!(crate::sessionterm_mac::raise_app(std::process::id()), Raise::Unreachable);
+    assert_eq!(crate::sessionterm_mac::raise_app(std::process::id(), || true), Raise::Unreachable);
 }
 #[cfg(windows)]
 #[test]
 fn windows_raise_of_a_process_without_a_window_is_no_window() {
     let mut child = std::process::Command::new("ping").args(["-n", "30", "127.0.0.1"]).spawn().unwrap();
-    assert_eq!(crate::sessionterm_win::raise_window_of(child.id()), Raise::NoWindow);
+    assert_eq!(crate::sessionterm_win::raise_window_of(child.id()), (Raise::NoWindow, 0));
     child.kill().unwrap(); child.wait().unwrap();
+}
+
+#[test]
+fn windowless_console_hosts_are_skipped_for_the_ancestor_that_owns_the_window() {
+    // WindowsTerminal -> OpenConsole (ConPTY host, no window) -> pwsh -> node (hook)
+    let t = Fake::new(WIN_TERMINAL_COMMS, &[(10, "WindowsTerminal.exe", 1, 1), (15, "OpenConsole.exe", 10, 2), (20, "pwsh.exe", 15, 3), (30, "node.exe", 20, 4)]);
+    t.windowless.borrow_mut().push(15);
+    let origin = capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).unwrap();
+    let mut raised = vec![];
+    focus_origin_with(&t, &origin, &mut no_herdr, &mut |pid| { raised.push(pid); Raise::Raised }).unwrap();
+    assert_eq!(raised, vec![10], "the window owner, not the pty host");
+    // VS Code: renderer/pty-helper Code.exe has no window, the main Code.exe does.
+    let t = Fake::new(WIN_TERMINAL_COMMS, &[(10, "Code.exe", 1, 1), (15, "Code.exe", 10, 2), (20, "pwsh.exe", 15, 3), (30, "node.exe", 20, 4)]);
+    t.windowless.borrow_mut().push(15);
+    let origin = capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).unwrap();
+    let mut raised = vec![];
+    focus_origin_with(&t, &origin, &mut no_herdr, &mut |pid| { raised.push(pid); Raise::Raised }).unwrap();
+    assert_eq!(raised, vec![10]);
+}
+
+#[test]
+fn the_effect_boundary_recheck_refuses_a_recycled_pid_a_non_terminal_and_a_foreign_pid() {
+    let t = Fake::new(MAC_TERMINAL_COMMS, &[(10, "iTerm2", 1, 100), (30, "node", 10, 300)]);
+    let origin = capture_origin(&t, &t.read(30).unwrap(), &mut no_herdr).unwrap();
+    assert!(boundary_ok(&t, &origin, 10));
+    assert!(!boundary_ok(&t, &origin, 30), "only the saved terminal pid may be raised");
+    t.set(10, "iTerm2", 1, 101);
+    assert!(!boundary_ok(&t, &origin, 10), "recycled pid");
+    t.set(10, "Safari", 1, 100);
+    assert!(!boundary_ok(&t, &origin, 10), "no longer a terminal");
+    t.drop_pid(10);
+    assert!(!boundary_ok(&t, &origin, 10), "gone");
 }

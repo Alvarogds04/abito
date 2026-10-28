@@ -2,6 +2,7 @@ name: Preview native tests (verterm)
 
 # HU-065: the terminal origin («Ver») on real Windows and macOS: process table, birth identity, parent walk,
 # relay-as-client chain, app/window raise refusal. Triggers ONLY for preview/*-verterm.
+# The filter is os_tests: the old Linux-file-reading tests (gnome extension docs) are not in the public snapshot.
 # Not proven: that a human really sees the terminal come forward (needs a person on a real machine).
 on:
   push:
@@ -58,7 +59,7 @@ jobs:
           "SHERPA_ONNX_ARCHIVE_DIR=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - name: Terminal origin «Ver» (HU-065)
         run: |
-          cargo test --locked --lib -- sessionterm --nocapture
+          cargo test --locked --lib -- sessionterm::os_tests --nocapture
           exit $LASTEXITCODE
 
   macos:
@@ -89,4 +90,4 @@ jobs:
           echo "SHERPA_ONNX_LIB_DIR=$LIB/lib" >> "$GITHUB_ENV"
       - name: Terminal origin «Ver» (HU-065)
         run: |
-          cargo test --locked --lib -- sessionterm --nocapture
+          cargo test --locked --lib -- sessionterm::os_tests --nocapture

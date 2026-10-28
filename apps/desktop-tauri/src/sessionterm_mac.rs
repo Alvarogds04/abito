@@ -8,7 +8,7 @@ pub struct MacProcs;
 
 impl ProcTable for MacProcs {
     fn read(&self, pid: u32) -> Option<ProcInfo> { read_pid(pid) }
-    fn terminals(&self) -> &'static [&'static str] { MAC_TERMINAL_COMMS }
+    fn is_terminal(&self, p: &ProcInfo) -> bool { crate::sessionterm::exact_name_matches(&p.comm, MAC_TERMINAL_COMMS) }
 }
 
 /// ppid, process name and birth time (µs since the epoch) of `pid`; `None` once it is gone.
@@ -45,15 +45,24 @@ static MAIN: OnceLock<MainRunner> = OnceLock::new();
 /// AppKit objects belong to the main thread: the app registers how to run a closure there.
 pub fn set_main_runner(runner: impl Fn(Box<dyn FnOnce() + Send>) + Send + Sync + 'static) { let _ = MAIN.set(Box::new(runner)); }
 
-/// Activate the app that owns `pid` (never launches anything; a vanished app is `NoWindow`).
-pub fn raise_app(pid: u32) -> Raise {
+/// Activate the app that owns `pid` (never launches anything). `still_valid` runs on the main thread right before
+/// the activation; a job that outlived its 2 s wait is cancelled and never activates anything later.
+pub fn raise_app(pid: u32, still_valid: impl FnOnce() -> bool + Send + 'static) -> Raise {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     let Some(run) = MAIN.get() else { return Raise::Unreachable };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = cancelled.clone();
     let (tx, rx) = std::sync::mpsc::channel();
-    run(Box::new(move || { let _ = tx.send(activate(pid)); }));
+    run(Box::new(move || {
+        if flag.load(Ordering::SeqCst) { return; }
+        let _ = tx.send(if still_valid() { activate(pid) } else { None });
+    }));
     match rx.recv_timeout(std::time::Duration::from_secs(2)) {
         Ok(Some(true)) => Raise::Raised,
         Ok(Some(false)) => Raise::Unreachable,
-        _ => Raise::NoWindow,
+        Ok(None) => Raise::NoWindow,
+        Err(_) => { cancelled.store(true, Ordering::SeqCst); Raise::Unreachable }
     }
 }
 /// `Some(activated)`, or `None` when the process has no running application (a bare CLI process).

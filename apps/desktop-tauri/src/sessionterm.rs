@@ -40,7 +40,9 @@ const MAX_ID: usize = 32;
 
 /// Public reason when the session's terminal is open but this desktop will not bring it to the front.
 pub const CANNOT_RAISE_REASON_MAC: &str =
-    "Traje la app de tu terminal al frente; la pestaña exacta no la puedo elegir sin permisos que Abito no pide.";
+    "Pedí traer la app de tu terminal al frente; la pestaña exacta no la puedo elegir sin permisos que Abito no pide.";
+pub const CANNOT_RAISE_REASON_WIN: &str =
+    "Traje al frente una ventana de tu terminal, pero tiene varias y no puedo saber cuál es la del agente. Revisá las otras.";
 pub const CANNOT_RAISE_REASON: &str =
     "Tu terminal está abierta, pero este escritorio no me deja traerla al frente. Cambiá a ella.";
 
@@ -70,20 +72,30 @@ fn parse_stat(text: &str) -> Option<(String, u32, u64)> {
 /// birth-identity checks, bounds, revalidation) is shared and unit-tested with fake tables on every OS.
 pub trait ProcTable {
     fn read(&self, pid: u32) -> Option<ProcInfo>;
-    /// Terminal emulators by lowercase process name for this OS.
-    fn terminals(&self) -> &'static [&'static str];
+    /// Whether this process is a terminal emulator on this OS (by process name).
+    fn is_terminal(&self, p: &ProcInfo) -> bool;
+    /// Whether the process currently owns a window that can be raised. Window-less hosts (a ConPTY host, an
+    /// editor's pty helper) are skipped so the origin anchors on the ancestor that owns the window.
+    fn hosts_window(&self, _pid: u32) -> bool { true }
     /// The terminal window hosting a herdr client (Linux only).
     fn herdr_client_terminal(&self) -> Option<u32> { None }
 }
 impl ProcTable for Path {
     fn read(&self, pid: u32) -> Option<ProcInfo> { read_proc(self, pid) }
-    fn terminals(&self) -> &'static [&'static str] { TERMINAL_COMMS }
+    fn is_terminal(&self, p: &ProcInfo) -> bool { comm_matches(&p.comm, TERMINAL_COMMS) }
     fn herdr_client_terminal(&self) -> Option<u32> { herdr_client_terminal(self) }
 }
 impl ProcTable for PathBuf {
     fn read(&self, pid: u32) -> Option<ProcInfo> { read_proc(self, pid) }
-    fn terminals(&self) -> &'static [&'static str] { TERMINAL_COMMS }
+    fn is_terminal(&self, p: &ProcInfo) -> bool { comm_matches(&p.comm, TERMINAL_COMMS) }
     fn herdr_client_terminal(&self) -> Option<u32> { herdr_client_terminal(self) }
+}
+/// Exact (not prefix) match for macOS/Windows names: lowercase, `.exe` stripped. `Code-Server`, `terminal-notifier`
+/// or `warp-svc` are different programs from `Code`, `Terminal` and `Warp`.
+pub fn exact_name_matches(comm: &str, list: &[&str]) -> bool {
+    let lower = comm.to_lowercase();
+    let name = lower.strip_suffix(".exe").unwrap_or(&lower);
+    list.contains(&name)
 }
 /// Terminal emulators by process name on macOS (`proc_bsdinfo.pbi_comm`, lowercase, at most 15 bytes).
 pub const MAC_TERMINAL_COMMS: &[&str] = &[
@@ -399,7 +411,7 @@ fn capture_origin_unbounded<T: ProcTable + ?Sized>(proc_dir: &T, peer: &ProcInfo
     if !chain.first().is_some_and(|p| p.pid == peer.pid && p.starttime == peer.starttime) { return None; }
     // /proc is not an atomic snapshot: a parent read after it exited may already be a new process.
     if chain.windows(2).any(|pair| pair[1].starttime > pair[0].starttime) { return None; }
-    if let Some(t) = terminal_in(&chain, proc_dir.terminals()) {
+    if let Some(t) = chain.iter().find(|p| proc_dir.is_terminal(p) && proc_dir.hosts_window(p.pid)) {
         return Some(Origin { anchor: t.clone(), terminal: Some(t.clone()), pane: None });
     }
     if !chain.iter().any(|p| p.comm == "herdr") { return None; }
@@ -424,11 +436,11 @@ pub fn focus_origin_with<T: ProcTable + ?Sized>(proc_dir: &T, origin: &Origin,
         if !chain.iter().any(|p| p.comm == "herdr") { return Err(gone()); }
         // Query this exact persistent anchor again: a replaced/reassigned pane is not our pane.
         if herdr_pane_of(&[anchor.pid], herdr).as_ref() != Some(pane) { return Err(gone()); }
-    } else if terminal_in(std::slice::from_ref(&anchor), proc_dir.terminals()).is_none() { return Err(gone()); }
+    } else if !proc_dir.is_terminal(&anchor) { return Err(gone()); }
     let terminal = match &origin.terminal {
         Some(saved) => {
             let current = same_process(proc_dir, saved).ok_or_else(gone)?;
-            if terminal_in(std::slice::from_ref(&current), proc_dir.terminals()).is_none() { return Err(gone()); }
+            if !proc_dir.is_terminal(&current) { return Err(gone()); }
             Some(current.pid)
         }
         None => None,
@@ -468,16 +480,22 @@ pub fn focus_origin(origin: &Origin) -> Result<(), String> {
         raise_terminal(pid, &current.comm)
     })
 }
+/// The effect-boundary recheck, shared by every OS and by the fake-table tests: the pid being raised is the saved
+/// terminal, still the same process (birth identity), and still a terminal.
+pub fn boundary_ok<T: ProcTable + ?Sized>(table: &T, origin: &Origin, pid: u32) -> bool {
+    let Some(saved) = origin.terminal.as_ref().filter(|t| t.pid == pid) else { return false };
+    same_process(table, saved).is_some_and(|current| table.is_terminal(&current))
+}
+
 /// macOS: bring the terminal APP forward (tab-level needs Automation/Accessibility, which Abito never asks for).
 #[cfg(target_os = "macos")]
 pub fn focus_origin(origin: &Origin) -> Result<(), String> {
     let table = crate::sessionterm_mac::MacProcs;
     focus_origin_with(&table, origin, &mut |_| None, &mut |pid| {
-        // Recheck at the effect boundary: same birth identity, still a terminal.
-        let Some(saved) = origin.terminal.as_ref().filter(|t| t.pid == pid) else { return Raise::NoWindow; };
-        let Some(current) = same_process(&table, saved) else { return Raise::NoWindow; };
-        if terminal_in(std::slice::from_ref(&current), MAC_TERMINAL_COMMS).is_none() { return Raise::NoWindow; }
-        crate::sessionterm_mac::raise_app(pid)
+        if !boundary_ok(&table, origin, pid) { return Raise::NoWindow; }
+        // The same check runs again on the main thread, right before the activation.
+        let saved = origin.clone();
+        crate::sessionterm_mac::raise_app(pid, move || boundary_ok(&crate::sessionterm_mac::MacProcs, &saved, pid))
     })
     // The app is in front, but the exact tab cannot be chosen without a permission Abito never asks for.
     .and_then(|()| Err(CANNOT_RAISE_REASON_MAC.to_string()))
@@ -485,12 +503,15 @@ pub fn focus_origin(origin: &Origin) -> Result<(), String> {
 #[cfg(windows)]
 pub fn focus_origin(origin: &Origin) -> Result<(), String> {
     let table = crate::sessionterm_win::WinProcs;
-    focus_origin_with(&table, origin, &mut |_| None, &mut |pid| {
-        let Some(saved) = origin.terminal.as_ref().filter(|t| t.pid == pid) else { return Raise::NoWindow; };
-        let Some(current) = same_process(&table, saved) else { return Raise::NoWindow; };
-        if terminal_in(std::slice::from_ref(&current), WIN_TERMINAL_COMMS).is_none() { return Raise::NoWindow; }
-        crate::sessionterm_win::raise_window_of(pid)
-    })
+    let mut several = false;
+    let result = focus_origin_with(&table, origin, &mut |_| None, &mut |pid| {
+        if !boundary_ok(&table, origin, pid) { return Raise::NoWindow; }
+        let (raise, windows) = crate::sessionterm_win::raise_window_of(pid);
+        several = windows > 1;
+        raise
+    });
+    // One process, several windows: the right one cannot be told apart, so say so instead of claiming it.
+    if result.is_ok() && several { Err(CANNOT_RAISE_REASON_WIN.to_string()) } else { result }
 }
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn focus_origin(_origin: &Origin) -> Result<(), String> { Err(ORIGIN_UNKNOWN.into()) }

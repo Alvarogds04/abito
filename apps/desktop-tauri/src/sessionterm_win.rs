@@ -15,7 +15,8 @@ pub struct WinProcs;
 
 impl ProcTable for WinProcs {
     fn read(&self, pid: u32) -> Option<ProcInfo> { read_pid(pid) }
-    fn terminals(&self) -> &'static [&'static str] { WIN_TERMINAL_COMMS }
+    fn is_terminal(&self, p: &ProcInfo) -> bool { crate::sessionterm::exact_name_matches(&p.comm, WIN_TERMINAL_COMMS) }
+    fn hosts_window(&self, pid: u32) -> bool { top_level_windows(pid).0 > 0 }
 }
 
 fn read_pid(pid: u32) -> Option<ProcInfo> {
@@ -60,29 +61,34 @@ fn creation_time(pid: u32) -> Option<u64> {
     }
 }
 
-struct Search { pid: u32, found: HWND }
+struct Search { pid: u32, found: HWND, count: usize }
 unsafe extern "system" fn each_window(hwnd: HWND, lparam: LPARAM) -> i32 {
-    // SAFETY: lparam is the &mut Search that raise_window_of keeps alive for the whole enumeration.
+    // SAFETY: lparam is the &mut Search that top_level_windows keeps alive for the whole enumeration.
     let search = unsafe { &mut *(lparam as *mut Search) };
     let mut owner = 0u32;
     unsafe { GetWindowThreadProcessId(hwnd, &mut owner) };
     // A real top-level window: visible and unowned (tool windows and dialogs are owned).
     if owner == search.pid && unsafe { IsWindowVisible(hwnd) } != 0 && unsafe { GetWindow(hwnd, GW_OWNER) }.is_null() {
-        search.found = hwnd;
-        return 0;
+        if search.found.is_null() { search.found = hwnd; }
+        search.count += 1;
     }
     1
 }
-
-/// Bring the top-level window of `pid` to the front. No window: `NoWindow` (never launches anything).
-pub fn raise_window_of(pid: u32) -> Raise {
-    let mut search = Search { pid, found: std::ptr::null_mut() };
+fn top_level_windows(pid: u32) -> (usize, HWND) {
+    let mut search = Search { pid, found: std::ptr::null_mut(), count: 0 };
     // SAFETY: the callback only dereferences `search`, which outlives the call.
     unsafe { EnumWindows(Some(each_window), &mut search as *mut Search as LPARAM) };
-    if search.found.is_null() { return Raise::NoWindow; }
+    (search.count, search.found)
+}
+
+/// Bring the first top-level window of `pid` to the front and say how many it has. No window: `NoWindow`
+/// (never launches anything).
+pub fn raise_window_of(pid: u32) -> (Raise, usize) {
+    let (count, found) = top_level_windows(pid);
+    if found.is_null() { return (Raise::NoWindow, 0); }
     // SAFETY: the handle came from the enumeration just now; every call tolerates a stale handle.
     unsafe {
-        if IsIconic(search.found) != 0 { ShowWindow(search.found, SW_RESTORE); }
-        if SetForegroundWindow(search.found) != 0 { Raise::Raised } else { Raise::Unreachable }
+        if IsIconic(found) != 0 { ShowWindow(found, SW_RESTORE); }
+        (if SetForegroundWindow(found) != 0 { Raise::Raised } else { Raise::Unreachable }, count)
     }
 }
