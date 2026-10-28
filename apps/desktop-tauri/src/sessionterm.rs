@@ -17,6 +17,9 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+#[path = "sessionterm_os_tests.rs"]
+mod os_tests;
 #[cfg(all(test, unix))] // the tests exercise unix file modes
 #[path = "sessionterm_tests.rs"]
 mod tests;
@@ -36,6 +39,8 @@ pub const MAX_PANES: usize = 64;
 const MAX_ID: usize = 32;
 
 /// Public reason when the session's terminal is open but this desktop will not bring it to the front.
+pub const CANNOT_RAISE_REASON_MAC: &str =
+    "Traje la app de tu terminal al frente; la pestaña exacta no la puedo elegir sin permisos que Abito no pide.";
 pub const CANNOT_RAISE_REASON: &str =
     "Tu terminal está abierta, pero este escritorio no me deja traerla al frente. Cambiá a ella.";
 
@@ -60,6 +65,36 @@ fn parse_stat(text: &str) -> Option<(String, u32, u64)> {
     if fields.len() < 20 { return None; }
     Some((text[open + 1..close].to_string(), fields[1].parse().ok()?, fields[19].parse().ok()?))
 }
+/// The process table an origin is resolved against. `Path` is Linux `/proc`; macOS and Windows have their own
+/// kernel-backed tables (`sessionterm_mac.rs`, `sessionterm_win.rs`). Everything above this seam (chain walk,
+/// birth-identity checks, bounds, revalidation) is shared and unit-tested with fake tables on every OS.
+pub trait ProcTable {
+    fn read(&self, pid: u32) -> Option<ProcInfo>;
+    /// Terminal emulators by lowercase process name for this OS.
+    fn terminals(&self) -> &'static [&'static str];
+    /// The terminal window hosting a herdr client (Linux only).
+    fn herdr_client_terminal(&self) -> Option<u32> { None }
+}
+impl ProcTable for Path {
+    fn read(&self, pid: u32) -> Option<ProcInfo> { read_proc(self, pid) }
+    fn terminals(&self) -> &'static [&'static str] { TERMINAL_COMMS }
+    fn herdr_client_terminal(&self) -> Option<u32> { herdr_client_terminal(self) }
+}
+impl ProcTable for PathBuf {
+    fn read(&self, pid: u32) -> Option<ProcInfo> { read_proc(self, pid) }
+    fn terminals(&self) -> &'static [&'static str] { TERMINAL_COMMS }
+    fn herdr_client_terminal(&self) -> Option<u32> { herdr_client_terminal(self) }
+}
+/// Terminal emulators by process name on macOS (`proc_bsdinfo.pbi_comm`, lowercase, at most 15 bytes).
+pub const MAC_TERMINAL_COMMS: &[&str] = &[
+    "terminal", "iterm2", "ghostty", "wezterm-gui", "wezterm", "kitty", "alacritty", "warp", "hyper", "tabby",
+];
+/// Terminal hosts on Windows (executable names, lowercase; `.exe` is accepted by the boundary rule). Never the
+/// Abito island or its notice relay.
+pub const WIN_TERMINAL_COMMS: &[&str] = &[
+    "windowsterminal", "openconsole", "conhost", "wezterm-gui", "alacritty", "kitty", "mintty", "hyper", "tabby", "warp", "code",
+];
+
 pub fn read_proc(proc_dir: &Path, pid: u32) -> Option<ProcInfo> {
     let text = fs::read_to_string(proc_dir.join(pid.to_string()).join("stat")).ok()?;
     let (comm, ppid, starttime) = parse_stat(&text)?;
@@ -91,11 +126,11 @@ pub fn find_session(proc_dir: &Path, key: &str) -> Option<SessionProc> {
 }
 
 /// `pid` and its ancestors, nearest first; ends at init, a cycle, a vanished parent or `MAX_HOPS`.
-pub fn ancestors(proc_dir: &Path, pid: u32) -> Vec<ProcInfo> {
+pub fn ancestors<T: ProcTable + ?Sized>(proc_dir: &T, pid: u32) -> Vec<ProcInfo> {
     let mut chain: Vec<ProcInfo> = Vec::new();
     let mut current = pid;
     for _ in 0..MAX_HOPS {
-        let Some(info) = read_proc(proc_dir, current) else { break };
+        let Some(info) = proc_dir.read(current) else { break };
         let parent = info.ppid;
         let seen = chain.iter().any(|p| p.pid == info.pid);
         if seen { break; }
@@ -110,7 +145,8 @@ fn comm_matches(comm: &str, list: &[&str]) -> bool {
     list.iter().any(|e| lower == *e || [format!("{e}-"), format!("{e}_"), format!("{e}.")].iter().any(|p| lower.starts_with(p.as_str())))
 }
 /// The nearest terminal emulator in a chain.
-pub fn terminal_of(chain: &[ProcInfo]) -> Option<&ProcInfo> { chain.iter().find(|p| comm_matches(&p.comm, TERMINAL_COMMS)) }
+pub fn terminal_of(chain: &[ProcInfo]) -> Option<&ProcInfo> { terminal_in(chain, TERMINAL_COMMS) }
+pub fn terminal_in<'a>(chain: &'a [ProcInfo], list: &[&str]) -> Option<&'a ProcInfo> { chain.iter().find(|p| comm_matches(&p.comm, list)) }
 
 // ---- herdr -----------------------------------------------------------------------------------------------
 
@@ -353,32 +389,32 @@ pub struct Origin {
 pub const ORIGIN_RESOLUTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 /// Resolve while the socket peer still exists, never from an identity supplied by the page/wire.
 /// Compatibility seam for immediate fake runners; production uses the deadline-aware runner below.
-pub fn capture_origin(proc_dir: &Path, peer: &ProcInfo,
+pub fn capture_origin<T: ProcTable + ?Sized>(proc_dir: &T, peer: &ProcInfo,
     herdr: &mut dyn FnMut(&[&str]) -> Option<String>) -> Option<Origin> {
     capture_origin_with_budget(proc_dir, peer, ORIGIN_RESOLUTION_BUDGET, &mut |args, _| herdr(args))
 }
-fn capture_origin_unbounded(proc_dir: &Path, peer: &ProcInfo,
+fn capture_origin_unbounded<T: ProcTable + ?Sized>(proc_dir: &T, peer: &ProcInfo,
     herdr: &mut dyn FnMut(&[&str]) -> Option<String>) -> Option<Origin> {
     let chain = ancestors(proc_dir, peer.pid);
     if !chain.first().is_some_and(|p| p.pid == peer.pid && p.starttime == peer.starttime) { return None; }
     // /proc is not an atomic snapshot: a parent read after it exited may already be a new process.
     if chain.windows(2).any(|pair| pair[1].starttime > pair[0].starttime) { return None; }
-    if let Some(t) = terminal_of(&chain) {
+    if let Some(t) = terminal_in(&chain, proc_dir.terminals()) {
         return Some(Origin { anchor: t.clone(), terminal: Some(t.clone()), pane: None });
     }
     if !chain.iter().any(|p| p.comm == "herdr") { return None; }
     // Prefer the pane's persistent shell, not the short-lived foreground hook.
     let (pane, anchor_pid) = herdr_binding_of(&chain.iter().map(|p| p.pid).collect::<Vec<_>>(), herdr)?;
     let anchor = chain.iter().find(|p| p.pid == anchor_pid)?.clone();
-    let terminal = herdr_client_terminal(proc_dir).and_then(|pid| read_proc(proc_dir, pid));
+    let terminal = proc_dir.herdr_client_terminal().and_then(|pid| proc_dir.read(pid));
     Some(Origin { anchor, terminal, pane: Some(pane) })
 }
-fn same_process(proc_dir: &Path, saved: &ProcInfo) -> Option<ProcInfo> {
-    read_proc(proc_dir, saved.pid).filter(|p| p.starttime == saved.starttime)
+fn same_process<T: ProcTable + ?Sized>(proc_dir: &T, saved: &ProcInfo) -> Option<ProcInfo> {
+    proc_dir.read(saved.pid).filter(|p| p.starttime == saved.starttime)
 }
 /// Revalidate immediately before the existing apply ladder. The launch callback is a refusal,
 /// not an effect: origin requests can NEVER spawn, even if apply finds no window.
-pub fn focus_origin_with(proc_dir: &Path, origin: &Origin,
+pub fn focus_origin_with<T: ProcTable + ?Sized>(proc_dir: &T, origin: &Origin,
     herdr: &mut dyn FnMut(&[&str]) -> Option<String>,
     raise: &mut dyn FnMut(u32) -> Raise) -> Result<(), String> {
     let gone = || ORIGIN_GONE.to_string();
@@ -388,11 +424,11 @@ pub fn focus_origin_with(proc_dir: &Path, origin: &Origin,
         if !chain.iter().any(|p| p.comm == "herdr") { return Err(gone()); }
         // Query this exact persistent anchor again: a replaced/reassigned pane is not our pane.
         if herdr_pane_of(&[anchor.pid], herdr).as_ref() != Some(pane) { return Err(gone()); }
-    } else if terminal_of(std::slice::from_ref(&anchor)).is_none() { return Err(gone()); }
+    } else if terminal_in(std::slice::from_ref(&anchor), proc_dir.terminals()).is_none() { return Err(gone()); }
     let terminal = match &origin.terminal {
         Some(saved) => {
             let current = same_process(proc_dir, saved).ok_or_else(gone)?;
-            if terminal_of(std::slice::from_ref(&current)).is_none() { return Err(gone()); }
+            if terminal_in(std::slice::from_ref(&current), proc_dir.terminals()).is_none() { return Err(gone()); }
             Some(current.pid)
         }
         None => None,
@@ -404,8 +440,23 @@ pub fn focus_origin_with(proc_dir: &Path, origin: &Origin,
 pub fn capture_peer_origin(peer: &ProcInfo) -> Option<Origin> {
     capture_origin_with_budget(Path::new("/proc"), peer, ORIGIN_RESOLUTION_BUDGET, &mut herdr_run_with_budget)
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn capture_peer_origin(peer: &ProcInfo) -> Option<Origin> {
+    capture_origin_with_budget(&crate::sessionterm_mac::MacProcs, peer, ORIGIN_RESOLUTION_BUDGET, &mut |_, _| None)
+}
+#[cfg(windows)]
+pub fn capture_peer_origin(peer: &ProcInfo) -> Option<Origin> {
+    capture_origin_with_budget(&crate::sessionterm_win::WinProcs, peer, ORIGIN_RESOLUTION_BUDGET, &mut |_, _| None)
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn capture_peer_origin(_peer: &ProcInfo) -> Option<Origin> { None }
+/// The kernel peer's birth identity, read from this OS's process table (never from the wire).
+pub fn read_peer(pid: u32) -> Option<ProcInfo> {
+    #[cfg(target_os = "linux")] { read_proc(Path::new("/proc"), pid) }
+    #[cfg(target_os = "macos")] { crate::sessionterm_mac::MacProcs.read(pid) }
+    #[cfg(windows)] { crate::sessionterm_win::WinProcs.read(pid) }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))] { let _ = pid; None }
+}
 #[cfg(target_os = "linux")]
 pub fn focus_origin(origin: &Origin) -> Result<(), String> {
     let root = Path::new("/proc");
@@ -417,11 +468,35 @@ pub fn focus_origin(origin: &Origin) -> Result<(), String> {
         raise_terminal(pid, &current.comm)
     })
 }
-#[cfg(not(target_os = "linux"))]
+/// macOS: bring the terminal APP forward (tab-level needs Automation/Accessibility, which Abito never asks for).
+#[cfg(target_os = "macos")]
+pub fn focus_origin(origin: &Origin) -> Result<(), String> {
+    let table = crate::sessionterm_mac::MacProcs;
+    focus_origin_with(&table, origin, &mut |_| None, &mut |pid| {
+        // Recheck at the effect boundary: same birth identity, still a terminal.
+        let Some(saved) = origin.terminal.as_ref().filter(|t| t.pid == pid) else { return Raise::NoWindow; };
+        let Some(current) = same_process(&table, saved) else { return Raise::NoWindow; };
+        if terminal_in(std::slice::from_ref(&current), MAC_TERMINAL_COMMS).is_none() { return Raise::NoWindow; }
+        crate::sessionterm_mac::raise_app(pid)
+    })
+    // The app is in front, but the exact tab cannot be chosen without a permission Abito never asks for.
+    .and_then(|()| Err(CANNOT_RAISE_REASON_MAC.to_string()))
+}
+#[cfg(windows)]
+pub fn focus_origin(origin: &Origin) -> Result<(), String> {
+    let table = crate::sessionterm_win::WinProcs;
+    focus_origin_with(&table, origin, &mut |_| None, &mut |pid| {
+        let Some(saved) = origin.terminal.as_ref().filter(|t| t.pid == pid) else { return Raise::NoWindow; };
+        let Some(current) = same_process(&table, saved) else { return Raise::NoWindow; };
+        if terminal_in(std::slice::from_ref(&current), WIN_TERMINAL_COMMS).is_none() { return Raise::NoWindow; }
+        crate::sessionterm_win::raise_window_of(pid)
+    })
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn focus_origin(_origin: &Origin) -> Result<(), String> { Err(ORIGIN_UNKNOWN.into()) }
 
 /// Injectable deadline-aware origin runner; each call receives only the remaining total budget.
-pub fn capture_origin_with_budget(proc_dir: &Path, peer: &ProcInfo, budget: std::time::Duration,
+pub fn capture_origin_with_budget<T: ProcTable + ?Sized>(proc_dir: &T, peer: &ProcInfo, budget: std::time::Duration,
     herdr: &mut dyn FnMut(&[&str], std::time::Duration) -> Option<String>) -> Option<Origin> {
     let deadline = std::time::Instant::now() + budget;
     let origin = capture_origin_unbounded(proc_dir, peer, &mut |args| {
