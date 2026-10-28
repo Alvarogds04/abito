@@ -21,6 +21,7 @@ const { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, statSync, unl
 const path = require("node:path");
 const { writePrivateFile } = require("./isolation.cjs");
 const { isStrictAccountId } = require("./auth.cjs");
+const { PROVIDER_ID, EXTENSION_FILE, RUNTIME_FILE, TEMPLATE, runtimeDocument } = require("./custom-provider-extension.cjs");
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const DEFAULT_THINKING_LEVEL = "medium";
@@ -31,12 +32,6 @@ const MAX_PROFILES = 64;
 
 const isStrictProfileId = (value) => typeof value === "string" && STRICT_ID.test(value);
 const fail = (message) => new Error(message);
-
-/**
- * HU-041: custom-provider accounts hold configuration only. Until the guarded Pi transport
- * extension (T6a-2) is installed by activation, no profile may reference one and none can be activated.
- */
-const CUSTOM_INERT = "Account is not available for inference yet";
 
 function profileDto(p) {
 	return {
@@ -87,6 +82,7 @@ class ProfileStore {
 		// Startup recovery of an interrupted switch (see reconcileJournal).
 		try {
 			this.reconcileJournal();
+			this.removeCustomOrphans();
 		} catch {}
 	}
 
@@ -168,7 +164,6 @@ class ProfileStore {
 		const account = this.options.accounts().get(accountId);
 		if (!account) throw fail("Unknown account");
 		if (provider !== account.provider) throw fail("Provider does not match the account");
-		if (account.custom === true) throw fail(CUSTOM_INERT);
 		return this.mutate(async () => {
 			const state = this.load();
 			const next = { id, label: label.trim(), role, accountId, provider, modelId, thinkingLevel };
@@ -218,7 +213,20 @@ class ProfileStore {
 
 	async doDeactivate() {
 		const state = this.load();
-		if (state.active === undefined) return { ok: true, deactivated: false, ...this.list() };
+		if (state.active === undefined) {
+			// Never a silent no-op: orphaned custom artifacts (no journal, nothing active) are removed and reported.
+			if (this.findCustomOrphans().length === 0) return { ok: true, deactivated: false, ...this.list() };
+			if (await this.isBusy()) throw fail("Engine busy: finish or abort the current turn first");
+			const release = await this.acquireLock(path.join(this.options.agentDir, "auth.json.lock"));
+			try {
+				this.settleCustomRecovery();
+				const removed = this.removeCustomOrphans();
+				if (removed.length > 0) await this.restartEngine();
+				return { ok: true, deactivated: false, ...(removed.length > 0 ? { removed } : {}), ...this.list() };
+			} finally {
+				release();
+			}
+		}
 		if (await this.isBusy()) throw fail("Engine busy: finish or abort the current turn first");
 
 		const { agentDir } = this.options;
@@ -227,12 +235,15 @@ class ProfileStore {
 			models: path.join(agentDir, "models.json"),
 			settings: path.join(agentDir, "settings.json"),
 			marker: this.activeAccountPath,
+			extension: path.join(agentDir, "extensions", EXTENSION_FILE),
+			runtime: path.join(agentDir, RUNTIME_FILE),
 		};
 		const releaseLock = await this.acquireLock(path.join(agentDir, "auth.json.lock"));
 		const wasRunning = this.options.engine.status !== "stopped";
 		let snapshot;
 		try {
-			this.reconcileJournal();
+			this.settleCustomRecovery();
+			this.removeCustomOrphans();
 			const current = this.load();
 			if (current.active === undefined) return { ok: true, deactivated: false, ...this.list() };
 			snapshot = Object.fromEntries(Object.entries(files).map(([key, file]) => [key, readText(file)]));
@@ -242,16 +253,16 @@ class ProfileStore {
 				const from = this.markerIdentity(snapshot.marker);
 				writePrivateFile(this.journalPath, `${JSON.stringify({ from, to: null, startedAt: Date.now() })}\n`);
 				this.preserveRefreshedCredential(snapshot.marker, currentAuth);
-				for (const key of ["auth", "models"]) if (existsSync(files[key])) unlinkSync(files[key]);
+				for (const key of ["auth", "models", "extension", "runtime"]) if (existsSync(files[key])) unlinkSync(files[key]);
 				delete settings.defaultProvider;
 				delete settings.defaultModel;
 				delete settings.defaultThinkingLevel;
 				if (snapshot.settings !== null) writePrivateFile(files.settings, `${JSON.stringify(settings, null, 2)}\n`);
 				this.writeMarker(files.marker, null);
-				this.clearJournal();
 				await this.restartEngine();
 				current.active = undefined;
 				this.persist(current);
+				this.clearJournal();
 			} catch (error) {
 				await this.rollback(files, snapshot, wasRunning);
 				throw fail(error?.message && /^(Engine busy|Account|Provider|Settings|Agent)/.test(error.message) ? error.message : "Could not deactivate the profile");
@@ -289,7 +300,6 @@ class ProfileStore {
 		const account = this.options.accounts().get(profile.accountId);
 		if (!account) throw fail("Unknown account");
 		if (account.provider !== profile.provider) throw fail("Provider does not match the account");
-		if (account.custom === true) throw fail(CUSTOM_INERT);
 		if (account.configured !== true) throw fail("Account is not signed in");
 		if (await this.isBusy()) throw fail("Engine busy: finish or abort the current turn first");
 
@@ -299,13 +309,16 @@ class ProfileStore {
 			models: path.join(agentDir, "models.json"),
 			settings: path.join(agentDir, "settings.json"),
 			marker: this.activeAccountPath,
+			extension: path.join(agentDir, "extensions", EXTENSION_FILE),
+			runtime: path.join(agentDir, RUNTIME_FILE),
 		};
 		const releaseLock = await this.acquireLock(path.join(agentDir, "auth.json.lock"));
 		const wasRunning = this.options.engine.status !== "stopped";
 		let snapshot;
 		try {
 			// A leftover journal means an earlier switch died mid-way: settle it first.
-			this.reconcileJournal();
+			this.settleCustomRecovery();
+			this.removeCustomOrphans();
 			// Read and validate everything BEFORE the first write.
 			snapshot = Object.fromEntries(Object.entries(files).map(([key, file]) => [key, readText(file)]));
 			const settings = parseJsonObject(snapshot.settings, "Settings file");
@@ -315,24 +328,35 @@ class ProfileStore {
 			const credential = accountAuth[profile.provider];
 			if (!credential) throw fail("Account is not signed in");
 			const accountModels = readText(path.join(accountDir, "models.json"));
+			// A custom provider is served ONLY by the guarded extension: its models.json entry (which would
+			// route through the SDK's unguarded, redirect-following transport) is never projected.
+			const customRuntime = account.custom === true ? this.customRuntime(profile, accountModels) : undefined;
 
 			try {
 				const from = this.markerIdentity(snapshot.marker);
 				// Write-ahead journal: lets a restart tell which account auth.json belongs to.
-				writePrivateFile(this.journalPath, `${JSON.stringify({ from, to: { accountId: profile.accountId, provider: profile.provider }, startedAt: Date.now() })}\n`);
+				writePrivateFile(this.journalPath, `${JSON.stringify({ from, to: { accountId: profile.accountId, provider: profile.provider, ...(customRuntime ? { custom: true } : {}) }, startedAt: Date.now() })}\n`);
 				this.preserveRefreshedCredential(snapshot.marker, currentAuth);
 				writePrivateFile(files.auth, `${JSON.stringify({ [profile.provider]: credential }, null, 2)}\n`);
 				// Always rewritten so a previous account's custom endpoints never linger.
-				writePrivateFile(files.models, accountModels ?? `${JSON.stringify({ providers: {} })}\n`);
+				writePrivateFile(files.models, customRuntime ? `${JSON.stringify({ providers: {} })}\n` : (accountModels ?? `${JSON.stringify({ providers: {} })}\n`));
+				if (customRuntime) {
+					writePrivateFile(files.runtime, `${JSON.stringify(customRuntime, null, 2)}\n`);
+					writePrivateFile(files.extension, TEMPLATE);
+				} else {
+					for (const key of ["extension", "runtime"]) if (existsSync(files[key])) unlinkSync(files[key]);
+				}
 				writePrivateFile(
 					files.settings,
 					`${JSON.stringify({ ...settings, defaultProvider: profile.provider, defaultModel: profile.modelId, defaultThinkingLevel: profile.thinkingLevel }, null, 2)}\n`,
 				);
-				this.writeMarker(files.marker, `${JSON.stringify({ accountId: profile.accountId, provider: profile.provider })}\n`);
-				this.clearJournal(); // only now is marker and auth.json consistent again
+				this.writeMarker(files.marker, `${JSON.stringify({ accountId: profile.accountId, provider: profile.provider, ...(customRuntime ? { custom: true } : {}) })}\n`);
+				// The journal stays until the whole transaction is committed (journal -> apply -> restart ->
+				// save state -> clear journal): a crash anywhere before that is settled by reconcileJournal.
 				await this.restartAndSwitch(profile);
 				state.active = profile.id;
 				this.persist(state);
+				this.clearJournal();
 			} catch (error) {
 				await this.rollback(files, snapshot, wasRunning);
 				throw fail(error?.message && /^(Engine busy|Account|Provider|Settings|Agent)/.test(error.message) ? error.message : "Could not activate the profile");
@@ -341,6 +365,18 @@ class ProfileStore {
 		} finally {
 			releaseLock();
 		}
+	}
+
+	/** Validated runtime data for a custom profile: Base URL + discovered ids, and the chosen model must be one of them. */
+	customRuntime(profile, accountModelsText) {
+		let entry;
+		try {
+			entry = JSON.parse(accountModelsText ?? "").providers?.[profile.provider];
+		} catch {}
+		const runtime = runtimeDocument(profile.provider, entry);
+		if (!runtime) throw fail("Account has no discovered models; refresh the models first");
+		if (!runtime.models.includes(profile.modelId)) throw fail("Account does not offer that model");
+		return runtime;
 	}
 
 	/** Writes the active-account marker; `null` content clears it. Single seam for crash tests. */
@@ -362,7 +398,7 @@ class ProfileStore {
 		if (markerText === null) return null;
 		try {
 			const m = JSON.parse(markerText);
-			if (m && isStrictAccountId(m.accountId) && typeof m.provider === "string") return { accountId: m.accountId, provider: m.provider };
+			if (m && isStrictAccountId(m.accountId) && typeof m.provider === "string") return { accountId: m.accountId, provider: m.provider, ...(m.custom === true ? { custom: true } : {}) };
 		} catch {}
 		return null;
 	}
@@ -380,6 +416,11 @@ class ProfileStore {
 		if (raw === null) return;
 		let target; // account the marker should name; undefined = none
 		try {
+			JSON.parse(raw);
+		} catch {
+			return; // torn or garbage journal: unknown, so it stays as recovery evidence (settleCustomRecovery blocks on it)
+		}
+		try {
 			const journal = JSON.parse(raw);
 			const sameCred = (side) => {
 				if (!side || !isStrictAccountId(side.accountId) || typeof side.provider !== "string") return false;
@@ -391,9 +432,21 @@ class ProfileStore {
 			const isTo = sameCred(journal.to);
 			if (isTo && !isFrom) target = journal.to;
 			else if (isFrom && !isTo) target = journal.from;
-		} catch {}
+			// HU-041 fail closed: an interrupted switch TO a custom account never counts as completed (the
+			// guarded transport, its data and the credential are torn down below), and the custom
+			// artifacts survive only when the unchanged previous custom account is still the active one.
+			if (target && target === journal.to && journal.to.custom === true) target = undefined;
+			if (journal.to?.custom === true || journal.from?.custom === true) {
+				const keep = target !== undefined && target === journal.from && journal.from.custom === true;
+				if (!keep) this.tearDownCustom([journal.to, journal.from]);
+			}
+		} catch (error) {
+			// fail closed: keep the journal as recovery evidence, retry later. Also when a custom journal could not be
+			// evaluated at all (e.g. the agent auth.json is unreadable): never clear evidence while custom bytes may remain.
+			if (error?.customTeardown === true || /"custom":\s*true/.test(raw)) return;
+		}
 		try {
-			if (target) this.writeMarker(this.activeAccountPath, `${JSON.stringify({ accountId: target.accountId, provider: target.provider })}\n`);
+			if (target) this.writeMarker(this.activeAccountPath, `${JSON.stringify({ accountId: target.accountId, provider: target.provider, ...(target.custom === true ? { custom: true } : {}) })}\n`);
 			else if (existsSync(this.activeAccountPath)) unlinkSync(this.activeAccountPath);
 		} catch {
 			return; // keep the journal: retry on the next start rather than guess
@@ -410,6 +463,96 @@ class ProfileStore {
 			}
 		} catch {}
 		this.clearJournal();
+	}
+
+	/**
+	 * Removes the custom transport artifacts an interrupted switch may have left (extension, runtime
+	 * data) and the custom credential/defaults from the engine's private files. Only the providers the
+	 * journal flags as custom are touched; cloud/local semantics stay as they were.
+	 */
+	tearDownCustom(sides) {
+		try {
+			this.tearDownCustomFiles(sides);
+		} catch (error) {
+			const wrapped = fail("A previous custom provider switch could not be cleaned up");
+			wrapped.customTeardown = true;
+			wrapped.cause = error;
+			throw wrapped;
+		}
+	}
+
+	tearDownCustomFiles(sides) {
+		const { agentDir } = this.options;
+		for (const file of [path.join(agentDir, "extensions", EXTENSION_FILE), path.join(agentDir, RUNTIME_FILE)]) {
+			if (existsSync(file)) unlinkSync(file);
+		}
+		const providers = sides.filter((side) => side && side.custom === true && typeof side.provider === "string" && PROVIDER_ID.test(side.provider)).map((side) => side.provider);
+		const authFile = path.join(agentDir, "auth.json");
+		const auth = parseJsonObject(readText(authFile), "Agent credentials");
+		if (providers.some((provider) => auth[provider] !== undefined)) {
+			for (const provider of providers) delete auth[provider];
+			writePrivateFile(authFile, `${JSON.stringify(auth, null, 2)}\n`);
+		}
+		const settingsFile = path.join(agentDir, "settings.json");
+		const settingsText = readText(settingsFile);
+		if (settingsText !== null) {
+			const settings = parseJsonObject(settingsText, "Settings file");
+			if (providers.includes(settings.defaultProvider)) {
+				delete settings.defaultProvider;
+				delete settings.defaultModel;
+				delete settings.defaultThinkingLevel;
+				writePrivateFile(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
+			}
+		}
+	}
+
+	/** A custom switch whose cleanup failed leaves the journal: refuse to build on top of it. */
+	settleCustomRecovery() {
+		this.reconcileJournal();
+		if (readText(this.journalPath) !== null) {
+			try {
+				const text = readText(this.journalPath);
+				let readable = true;
+				try { JSON.parse(text); } catch { readable = false; }
+				if (!readable || /"custom":\s*true/.test(text)) throw fail("A previous custom provider switch could not be cleaned up");
+			} catch (error) {
+				if (/could not be cleaned up/.test(error.message)) throw error;
+			}
+		}
+	}
+
+	/** Abito-owned custom artifacts that no committed custom activation justifies (no journal, nothing custom active). */
+	findCustomOrphans() {
+		if (readText(this.journalPath) !== null) return [];
+		const { agentDir } = this.options;
+		const marker = this.markerIdentity(readText(this.activeAccountPath));
+		const state = this.load();
+		if (state.active !== undefined && marker?.custom === true) return [];
+		const found = [];
+		if (existsSync(path.join(agentDir, "extensions", EXTENSION_FILE))) found.push("extension");
+		if (existsSync(path.join(agentDir, RUNTIME_FILE))) found.push("runtime");
+		if (marker?.custom === true) found.push("marker");
+		return found;
+	}
+
+	/** Removes them (and the custom credential/defaults the runtime data names). Throws, keeping evidence, on failure. */
+	removeCustomOrphans() {
+		const found = this.findCustomOrphans();
+		if (found.length === 0) return [];
+		const { agentDir } = this.options;
+		let provider;
+		try {
+			provider = JSON.parse(readText(path.join(agentDir, RUNTIME_FILE)) ?? "").provider;
+		} catch {}
+		const marker = this.markerIdentity(readText(this.activeAccountPath));
+		const providers = [provider, marker?.custom === true ? marker.provider : undefined].filter((p) => typeof p === "string");
+		this.tearDownCustom(providers.map((p) => ({ provider: p, custom: true })));
+		const removed = found.filter((what) => what !== "marker");
+		if (found.includes("marker")) {
+			this.writeMarker(this.activeAccountPath, null);
+			removed.push("marker");
+		}
+		return removed;
 	}
 
 	/**
