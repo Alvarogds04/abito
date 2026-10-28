@@ -72,8 +72,12 @@ test('S20 Agentes: a refused install shows ONE sentence in the status line, and 
   } finally { await f.close(); }
 });
 
+// HU-044 (human: «quiero todos los apartados colapsados por defecto»): the Chat apartados open folded. The older checks below assert what a
+// provider card shows once the human has opened it, so they open every folded apartado first and then assert exactly what they did before.
+const openApartados = async page => { const folded = page.locator('.hub-page .card-fold[aria-expanded="false"]'); for (let i = 0; i < 20 && await folded.count(); i++) await folded.first().click(); await page.waitForTimeout(100); };
+
 test('S21 Chat: «Probar» is VISIBLE on a card without a key, disabled, and its reason is on screen as text', async r => {
-  await r.go('Chat');
+  await r.go('Chat'); await openApartados(r.page);
   const probes = await r.page.evaluate(() => [...document.querySelectorAll('.abito-card')].filter(c => c.querySelector('input[id^="chat-key-"]')).map(c => { const b = [...c.querySelectorAll('button')].find(x => x.textContent === 'Probar'); if (!b) return null; const rc = b.getBoundingClientRect(); const reason = c.querySelector('.test-reason');
     return { card: c.querySelector('h2').textContent.trim().slice(0, 12), visible: rc.width > 0 && rc.height > 0, disabled: b.disabled, reason: reason ? reason.textContent : null, reasonVisible: reason ? reason.getBoundingClientRect().height > 0 : false }; }));
   assert(probes.length >= 4 && probes.every(Boolean), `every provider card shows Probar: ${JSON.stringify(probes)}`);
@@ -93,7 +97,7 @@ test('S4 Chat: ONE list of AI providers: no second «Configuración de proveedor
 });
 
 test('S2 Chat: subscription rows belong to Claude/OpenAI only and fit within their own cards', async r => {
-  await r.go('Chat');
+  await r.go('Chat'); await openApartados(r.page);
   await r.page.waitForFunction(() => document.querySelector('#chat-subscription-anthropic')?.textContent.includes('sin sesión'));
   const rows = await r.page.evaluate(() => [...document.querySelectorAll('[id^="chat-subscription-"]')].map(row => {
     const card = row.closest('.abito-card'), cb = card.getBoundingClientRect();
@@ -218,6 +222,57 @@ pageTest('Ajustes', 'S27 Ajustes (dictado): the microphone meter moves with the 
   const calls = (await r.calls()).map(([c]) => c); assert(!calls.some(c => /mic|record|level/i.test(c)), 'the page only listens: no command was sent for the meter');
 });
 
+test('HU-045: the sidebar shows the real package version (tauri.conf.json), never a hardcoded one', async r => {
+  let want;
+  try { want = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '../tauri.conf.json'), 'utf8')).version; }
+  catch (error) { assert.fail(`cannot read the package version from tauri.conf.json: ${error.message}`); }
+  assert.equal(typeof want, 'string', 'tauri.conf.json has a version');
+  assert.equal((await r.page.locator('.hub-version').textContent()).trim(), `Abito ${want}`);
+});
+
+// HU-046 (human, verbatim option chosen: «Botón «Instalar Pi» (recomendado)»): when the chat engine has no Pi, the Chat page AND the Pi row of
+// Agentes offer «Instalar Pi». Nothing is installed here: the host command is a stub that counts calls.
+test('HU-046 Chat: with Pi missing the page explains why and offers «Instalar Pi»; a first click only shows the plan, the second runs it once', async r => {
+  await r.close();
+  const f = await H.open({ width: 960, height: 760, piMissing: true });
+  try {
+    await f.go('Chat'); await f.page.waitForTimeout(1200);
+    const box = f.page.locator('#pi-install');
+    assert.equal(await box.isVisible(), true, 'the control is on the Chat page');
+    assert.match(await box.textContent(), /funciona con Pi/); assert.match(await box.textContent(), /npm install -g @earendil-works\/pi-coding-agent/);
+    await box.getByRole('button', { name: 'Instalar Pi' }).click(); await f.page.waitForTimeout(200);
+    assert.equal(await f.page.evaluate(() => window.__piRuns || 0), 0, 'the first click only shows what will run');
+    assert.match(await f.page.locator('#pi-install-plan').textContent(), /Se va a ejecutar: npm install -g @earendil-works\/pi-coding-agent/);
+    if (process.env.ABITO_SHOT_DIR) await f.page.screenshot({ path: require('node:path').join(process.env.ABITO_SHOT_DIR, 'pi-install-chat.png') });
+    await box.getByRole('button', { name: 'Instalar ahora' }).click(); await f.page.waitForTimeout(300);
+    assert.equal(await f.page.evaluate(() => window.__piRuns), 1, 'the second click runs it exactly once');
+    assert.match(await box.textContent(), /Instalando Pi/); assert.equal(await box.getByRole('button').count(), 0, 'no second install while one runs');
+    await f.page.evaluate(() => window.__emit('pi-install:state', { action: 'status', phase: 'failed', reason: 'install_failed', say: 'No se pudo instalar Pi. Si Node.js está en una carpeta del sistema, instalalo desde una terminal con permisos o configurá una carpeta propia para npm.' }));
+    await f.page.waitForTimeout(200);
+    assert.match(await box.textContent(), /No se pudo instalar Pi/); assert.equal(await box.getByRole('button', { name: 'Reintentar' }).count(), 1, 'a failure can be retried and Pi is not shown as installed');
+    assert.doesNotMatch(await box.textContent(), /quedó instalado/);
+  } finally { await f.close(); }
+});
+
+test('HU-046 Agentes: the Pi row offers «Instalar Pi» when Pi is missing; Claude Code and Codex rows never do and the page never says «Falta Pi»', async r => {
+  await r.close();
+  const f = await H.open({ width: 960, height: 760, piMissing: true });
+  try {
+    await f.go('Agentes'); await f.page.waitForTimeout(1200);
+    const pi = f.page.locator('#agent-row-pi');
+    assert.equal(await pi.locator('#pi-install').isVisible(), true, 'the Pi row carries the control');
+    assert.equal(await pi.getByRole('button', { name: 'Instalar Pi' }).count(), 1);
+    for (const id of ['claude-code', 'codex']) assert.equal(await f.page.locator(`#agent-row-${id} #pi-install`).count(), 0, `${id}: no Pi install control`);
+    assert.equal(await f.page.locator('#pi-install').count(), 1, 'exactly one control on the page');
+    assert.doesNotMatch(await f.page.locator('.hub-page').textContent(), /Falta Pi/, 'Agentes never shows the general «Falta Pi»');
+    if (process.env.ABITO_SHOT_DIR) await f.page.screenshot({ path: require('node:path').join(process.env.ABITO_SHOT_DIR, 'pi-install-agentes.png') });
+  } finally { await f.close(); }
+});
+
+test('HU-046: with Pi present (engine connected) neither page shows the control', async r => {
+  for (const title of ['Chat', 'Agentes']) { await r.go(title); await r.page.waitForTimeout(800); assert.equal(await r.page.locator('#pi-install').isVisible().catch(() => false), false, title); }
+});
+
 test('0.1.2 paused pages are hidden: the sidebar lists exactly the active pages, no grey «En pausa» row (visual check: hub-side screenshot)', async r => {
   const items = await navTitles(r.page);
   const want = Object.keys(PAGE_IDS).filter(t => !['Teléfono', 'Ajustes'].includes(t) && !isPaused(t));
@@ -312,14 +367,53 @@ test('0.2.1 Atajos: no weekly recap rows (they live in General)', async r => {
   assert.equal(await r.page.evaluate(() => document.querySelectorAll('#hub-recap, #hub-recap-clear').length), 0);
 });
 
-test('0.2.1 Chat (L2 A): provider cards fold from their title row; the key field is still there when unfolded', async r => {
+// HU-044 (human: «quiero todos los apartados colapsados por defecto» in Ajustes → Chat; supersedes the old open-by-default fold of
+// 0.2.1 L2 A). Every apartado opens folded to its title row; a click opens it and it works as before. The engine banner is a status
+// line, not an apartado, and stays visible. The open/closed state is a view state that survives the page repainting its cards.
+const CHAT_APARTADOS = ['Claude', 'Google AI', 'OpenAI', 'OpenRouter', 'NaN', 'OpenCode Go', 'Pi', 'Otros endpoints', 'Modelos locales', 'Contexto de la ventana activa'];
+const apartados = (page, titles) => page.evaluate(titles => titles.map(title => {
+  const head = [...document.querySelectorAll('.hub-page h2, .hub-page .hub-label')].find(e => e.textContent.replace(/[▾▸]/g, '').trim().startsWith(title));
+  const sec = head && head.closest('section');
+  const fold = sec && sec.querySelector(':scope > :first-child .card-fold');
+  const body = sec ? [...sec.children].slice(1).filter(c => !c.classList.contains('card-state')) : [];
+  const shown = el => { if (!el) return false; const b = el.getBoundingClientRect(), s = getComputedStyle(el); return b.height > 0 && b.width > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
+  return { title, found: !!sec, fold: fold ? fold.getAttribute('aria-expanded') : null, bodyShown: body.some(shown), bodyCount: body.length, headShown: shown(head) };
+}), titles);
+
+test('HU-044 Chat opens with every apartado collapsed to its title row; the engine banner stays visible', async r => {
+  await r.go('Chat'); await r.page.waitForTimeout(800);
+  for (const a of await apartados(r.page, CHAT_APARTADOS)) {
+    assert.equal(a.found, true, `${a.title}: apartado present`); assert.equal(a.headShown, true, `${a.title}: title row visible`);
+    assert.equal(a.fold, 'false', `${a.title}: collapsed by default`); assert.equal(a.bodyShown, false, `${a.title}: nothing of its body is shown`);
+  }
+  assert.equal(await r.page.locator('#engine-status').isVisible(), true, 'the engine banner is a status line and stays visible');
+});
+
+test('HU-044 a click opens an apartado and it works as before; the state survives the page repainting (an agent state push)', async r => {
+  await r.go('Chat'); await r.page.waitForTimeout(800);
+  const google = r.page.locator('section.abito-card', { hasText: 'Google AI' }).first(), field = google.locator('input[id^="chat-key-"]');
+  assert.equal(await field.isVisible(), false);
+  await google.locator('.card-fold').click(); assert.equal(await field.isVisible(), true, 'opened: the key field is there');
+  await field.fill('x'); assert.equal(await field.inputValue(), 'x', 'and usable');
+  // the title row itself opens it too, not only the chevron
+  const others = r.page.locator('section.abito-card', { hasText: 'Otros endpoints' }).first();
+  await others.locator('h2').click(); assert.equal(await others.getByRole('button', { name: 'Configurar proveedor' }).isVisible(), true);
+  const pi = r.page.locator('#provider-pi'); await pi.locator('h2').click(); assert.equal(await pi.getByRole('button', { name: /Conectar/ }).isVisible(), true);
+  await r.page.evaluate(() => window.__emit('agent:state', { connection: 'connected' })); await r.page.waitForTimeout(600);
+  const after = Object.fromEntries((await apartados(r.page, CHAT_APARTADOS)).map(a => [a.title, a.fold]));
+  assert.equal(after['Otros endpoints'], 'true', 'Otros endpoints is still open after a repaint'); assert.equal(after.Pi, 'true', 'Pi is still open after a repaint');
+  assert.equal(after['Google AI'], 'true'); assert.equal(after.Claude, 'false', 'the others stay as the human left them');
+  await others.locator('.card-fold').click(); assert.equal(await others.getByRole('button', { name: 'Configurar proveedor' }).isVisible(), false, 'and it folds again');
+});
+
+test('0.2.1 Chat (L2 A) → HU-044: provider cards fold from their title row; they now START folded and the key field is there once opened', async r => {
   await r.go('Chat');
   const card = r.page.locator('section.abito-card', { hasText: 'Google AI' }).first(), fold = card.locator('.card-fold');
-  assert.equal(await fold.getAttribute('aria-expanded'), 'true');
+  assert.equal(await fold.getAttribute('aria-expanded'), 'false');
   const field = card.locator('input[id^="chat-key-"]');
-  assert.equal(await field.isVisible(), true);
-  await fold.click(); assert.equal(await field.isVisible(), false, 'folded'); assert.equal(await fold.getAttribute('aria-expanded'), 'false');
-  await fold.click(); assert.equal(await field.isVisible(), true);
+  assert.equal(await field.isVisible(), false);
+  await fold.click(); assert.equal(await field.isVisible(), true, 'opened'); assert.equal(await fold.getAttribute('aria-expanded'), 'true');
+  await fold.click(); assert.equal(await field.isVisible(), false);
 });
 
 pageTest('OK Abito', '0.2.1 OK Abito (L2 A): the shared model, language and training are inside the Avanzado fold', async r => {

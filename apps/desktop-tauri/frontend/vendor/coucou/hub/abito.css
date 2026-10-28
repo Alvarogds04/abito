@@ -145,6 +145,9 @@ section.abito-card > h2 { gap: 8px; }
 .voice-advanced > summary { cursor: pointer; font: 600 13px var(--font); padding: 8px 0; }
 
 section.abito-card > [hidden] { display: none !important; }
+/* HU-044: a folded apartado shows its title row (and its state badge) only; the title row is the click target */
+section.foldable.folded > :not(h2):not(.card-state) { display: none !important; }
+section.foldable > h2 { cursor: pointer; }
 /* abito-pausa 0.1.2: dictation is paused, so its sidebar status line is hidden (hub.css gives .hub-status its own display) */
 .hub-status[hidden] { display: none !important; }
 /* Indeterminate: one install has no percentage, so a bar slides until it finishes. */

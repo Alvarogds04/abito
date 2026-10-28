@@ -305,7 +305,7 @@ function winFailure(reason, fail) {
   if (WIN_FAILED.has(reason)) return fail(70, 'apply_failed', 'the plan could not be applied');
   return fail(65, 'unsafe_target', fixedMessage.unsafe);
 }
-const fixedMessage = { unverified: 'the installed Abito files could not be verified; nothing was written', unsafe: 'the target or its folder is not private to this user or goes through a link; nothing was written', usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
+const fixedMessage = { foreignExtension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.', unverified: 'the installed Abito files could not be verified; nothing was written', unsafe: 'the target or its folder is not private to this user or goes through a link; nothing was written', usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
 
 // argv: arguments after `install`. Always prints exactly one JSON line through opts.out; returns the exit code.
 async function runInstallUi(argv, opts = {}) {
@@ -348,6 +348,7 @@ async function runInstallUi(argv, opts = {}) {
   } catch (e) {
     if (e instanceof UiError) return fail(e.exitCode, e.code, e.message);
     if (e instanceof winfs.WinFsError) return winFailure(e.reason, fail);
+    if (e instanceof core.InstallError && e.foreignExtension) return fail(65, 'foreign_extension', fixedMessage.foreignExtension);
     if (e instanceof core.InstallError && e.reason) return winFailure(e.reason, fail);
     if (e instanceof core.InstallError) return e.exitCode === 64 ? fail(64, 'usage', fixedMessage.usage) : fail(e.exitCode, 'refused', fixedMessage.refused);
     return fail(70, 'internal', fixedMessage.internal);

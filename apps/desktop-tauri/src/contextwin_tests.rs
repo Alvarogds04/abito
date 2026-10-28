@@ -140,3 +140,52 @@ fn turning_the_switch_off_drops_the_captured_window() {
     cx.on_chat_open(false, || Some(win("never")));
     assert_eq!(cx.for_turn(true, true), None);
 }
+
+fn row(pid: u32, app: &str, title: &str) -> NativeWindow {
+    NativeWindow { pid, app: app.into(), title: title.into() }
+}
+
+#[test]
+fn native_rows_drop_own_process_shell_desktop_and_untitled_windows_keeping_order() {
+    let rows = vec![row(10, "abito-island", "Abito"), row(20, "explorer", "Program Manager"),
+        row(30, "Code", "main.rs"), row(40, "chrome", "  "), row(50, "firefox", "Docs")];
+    let c = from_native(10, rows);
+    assert_eq!(c.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["main.rs", "Docs"]);
+    assert_eq!(pick_external(&c), Some(ActiveWindow { app: "Code".into(), title: "main.rs".into() }));
+}
+
+#[test]
+fn native_row_with_unknown_app_still_sends_its_title_and_never_errors() {
+    let c = from_native(1, vec![row(2, "", "Task Manager")]);
+    assert_eq!(pick_external(&c), Some(ActiveWindow { app: UNKNOWN_APP.into(), title: "Task Manager".into() }));
+    assert_eq!(from_native(1, vec![]), vec![]);
+}
+
+#[test]
+fn title_less_native_row_keeps_the_app_when_the_os_withholds_titles() {
+    // macOS without screen-recording access: the app name is public, the title is not.
+    let c = from_native_app_only(1, vec![row(2, "Safari", ""), row(1, "Abito", "")]);
+    assert_eq!(pick_external(&c), Some(ActiveWindow { app: "Safari".into(), title: String::new() }));
+}
+
+/// Runs on the Windows and macOS CI runners (HU-050 proof there): the real OS reader must
+/// answer without panicking, without prompting, and never describe the test process itself.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn native_capture_answers_without_panic_and_never_returns_our_own_process() {
+    let _ = titles_allowed();
+    if let Some(w) = capture(None, None) {
+        assert!(!w.app.trim().is_empty());
+        assert!(!w.app.to_lowercase().contains("abito"));
+    }
+}
+
+#[test]
+fn context_text_is_capped_on_every_os_without_splitting_a_character() {
+    let long = "é".repeat(500);
+    let w = pick_external(&[Candidate { app_id: "x".into(), app_name: long.clone(), title: long.clone() }]).unwrap();
+    assert_eq!(w.app.chars().count(), MAX_CONTEXT_CHARS);
+    assert_eq!(w.title.chars().count(), MAX_CONTEXT_CHARS);
+    let short = pick_external(&[c("code", "Code", "main.rs")]).unwrap();
+    assert_eq!((short.app.as_str(), short.title.as_str()), ("Code", "main.rs"), "short text is untouched");
+}

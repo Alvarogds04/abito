@@ -50,6 +50,7 @@ const OPS = new Set(["add", "replace", "remove", "keep"]);
 /** Installer refusal codes we map; everything else is the generic install_failed. */
 const REFUSAL_DETAIL = Object.freeze({
 	not_writable: "not_writable",
+	foreign_extension: "foreign_extension", // HU-052: a Pi extension folder Abito did not install
 	backup_failed: "backup_failed",
 	plan_changed: "plan_changed",
 	audit_unavailable: "audit_unavailable",

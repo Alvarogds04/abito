@@ -377,6 +377,7 @@ test("apply failures map to closed details", async (t) => {
 		[{ exit: 70, stdout: { schema: SCHEMA, ok: false, code: "plan_changed", message: "m" } }, "plan_changed"],
 		[{ exit: 73, stdout: { schema: SCHEMA, ok: false, code: "audit_unavailable", message: "m" } }, "audit_unavailable"],
 		[refusal("not_writable", 65), "not_writable"],
+		[refusal("foreign_extension", 65), "foreign_extension"], // HU-052: a hand-copied Pi extension folder keeps its own detail
 		[refusal("backup_failed", 70), "backup_failed"],
 		[refusal("apply_failed", 70), "install_failed"],
 		[refusal("not_island", 77), "install_failed"],

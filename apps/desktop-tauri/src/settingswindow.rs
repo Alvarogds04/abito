@@ -182,6 +182,9 @@ pub(crate) fn parse_settings_window_action(payload: &Value) -> Option<&'static s
 
 /// Handed to a NEW window before its scripts run: the page to open first. Built only from [`PAGES`].
 pub(crate) fn page_script(page: &str) -> String { format!("window.__abitoHubPage=\"{page}\";") }
+/// HU-045: handed to every NEW settings window: the version of the package it was built from (Cargo.toml, the same value as
+/// tauri.conf.json). One source of truth; the page never writes a version itself.
+pub(crate) fn version_script() -> String { format!("window.__abitoVersion=\"{}\";", env!("CARGO_PKG_VERSION")) }
 /// Sent to a window that already exists. The shell listens for it and shows that page (anything off its own list is ignored).
 pub(crate) fn select_script(page: &str) -> String {
     format!("document.dispatchEvent(new CustomEvent('abito:hub-select',{{detail:\"{page}\"}}));")
@@ -224,6 +227,7 @@ fn open_window(app: &AppHandle, page: Option<&'static str>) -> tauri::Result<()>
         WebviewUrl::App(std::path::PathBuf::from("settings.html")),
     );
     if let Some(page) = page { builder = builder.initialization_script(page_script(page)); }
+    builder = builder.initialization_script(version_script());
     builder
     .title("Ajustes")
     .inner_size(w, h)
@@ -334,6 +338,16 @@ mod tests {
         for page in super::PAGES { assert!(page.bytes().all(|b| b.is_ascii_lowercase()), "{page}"); }
     }
 
+    /// HU-045 (human: «veo que la version que me sale es esta Abito 0.1.0»): Ajustes shows the version of the package it was
+    /// built from, one source of truth (Cargo.toml = tauri.conf.json), handed to the window as one inert assignment.
+    #[test]
+    fn hu045_the_settings_window_is_told_the_package_version() {
+        assert_eq!(super::version_script(), format!("window.__abitoVersion=\"{}\";", env!("CARGO_PKG_VERSION")));
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["version"], env!("CARGO_PKG_VERSION"), "tauri.conf.json and Cargo.toml agree");
+        assert!(env!("CARGO_PKG_VERSION").bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'), "inert in a script");
+    }
+
     /// #366 F093: island-window commands refuse every label but the exact `main`.
     #[test]
     fn f093_main_window_commands_refuse_the_settings_label() {
@@ -385,7 +399,7 @@ mod tests {
     /// never silently become reachable from the settings window.
     #[test]
     fn f093_the_commands_reachable_from_settings_are_pinned_exactly() {
-        const REACHABLE: [&str; 16] = [
+        const REACHABLE: [&str; 17] = [
             "agent_action",
             "daemon_action",
             "dictation_action",
@@ -394,6 +408,7 @@ mod tests {
             "models_action",
             "monitor_action",
             "oauth_action",
+            "pi_install_action",
             "plan_action",
             "prefs_action",
             "recap_action",

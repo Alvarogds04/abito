@@ -243,8 +243,8 @@
     const h = i.hotkey || null;
     const hotkey = !h ? null : {
       combo: String(h.combo || ''), enabled: h.enabled !== false, status: String(h.status || ''),
-      backend: h.backend === 'portal' ? 'portal' : (h.backend === 'gnome' ? 'gnome' : (h.backend === 'win32' ? 'win32' : 'x11')),
-      backendLabel: h.backend === 'portal' ? 'Atajo del sistema' : h.backend === 'gnome' ? 'Atajo de GNOME' : (h.backend === 'win32' ? 'Atajo de Windows' : (h.limited ? 'Atajo limitado (X11)' : 'Atajo de X11')),
+      backend: h.backend === 'portal' ? 'portal' : (h.backend === 'gnome' ? 'gnome' : (h.backend === 'win32' ? 'win32' : (h.backend === 'macos' ? 'macos' : 'x11'))),
+      backendLabel: h.backend === 'portal' ? 'Atajo del sistema' : h.backend === 'gnome' ? 'Atajo de GNOME' : (h.backend === 'win32' ? 'Atajo de Windows' : h.backend === 'macos' ? 'Atajo de macOS' : (h.limited ? 'Atajo limitado (X11)' : 'Atajo de X11')),
       effective: typeof h.effective === 'string' ? h.effective : '',
       note: h.backend === 'gnome' ? (h.status === 'taken' ? 'Esa combinación ya la usa GNOME u otro atajo: elegí otra.' : 'Funciona sin pedir confirmación; podés cambiarla acá.')
         : h.portal_note === 'permission_denied' ? 'Rechazaste el permiso del sistema, por eso usa el atajo limitado.'
@@ -572,6 +572,7 @@
     install_failed: 'No se pudo completar; no se tocó nada.',
     unsafe_target: 'La carpeta o el archivo de configuración no es privado de tu usuario o pasa por un enlace; no se tocó nada.',
     install_unverified: 'No se pudieron verificar los archivos instalados de Abito; no se tocó nada. Reinstalá Abito.',
+    foreign_extension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.',
   });
   const PLAN_FALLBACK = 'Se van a agregar los hooks de Abito. Antes se hace un respaldo.';
   const PLAN_HASH = /^[0-9a-f]{64}$/;

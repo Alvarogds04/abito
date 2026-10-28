@@ -12,6 +12,26 @@ export function action(text: string, fn: () => void, disabled = false): HTMLButt
 }
 export const field = (id: string, title: string, type = 'text', value = '') => h('input', { id, class: 'hub-input', type, value, 'aria-label': title, autocomplete: type === 'password' ? 'new-password' : 'off' }) as HTMLInputElement;
 export const note = (text: string) => h('p', { class: 'hub-note', role: 'status', text });
+// HU-044 (human: «quiero todos los apartados colapsados por defecto» in Ajustes → Chat): an apartado opens FOLDED to its title row (its title
+// and any `.card-state` badge stay visible) and a click on the chevron or on the title row opens it. Folding is one class on the card
+// (`folded`, hidden by CSS), so children appended LATER (the local-models list, a form, a login prompt) fold with it. Which apartados the
+// human opened is a view state only (nothing is stored), kept per key so a repaint that rebuilds a card keeps it as left. `forceOpen`
+// keeps an apartado open while the human is working inside it (an account form, a login in progress).
+const foldOpen = new Map<string, boolean>();
+export function foldable(card: HTMLElement, key: string, forceOpen = false): HTMLElement {
+  const title = card.children[0] as HTMLElement;
+  const fold = h('button', { type: 'button', class: 'card-fold', 'aria-expanded': 'false', 'aria-label': 'Desplegar apartado', text: '▸' });
+  const show = (open: boolean) => {
+    card.classList.toggle('folded', !open);
+    fold.setAttribute('aria-expanded', String(open)); fold.setAttribute('aria-label', open ? 'Plegar apartado' : 'Desplegar apartado'); fold.textContent = open ? '▾' : '▸';
+  };
+  const toggleOpen = () => { const open = fold.getAttribute('aria-expanded') !== 'true'; foldOpen.set(key, open); show(open); };
+  fold.addEventListener('click', e => { e.stopPropagation(); toggleOpen(); });
+  title.addEventListener('click', e => { if (!(e.target as Element).closest('.hub-info-wrap, .card-fold, a, input, select')) toggleOpen(); });
+  card.classList.add('foldable'); title.append(fold);
+  show(forceOpen || foldOpen.get(key) === true);
+  return card;
+}
 // A section with no children yet must not draw an empty card: several pages create the section first and append their own cards or
 // rows afterwards (outside it), and the empty box above them was found by eye on Pills, Integraciones, Chat and Conexiones (#503).
 export const section = (title: string, ...children: HTMLElement[]) =>

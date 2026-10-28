@@ -396,6 +396,9 @@ test('general: sound switch is persisted (default ON), motion is «respect the s
   const win = S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: true, status: 'active', limited: false, backend: 'win32', portal_note: null } });
   assert.equal(win.hotkey.backend, 'win32');
   assert.equal(win.hotkey.backendLabel, 'Atajo de Windows');
+  const mac = S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: true, status: 'active', limited: false, backend: 'macos', portal_note: null } });
+  assert.equal(mac.hotkey.backend, 'macos');
+  assert.equal(mac.hotkey.backendLabel, 'Atajo de macOS');
   const winTaken = S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: true, status: 'taken', limited: false, backend: 'win32', portal_note: null } });
   assert.equal(winTaken.hotkey.backendLabel, 'Atajo de Windows', 'a denied grab still names the right backend');
   assert.equal(S.generalView({ sound: false, motionOverride: true, hotkey: { combo: 'Ctrl+Alt+A', enabled: false, status: 'disabled', limited: false, backend: 'x11', portal_note: null } }).hotkey.enabled, false);
@@ -1047,6 +1050,9 @@ test('details: plan_changed re-shows the NEW plan; audit_unavailable and install
   // HU-047: Windows refusals say why, in their own sentences.
   assert.match(rowOf(plan({ state: 'error', detail: 'unsafe_target', plan_hash: null, summary: null })).note, /privad|enlace/i);
   assert.match(rowOf(plan({ state: 'error', detail: 'install_unverified', plan_hash: null, summary: null })).note, /verific/i);
+  // HU-052: a Pi extension folder Abito did not install gets its own sentence (what to do), never the generic one
+  assert.equal(rowOf(plan({ state: 'error', detail: 'foreign_extension', plan_hash: null, summary: null })).note,
+    'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.');
   assert.match(rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null })).note, /no se tocó|no se pudo/i);
   // an error without a plan cannot be retried blindly with a stale one
   const noPlan = rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null }));

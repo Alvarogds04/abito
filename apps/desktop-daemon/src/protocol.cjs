@@ -576,7 +576,7 @@ function pendingFrame(data) {
 /** Fixed agent table: names never come from the dependency. */
 const AGENT_NAMES = Object.freeze({ pi: "Pi", "claude-code": "Claude Code", codex: "Codex", recap: "Resumen semanal", statusline: "Uso del plan (relay)", "copilot-cli": "Copilot CLI", opencode: "OpenCode" });
 const AGENT_STATES = new Set(["not_connected", "connected", "outdated", "working", "unavailable", "error"]);
-const AGENT_DETAILS = new Set(["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified"]);
+const AGENT_DETAILS = new Set(["config_invalid", "not_writable", "foreign_extension", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified"]);
 const AGENT_SUMMARY_MAX = 400;
 /**
  * Reply/broadcast `agents`: rebuilt field by field from closed vocabularies. THROWS on invalid data

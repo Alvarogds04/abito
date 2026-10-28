@@ -14,6 +14,9 @@ const FILES = Object.freeze(['adapter.cjs', 'ask-tool.cjs', 'config.cjs', 'index
 const hash = b => crypto.createHash('sha256').update(b).digest('hex');
 const refuse = () => core.InstallErrorRefuse('Pi extension ownership or path could not be verified');
 const listing = files => JSON.stringify(files);
+// HU-052: a folder that is there WITHOUT our manifest is somebody else's (a hand copy, another tool): refused with its own code so the
+// human is told what to do. Never adopted, never touched. A folder WITH a manifest that does not verify keeps the generic refusal.
+const foreign = () => Object.assign(core.InstallErrorRefuse('Pi extension folder is not an Abito install'), { foreignExtension: true });
 const sourceRel = name => `desktop-pi/${name === 'index.ts' ? 'pi-extension.ts' : name}`;
 const drive = p => p.slice(0, 2).toLowerCase();
 const rand = () => crypto.randomBytes(6).toString('hex');
@@ -37,6 +40,7 @@ function parents(w, home, create = false) {
 }
 function owned(w, target) {
   if (dirFact(w, target) === null) return null;
+  if (!fs.readdirSync(target).includes(MANIFEST)) throw foreign();
   if (listing(fs.readdirSync(target).sort()) !== listing([...FILES, MANIFEST].sort())) throw refuse();
   const rawFile = w.readPrivate(path.join(target, MANIFEST));
   if (!rawFile || rawFile.size > 16384) throw refuse();

@@ -4,7 +4,7 @@ import { statusDot } from "../settings/parts.js";
 import { providerDef, urlExposure } from "../core/providers.js";
 import { notchSection as section, notchTipSection, notchCard, notchRow as row, notchHint as hint } from "./notch.js";
 import { toggle } from "./ui.js";
-import { session, trusted } from "./runtime.js";
+import { session, trusted, foldable as foldableCard } from "./runtime.js";
 import { t } from "./i18n-es.js";
 import { keyAccountCommand, keyAccountId } from "./keyaccounts.js";
 const UNAVAILABLE = "No disponible todavía";
@@ -315,18 +315,7 @@ async function renderChatSettings({ invoke, V, listen, timers }) {
   }
   const engineSlots = {};
   const engineSlot = (group) => engineSlots[group] = h("div", { id: `chat-engine-slot-${group}` });
-  const foldable = (card) => {
-    const title = card.children[0], body = () => [...card.children].slice(1);
-    const fold = h("button", { type: "button", class: "card-fold", "aria-expanded": "true", "aria-label": "Plegar proveedor", text: "▾" });
-    fold.addEventListener("click", () => {
-      const open = fold.getAttribute("aria-expanded") !== "true";
-      fold.setAttribute("aria-expanded", String(open));
-      fold.setAttribute("aria-label", open ? "Plegar proveedor" : "Desplegar proveedor");
-      fold.textContent = open ? "▾" : "▸";
-      for (const el of body()) el.hidden = !open;
-    });
-    title.append(fold);
-  };
+  const foldable = (card) => foldableCard(card, card.getAttribute("aria-label") || (card.children[0]?.firstElementChild?.textContent || card.children[0]?.textContent || "").replace(/[▾▸]/g, "").trim());
   const apiSection = notchCard("Claude", api.stateBadge, api.stateLabel, api.r, api.fieldError, api.testReason, row(t("Model"), modelPicker("anthropic")), api.feedback, subscriptionRow("anthropic", "claude"), engineSlot("anthropic"));
   apiSection.children[0].prepend(api.dot);
   foldable(apiSection);
@@ -390,7 +379,10 @@ async function renderChatSettings({ invoke, V, listen, timers }) {
     live.disabled = typeof prefs.liveContext !== "boolean";
     ctxBody.append(row(t("Live context"), live), h("div", { class: "hub-note", text: t("When you write in the chat, Abito adds a short read-only summary of what it already knows: your coding-agent sessions, pending questions and the status of your connected integrations. It makes no new requests, and sends no keys, mail bodies or diffs. The chat still cannot run or approve anything. On by default.") }));
     const available = prefs.windowContextAvailable;
-    ctxBody.append(h("div", { class: "hub-note", text: available === true ? "La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL." : available === false ? "La extensión de GNOME no está disponible. En GNOME Wayland no se pueden leer ventanas nativas sin ella; el respaldo X11 solo ve ventanas XWayland." : "No se pudo comprobar la extensión de GNOME." }));
+    if (prefs.windowContextNative === true) {
+      ctxBody.append(h("div", { class: "hub-note", text: "Abito lee la app y el título de la ventana activa del sistema. No se captura la URL." + (typeof prefs.windowContextNote === "string" ? " Contexto " + prefs.windowContextNote + ". Para activarlo: Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla. Abito no pide ese permiso por ti." : "") }));
+    } else
+      ctxBody.append(h("div", { class: "hub-note", text: available === true ? "La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL." : available === false ? "La extensión de GNOME no está disponible. En GNOME Wayland no se pueden leer ventanas nativas sin ella; el respaldo X11 solo ve ventanas XWayland." : "No se pudo comprobar la extensión de GNOME." }));
     if (available !== true) {
       ctxBody.append(
         h("div", { class: "hub-note", text: "Para instalarla, desde la raíz del repositorio ejecuta:" }),
@@ -404,9 +396,11 @@ async function renderChatSettings({ invoke, V, listen, timers }) {
   paintContext();
   const ctxCard = notchTipSection(t("Active window context"), t("When you open the chat, Abito reads the app name and the title of the window you were using and attaches them to your first message. Off by default; nothing is read while it is off. The title goes to the model you chat with."), ctxBody);
   ctxCard.setAttribute("id", "chat-window-context");
+  foldable(ctxCard);
   const localCard = section(t("Local models"), locals);
   localCard.setAttribute("title", t("Chat with a model you run yourself: Ollama or LM Studio (leave the address empty for the usual one on this computer), or any server that speaks the OpenAI API, such as vLLM or llama.cpp. Once connected, pick it above the chat box."));
   localCard.setAttribute("id", "chat-local-models");
+  foldable(localCard);
   const engineOthers = h("div", { id: "chat-engine-others" });
   root.append(
     apiSection,

@@ -46,6 +46,9 @@ mod planhost;
 mod dictationhost;
 mod voicehost;
 mod settingshost;
+mod islandhit;
+mod islandclick;
+mod pihost;
 mod settingswindow;
 mod integrationshost;
 mod spotifyhost;
@@ -109,6 +112,10 @@ fn ensure_island_window(app: &AppHandle) -> Rect {
 /// Set once a clean quit starts (port of main.cjs `quitting`): guards the
 /// close-request handler and stops the background threads.
 static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// A clean quit has started (read by background loops that must stop and leave the window clickable).
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+pub(crate) fn quitting() -> bool { QUITTING.load(Ordering::SeqCst) }
 
 fn now_ms() -> u128 {
     std::time::SystemTime::now()
@@ -975,6 +982,7 @@ fn drag_press(app: AppHandle, webview: tauri::Webview, state: State<AppState>, x
     // #366: island-only; the settings window runs the same page and must not drive the island.
     if settingswindow::main_window_only(webview.label()).is_err() { return; }
     state.user_touch.store(true, Ordering::SeqCst);
+    islandclick::DRAGGING.store(true, Ordering::SeqCst); // HU-043: a press must never find the window click-through
     let Some(win) = main_window(&app) else { return };
     let io = TauriIo(&win);
     state.core.lock().expect("core lock").press(&io, (x, y));
@@ -998,6 +1006,7 @@ fn drag_move(app: AppHandle, webview: tauri::Webview, state: State<AppState>, x:
 #[tauri::command]
 fn drag_release(app: AppHandle, webview: tauri::Webview, state: State<AppState>, x: f64, y: f64, cancelled: bool) -> String {
     if settingswindow::main_window_only(webview.label()).is_err() { return "ignored".to_string(); }
+    islandclick::DRAGGING.store(false, Ordering::SeqCst); // HU-043: the press is over, click-through may resume
     let area = refresh_work_area(&app, &state);
     let Some(win) = main_window(&app) else { return "ignored".to_string() };
     let io = TauriIo(&win);
@@ -1981,6 +1990,7 @@ fn main() {
             voicehost::voice_action,
             settingshost::settings_view,
             settingshost::daemon_action,
+            pihost::pi_install_action,
             settingswindow::settings_window_action,
             specialistshost::specialists_action,
             record_facade_evidence,
@@ -2063,6 +2073,7 @@ fn main() {
             // Load preferences before placement so the chosen monitor is available.
             // The legacy position preference stays on disk but is never applied.
             settingshost::start(&handle);
+            islandclick::start(&handle); // HU-043: Windows/macOS only (no-op on Linux, which has the GDK input region)
             dictationhost::start(&handle);
             voicehost::start(&handle);
             characterhost::manage(&handle);
