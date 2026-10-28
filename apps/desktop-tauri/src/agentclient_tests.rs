@@ -400,12 +400,31 @@ fn a_plan_that_does_not_look_like_ours_never_reaches_the_page() {
 #[test]
 fn the_three_new_details_are_part_of_the_closed_set() {
     let mut st = ClientState::connected();
-    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified", "foreign_extension"] {
+    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified", "foreign_extension", "unsafe_folder"] {
         st.apply(&json!({"type":"agents","agents":[{"id":"codex","state":"error","detail":d}]})).unwrap();
         assert_eq!(serde_json::to_value(&st).unwrap()["agents"][0]["detail"], json!(d), "{d}");
     }
     st.apply(&json!({"type":"agents","agents":[{"id":"codex","state":"error","detail":"stderr: /home/a/secret"}]})).unwrap();
     assert_eq!(serde_json::to_value(&st).unwrap()["agents"][0]["detail"], json!(null));
+}
+
+#[test]
+fn an_unsafe_folder_is_forwarded_only_with_a_closed_reason_and_for_that_detail() {
+    let mut st = ClientState::connected();
+    let get = |st: &ClientState, k: &str| serde_json::to_value(st).unwrap()["agents"][0].get(k).cloned().unwrap_or(json!(null));
+    st.apply(&json!({"type":"agents","agents":[{"id":"pi","state":"error","detail":"unsafe_folder","folder":"/home/u/.pi","folder_reason":"writable"}]})).unwrap();
+    assert_eq!((get(&st, "folder"), get(&st, "folder_reason")), (json!("/home/u/.pi"), json!("writable")));
+    for bad in [
+        json!({"detail":"unsafe_folder","folder":"/home/u/.pi","folder_reason":"nope"}),
+        json!({"detail":"unsafe_folder","folder":"/a\nb","folder_reason":"acl"}),
+        json!({"detail":"unsafe_folder","folder":"","folder_reason":"acl"}),
+        json!({"detail":"install_failed","folder":"/home/u/.pi","folder_reason":"acl"}),
+    ] {
+        let mut a = json!({"id":"pi","state":"error"});
+        a.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        st.apply(&json!({"type":"agents","agents":[a]})).unwrap();
+        assert_eq!((get(&st, "folder"), get(&st, "folder_reason")), (json!(null), json!(null)), "{bad}");
+    }
 }
 
 // ---- #414: the connected providers' catalogue (Ajustes → Modelos) -----------------------------------------
