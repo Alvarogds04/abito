@@ -17,12 +17,8 @@ function darwinParentExecutable(pid, { uid = process.getuid?.(), exec = execFile
   return facts.executable;
 }
 function sessionHelper() {
-  // Same installed/development siblings as desktop-daemon/sessionHelperCandidates, never PATH or cwd.
-  const candidates = [path.resolve(__dirname, '..', '..', 'abito-private-session.exe'),
-    path.resolve(__dirname, '..', '..', 'desktop-tauri', 'target', 'debug', 'abito-private-session.exe')];
-  return candidates.find(file => {
-    try { const st = fs.lstatSync(file); return st.isFile() && !st.isSymbolicLink(); } catch { return false; }
-  });
+  // The same single resolver as the daemon: installed sibling whose sha256 matches abito-install.json (HU-047 M2).
+  return require('./win-fs.cjs').resolveHelper();
 }
 function windowsParentExecutable(pid, { helper = sessionHelper(), exec = execFileSync } = {}) {
   if (!Number.isSafeInteger(pid) || pid <= 1 || pid > 0xffffffff || !helper) return undefined;

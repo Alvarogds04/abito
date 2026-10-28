@@ -18,9 +18,17 @@ for (const [code, [word, detail]] of Object.entries(messages)) {
   const view = S.connectionView(state);
   assert.equal(view.word, word);
   assert.equal(view.aria, detail);
+  // HU-046 (parent seq36): the island's own chat view gets NO install button. Its row keeps the plain label and points to Ajustes → Chat,
+  // where «Instalar Pi» lives; the command line stays in Ajustes' own text (S.connectionView above).
   const row = O.engineRowView({ kind: 'down' }, state);
   assert.equal(row.label, word);
-  assert.ok(row.aria.includes(detail));
+  const ajustes = code === 'pi_missing' ? '«Instalar Pi» está en Ajustes → Chat.' : 'instalalo desde nodejs.org.';
+  assert.ok(row.aria.includes(ajustes), `${code}: the island row points where the fix is: ${row.aria}`);
+  if (code === 'pi_missing') {
+    assert.equal(row.target, 'accounts:motor', 'the existing link: settings.js opens Ajustes on the Chat page for every engine deep link');
+    assert.ok(!row.aria.includes('npm install'), 'the island does not ask the human to type a command');
+    assert.equal(row.link, 'Abrir Chat', 'a link, not an install button');
+  }
 }
 assert.equal(S.connectionView({ connection: 'no_daemon' }).word, 'Sin motor');
 assert.equal(S.connectionView({ connection: 'lost', last_error: { code: 'pi_missing' } }).word, 'Motor caído');

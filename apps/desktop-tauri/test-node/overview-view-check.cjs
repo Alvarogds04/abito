@@ -911,6 +911,9 @@ test('U3a win32 hotkey feedback: «Atajo sin soporte» says so WITHOUT the X11 e
   assert.match(unsup.aria, /no se pudo registrar/);
   const taken = O.hotkeyView(wv('taken'));
   assert.equal(taken.word, 'Atajo ocupado'); assert.match(taken.aria, /otra aplicación/);
+  const mac = O.hotkeyView(wv('unsupported', { backend: 'macos' }));
+  assert.equal(mac.word, 'Atajo sin soporte'); assert.doesNotMatch(mac.aria, /X11/, 'no X server on macOS either');
+  assert.equal(O.hotkeyView(wv('active', { backend: 'macos' })), null);
   assert.equal(O.hotkeyView(wv('active')), null, 'a real Win32 grab that works says nothing');
   assert.equal(O.hotkeyView(wv('disabled')), null);
 });

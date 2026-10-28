@@ -11,7 +11,7 @@ const script = path.join(crate, 'packaging/windows/stage-runtime.cjs');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-win-stage-'));
 const out = path.join(scratch, 'payload');
 const files = [...L.DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...L.HARNESS_FILES.map(f => `desktop-harness/${f}`), ...L.PI_FILES.map(f => `desktop-pi/${f}`)].sort();
-const bins = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe'];
+const bins = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe', 'abito-install.json'];
 function run(...args) { return spawnSync(process.execPath, [script, '--out', out, ...args], { encoding: 'utf8' }); }
 function entries(dir, prefix = '') { return fs.readdirSync(dir).flatMap(n => fs.statSync(path.join(dir, n)).isDirectory() ? entries(path.join(dir, n), `${prefix}${n}/`) : [`${prefix}${n}`]).sort(); }
 try {
@@ -66,6 +66,16 @@ try {
   r = run(); assert.equal(r.status, 1); assert.equal(r.stdout, ''); assert.match(r.stderr, /unexpected staged entry: unlisted.txt/);
   assert.equal(fs.readFileSync(path.join(out, 'unlisted.txt'), 'utf8'), 'unlisted');
   assert.deepEqual(fs.readFileSync(path.join(out, 'runtime.nsh')), before);
+  // HU-047: the install manifest lists the helper and every closed runtime file with sha256 (consumed by win-fs.cjs).
+  const distFixture = path.join(scratch, 'dist-manifest'); fs.mkdirSync(distFixture);
+  fs.writeFileSync(path.join(distFixture, 'abito-private-session.exe'), 'helper fixture');
+  r = spawnSync(process.execPath, [path.join(crate, 'packaging/windows/install-manifest.cjs'), '--dist', distFixture], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const manifest = JSON.parse(fs.readFileSync(path.join(distFixture, 'abito-install.json'), 'utf8'));
+  assert.equal(manifest.schema, 'abito-install/1');
+  assert.deepEqual(Object.keys(manifest.files).sort(), ['abito-private-session.exe', ...files].sort());
+  for (const f of files) assert.equal(manifest.files[f], require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(crate, '..', f))).digest('hex'));
+  assert.ok(files.includes('desktop-harness/src/win-fs.cjs') && files.includes('desktop-harness/src/install-pi-win.cjs'));
   // Exercise receipt generation/check through its public CLI in an isolated source tree.
   const fixture = path.join(scratch, 'source');
   const fixtureCrate = path.join(fixture, 'apps/desktop-tauri');

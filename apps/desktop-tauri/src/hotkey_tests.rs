@@ -579,3 +579,32 @@ fn an_unknown_id_a_release_or_a_target_that_was_not_bound_routes_nowhere() {
     assert_eq!(route_activation(&sig(Target::ToggleIsland.portal_id(), false), &binds), None, "a release never fires");
     assert_eq!(route_activation(&sig(Target::DesktopToggle.portal_id(), true), &binds), None, "disabled target is not bound");
 }
+
+#[test]
+fn mac_modifier_masks_and_keycodes_match_the_carbon_headers() {
+    // HIToolbox Events.h: cmdKey 0x100, shiftKey 0x200, optionKey 0x800, controlKey 0x1000.
+    let c = Combo::parse("Ctrl+Alt+Shift+Super+A").unwrap();
+    assert_eq!(c.mac_modifiers(), 0x100 | 0x200 | 0x800 | 0x1000);
+    assert_eq!(Combo::parse("Ctrl+Alt+A").unwrap().mac_modifiers(), 0x1000 | 0x800);
+    assert_eq!(Combo::parse("Super+Space").unwrap().mac_modifiers(), 0x100);
+    // Carbon kVK_ANSI_* / kVK_* virtual key codes (physical keys, not characters).
+    for (text, code) in [("A", 0), ("S", 1), ("Z", 6), ("Q", 12), ("M", 46), ("P", 35),
+        ("1", 18), ("5", 23), ("0", 29), ("9", 25), ("Space", 49), ("Left", 123), ("Right", 124),
+        ("F1", 122), ("F4", 118), ("F5", 96), ("F12", 111)] {
+        assert_eq!(Combo::parse(&format!("Ctrl+{text}")).unwrap().mac_keycode(), code, "{text}");
+    }
+}
+
+#[test]
+fn every_acceptable_key_has_a_distinct_mac_keycode() {
+    let mut seen = std::collections::HashSet::new();
+    let mut keys: Vec<String> = ('A'..='Z').map(String::from).collect();
+    keys.extend(('0'..='9').map(String::from));
+    keys.extend((1..=12).map(|n| format!("F{n}")));
+    keys.extend(["Space", "Left", "Right"].map(String::from));
+    for k in keys {
+        let code = Combo::parse(&format!("Ctrl+{k}")).unwrap().mac_keycode();
+        assert!(seen.insert(code), "{k} collides on keycode {code}");
+    }
+    assert_eq!(seen.len(), 26 + 10 + 12 + 3);
+}

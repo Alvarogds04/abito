@@ -184,7 +184,10 @@ test('HU-015: the daemon-free Agentes entry ships, closed under require(), besid
     const src = fs.readFileSync(path.join(crate, '..', 'desktop-daemon', rel), 'utf8');
     for (const m of src.matchAll(/require\(['"](\.{1,2}\/[^'"]+)['"]\)/g)) {
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
-      assert(L.DAEMON_FILES.includes(target), `${rel} requires ${m[1]} (${target}) which is not shipped`);
+      // HU-047: the daemon reaches the sibling harness package of the same stage (desktop-daemon/ and desktop-harness/
+      // are siblings), so a ../desktop-harness/<file> target is shipped when it is in HARNESS_FILES.
+      const sibling = target.startsWith('../desktop-harness/') && L.HARNESS_FILES.includes(target.slice('../desktop-harness/'.length));
+      assert(L.DAEMON_FILES.includes(target) || sibling, `${rel} requires ${m[1]} (${target}) which is not shipped`);
     }
   }
   const d = fakeStage();

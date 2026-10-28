@@ -69,7 +69,8 @@ test('S26 Conexiones: one card per provider, each with its state (icon + word) a
   const state = c => words(all(c).find(e => e.className.split(' ').includes('card-state')));
   assert.equal(state(pi), '✗ sin cuenta'); assert.equal(state(claude), '✓ dev@x');
   assert(btn(pi, 'Conectar…')); assert(!btn(pi, 'Salir')); assert(btn(claude, 'Salir')); assert(!btn(claude, 'Conectar…'));
-  const actions = c => all(c).filter(e => e.tagName === 'button' && !e.hidden && !e.className.split(' ').includes('hub-icon'));
+  // HU-044: the apartado chevron (.card-fold) is chrome that folds the card, not an account action
+  const actions = c => all(c).filter(e => e.tagName === 'button' && !e.hidden && !e.className.split(' ').some(k => k === 'hub-icon' || k === 'card-fold'));
   assert.equal(actions(pi).length, 1, 'ONE primary action on the Pi card'); assert.equal(actions(claude).length, 1, 'ONE primary action on the Claude card');
   assert.deepEqual(ui.children.map(e => e.attrs?.id).filter(id => /^(engine-status|provider-)/.test(id || '')), ['engine-status', 'provider-pi', 'provider-claude'], 'state first, then the accounts in the engine order');
 });
@@ -86,7 +87,7 @@ test('S26 Conexiones: Conectar… and Salir send the same closed login/logout co
 
 test('S26 Conexiones: the unavailable engine disables the account actions and says why; nothing is invented as connected', async () => {
   const { ui } = await mount(base({ connection: 'no_daemon' }));
-  assert(all(byId(ui, 'provider-pi')).filter(e => e.tagName === 'button').every(e => e.disabled), 'no engine: nothing to connect to');
+  assert(all(byId(ui, 'provider-pi')).filter(e => e.tagName === 'button' && !e.className.split(' ').includes('card-fold')).every(e => e.disabled), 'no engine: nothing to connect to (the HU-044 chevron only folds the card)');
   assert(words(byId(ui, 'engine-status')).includes('El motor del agente no está corriendo'));
 });
 
@@ -108,7 +109,7 @@ test('S5 Chat: prefix aliases share the matching card slot; unknown providers an
     assert.deepEqual(all(slots[group]).map(e => e.attrs.id).filter(id => id?.startsWith('provider-')), expected.map(id => `provider-${id}`));
   }
   assert(!words(slots['']).includes('key-openai')); assert(words(slots['']).includes('custom-endpoint'));
-  assert.equal(all(slots['']).filter(e => e.tagName === 'h2' && words(e) === 'Otros endpoints').length, 1);
+  assert.equal(all(slots['']).filter(e => e.tagName === 'h2' && words(e).replace(/[▸▾]/g, '').trim() === 'Otros endpoints').length, 1); // HU-044: the apartado chevron is part of the heading
   assert(!all(ui).some(e => e.attrs.id?.startsWith('provider-')), 'no second provider list under the engine line');
   events['agent:state']({ payload: { connection: 'lost' } });
   assert.equal(all(slots.anthropic).filter(e => e.attrs.id === 'provider-claude-code').length, 1, 'repaint replaces rather than duplicates slotted rows');

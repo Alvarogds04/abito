@@ -57,6 +57,66 @@ pub fn island_root(env_dir: Option<&str>, local_app_data: Option<&str>) -> Optio
     Some(canonical)
 }
 
+/// Installer owner policy: the current user, or BUILTIN\Administrators ONLY
+/// when the current token is elevated (elevated tokens default-own to BA).
+pub fn install_owner_ok(owner: &str, current_user: &str, elevated: bool) -> bool {
+    owner == current_user || (elevated && owner == SID_ADMINISTRATORS)
+}
+
+/// Directory/file verdict for hook and Pi installation: stricter owner rule
+/// than `dacl_private`, same principal set. A missing/NULL DACL is refused.
+pub fn install_acl_private(owner: &str, current_user: &str, elevated: bool, allowed_entries: Option<&[String]>) -> bool {
+    install_owner_ok(owner, current_user, elevated) && dacl_private(current_user, current_user, allowed_entries)
+        && allowed_entries.is_some_and(|e| e.iter().all(|sid| sid == current_user || sid == SID_SYSTEM || sid == SID_ADMINISTRATORS))
+}
+
+const RESERVED: [&str; 30] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "COM\u{b9}", "COM\u{b2}", "COM\u{b3}", "LPT\u{b9}", "LPT\u{b2}", "LPT\u{b3}"];
+
+/// Target paths the native filesystem helper accepts: `X:\a\b`, normalized, no
+/// UNC, device (`\\?\`, `\\.\`), stream (`:`), reserved-name, `.`/`..` or
+/// trailing dot/space components. Purely lexical; the helper still checks reparse points.
+pub fn fs_path_ok(path: &str) -> bool {
+    let b = path.as_bytes();
+    if path.len() > 520 || b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' { return false; }
+    path[3..].split('\\').all(|c| {
+        !c.is_empty() && c != "." && c != ".." && !c.ends_with(['.', ' '])
+            && !c.chars().any(|ch| ch.is_control() || "<>:\"|?*/~".contains(ch))
+            && !RESERVED.contains(&c.split('.').next().unwrap_or("").to_ascii_uppercase().as_str())
+    })
+}
+
+/// What the target must hold for `--write-private` to proceed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expect { Absent, Sha256(String) }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FsCommand {
+    CheckPath(String),
+    MakeDir(String),
+    WritePrivate { path: String, expect: Expect },
+    Move { from: String, to: String },
+    Delete(String),
+}
+
+/// Fixed argv shapes only; anything else is None (the helper then exits 1).
+pub fn parse_fs_args(args: &[String]) -> Option<FsCommand> {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    match a.as_slice() {
+        ["--check-path", p] if fs_path_ok(p) => Some(FsCommand::CheckPath((*p).into())),
+        ["--make-dir", p] if fs_path_ok(p) => Some(FsCommand::MakeDir((*p).into())),
+        ["--delete", p] if fs_path_ok(p) => Some(FsCommand::Delete((*p).into())),
+        ["--write-private", p, "--expect", e] if fs_path_ok(p) => {
+            let expect = if *e == "none" { Expect::Absent }
+                else if e.len() == 64 && e.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) { Expect::Sha256((*e).into()) }
+                else { return None };
+            Some(FsCommand::WritePrivate { path: (*p).into(), expect })
+        }
+        ["--move", f, t] if fs_path_ok(f) && fs_path_ok(t) && !f.eq_ignore_ascii_case(t) => Some(FsCommand::Move { from: (*f).into(), to: (*t).into() }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +173,48 @@ mod tests {
         }
         assert!(island_root(None, Some("rel")).is_none());
         assert!(island_root(None, None).is_none());
+    }
+    #[test]
+    fn install_owner_admins_only_when_elevated() {
+        assert!(install_owner_ok(ME, ME, false));
+        assert!(install_owner_ok(ME, ME, true));
+        assert!(!install_owner_ok(SID_ADMINISTRATORS, ME, false));
+        assert!(install_owner_ok(SID_ADMINISTRATORS, ME, true));
+        assert!(!install_owner_ok(SID_SYSTEM, ME, true));
+        assert!(!install_owner_ok("S-1-5-21-1-2-3-1002", ME, true));
+    }
+    #[test]
+    fn install_acl_needs_install_owner_and_private_principals() {
+        assert!(install_acl_private(ME, ME, false, Some(&v(&[ME, SID_SYSTEM, SID_ADMINISTRATORS]))));
+        assert!(!install_acl_private(SID_ADMINISTRATORS, ME, false, Some(&v(&[ME]))));
+        assert!(install_acl_private(SID_ADMINISTRATORS, ME, true, Some(&v(&[ME]))));
+        assert!(!install_acl_private(ME, ME, true, Some(&v(&[ME, "S-1-1-0"]))));
+        assert!(!install_acl_private(ME, ME, true, None));
+    }
+    #[test]
+    fn fs_paths_are_plain_drive_letter_absolute() {
+        for ok in [r"C:\Users\a\.claude\settings.json", r"d:\x\y", r"C:\a b\c.json"] { assert!(fs_path_ok(ok), "{ok}"); }
+        for bad in ["", r"C:\", r"C:", "C:/x/y", r"\\server\share\x", r"\\?\C:\x", r"\\.\pipe\x", r"rel\x", r"C:\a\..\b", r"C:\a\.\b",
+            r"C:\a\\b", r"C:\a\b\", r"C:\a\b.txt:ads", "C:\\a\\b\0", r"C:\a\NUL", r"C:\a\com1.txt", r"C:\a\b ", r"C:\a\b.", r"C:\a\b*", "C:\\a\\\u{1}", "C:\\a\\COM\u{b9}", "C:\\a\\lpt\u{b2}.txt", r"C:\a\PROGRA~1\x", "C:\\a\\CONIN$"] {
+            assert!(!fs_path_ok(bad), "{bad:?}");
+        }
+        assert!(!fs_path_ok(&format!(r"C:\{}", "a".repeat(600))));
+    }
+    #[test]
+    fn fs_args_have_one_fixed_shape_per_command() {
+        let a = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let p = r"C:\Users\a\.claude\settings.json";
+        let h = "a".repeat(64);
+        assert_eq!(parse_fs_args(&a(&["--check-path", p])), Some(FsCommand::CheckPath(p.into())));
+        assert_eq!(parse_fs_args(&a(&["--make-dir", p])), Some(FsCommand::MakeDir(p.into())));
+        assert_eq!(parse_fs_args(&a(&["--delete", p])), Some(FsCommand::Delete(p.into())));
+        assert_eq!(parse_fs_args(&a(&["--write-private", p, "--expect", "none"])), Some(FsCommand::WritePrivate { path: p.into(), expect: Expect::Absent }));
+        assert_eq!(parse_fs_args(&a(&["--write-private", p, "--expect", &h])), Some(FsCommand::WritePrivate { path: p.into(), expect: Expect::Sha256(h.clone()) }));
+        assert_eq!(parse_fs_args(&a(&["--move", p, r"C:\Users\a\b"])), Some(FsCommand::Move { from: p.into(), to: r"C:\Users\a\b".into() }));
+        for bad in [vec![], vec!["--check-path"], vec!["--check-path", "rel"], vec!["--check-path", p, "x"], vec!["--write-private", p],
+            vec!["--write-private", p, "--expect", "ABC"], vec!["--write-private", p, "--expect", &"A".repeat(64)], vec!["--write-private", p, "--expect", "none", "x"],
+            vec!["--move", p], vec!["--move", p, "rel"], vec!["--move", p, p], vec!["--make-dir", r"\\?\C:\x"], vec!["--unknown", p]] {
+            assert!(parse_fs_args(&a(&bad)).is_none(), "{bad:?}");
+        }
     }
 }

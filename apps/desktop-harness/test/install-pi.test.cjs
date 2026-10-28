@@ -82,6 +82,40 @@ test('Pi refuses foreign targets and symlinks without touching their bytes', t =
   }
 });
 
+// HU-052: a hand-copied extension (no manifest) is refused with its OWN code and sentence, never adopted and never touched.
+const FOREIGN_SENTENCE = 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.';
+test('Pi names a hand-copied extension folder (no manifest) as foreign_extension, preview and apply, and never touches it', t => {
+  const f = fixture(t); fs.mkdirSync(f.target, { recursive: true, mode: 0o700 });
+  // the layout of the real pre-release hand copy: other file names, a SOURCE_COMMIT, no manifest
+  for (const name of ['SOURCE_COMMIT', 'adapter.cjs', 'pi-extension.ts', 'protocol.ts', 'index.ts']) fs.writeFileSync(path.join(f.target, name), `// hand copy ${name}`);
+  const before = snapshot(f.home);
+  for (const args of [[], ['--remove']]) {
+    const r = f.run(...args);
+    assert.equal(r.code, 65, args.join(' ')); assert.equal(r.value.ok, false);
+    assert.equal(r.value.code, 'foreign_extension', args.join(' '));
+    assert.equal(r.value.message, FOREIGN_SENTENCE);
+  }
+  assert.deepEqual(snapshot(f.home), before, 'not a byte of the user folder changed');
+});
+
+test('Pi keeps the generic refusal for a symlink target and for a modified Abito copy (only a folder WITHOUT a manifest is foreign_extension)', t => {
+  const f = fixture(t); fs.mkdirSync(path.dirname(f.target), { recursive: true });
+  const other = path.join(f.home, 'other'); fs.mkdirSync(other); fs.symlinkSync(other, f.target);
+  assert.equal(f.run().value.code, 'refused');
+  const g = fixture(t); assert.equal(g.apply(g.run().value.plan_hash).code, 0);
+  fs.writeFileSync(path.join(g.target, 'user.txt'), 'keep');                    // an Abito folder with an extra file: it HAS a manifest
+  const r = g.run('--remove'); assert.equal(r.code, 65); assert.equal(r.value.code, 'refused');
+});
+
+// HU-052 / platform parity: HU-047 made the Pi extension install work on Windows too, so the usage text must not say otherwise.
+test('the Pi install usage line (no --json) is a usage error that names all three systems and never claims «Linux/macOS only»', () => {
+  const r = spawnSync(process.execPath, [CLI, 'install', 'pi'], { encoding: 'utf8', timeout: 10000, env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(r.status, 64);
+  assert.match(r.stderr, /^usage: abito-hook install pi --user /);
+  assert.doesNotMatch(r.stderr, /Linux\/macOS only/);
+  assert.match(r.stderr, /Linux, macOS and Windows/);
+});
+
 test('Pi rejects stale shown plans before changing the target', t => {
   const f = fixture(t), preview = f.run(); assert.equal(preview.code, 0);
   fs.mkdirSync(f.target, { recursive: true }); fs.writeFileSync(path.join(f.target, 'index.ts'), '// foreign arrived');

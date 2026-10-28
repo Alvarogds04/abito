@@ -291,3 +291,26 @@ fn early_child_exit_is_reaped_at_runtime_and_reported() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+
+// HU-046 (human: «Instalar Pi»): once Pi gets installed the host must start WITHOUT restarting Abito, and the earlier
+// «pi_missing» failure must be forgotten: `agent_action` answers `startup_failed` for as long as `failure()` is set, so a
+// success that left it set would keep the chat reading «Falta Pi» after a good install. (The manual «Reiniciar» had the same flaw.)
+#[test]
+fn a_successful_start_forgets_the_failure_of_an_earlier_one() {
+    use abito_island::daemonhost::{HostSlot, StartupFailure};
+    let _guard = PROCESS_TEST_LOCK.lock().unwrap();
+    let root = TestDir::new().unwrap();
+    let script = root.path().join("host.sh");
+    executable(&script, "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n");
+    let slot = HostSlot::default();
+    slot.start_with(|| Err(StartupFailure::PiMissing));
+    assert_eq!(slot.failure(), Some(StartupFailure::PiMissing));
+    assert_eq!(slot.pid(), None);
+    slot.start_with(|| Host::spawn_command(Command::new(&script)).map_err(|_| StartupFailure::SpawnFailed));
+    assert_eq!(slot.failure(), None, "Pi is installed now: the old failure must not keep answering");
+    assert!(slot.pid().is_some(), "the host runs without restarting the app");
+    slot.stop();
+    // and a later failure is recorded again, not swallowed
+    slot.start_with(|| Err(StartupFailure::NodeMissing));
+    assert_eq!(slot.failure(), Some(StartupFailure::NodeMissing));
+}

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const core = require('./install-claude.cjs');
+const winfs = require('./win-fs.cjs');
 const MANIFEST = '.abito-manifest.json';
 const SCHEMA = 'abito-pi-extension/1';
 const FILES = Object.freeze(['adapter.cjs', 'ask-tool.cjs', 'config.cjs', 'index.ts', 'native-ask.cjs', 'questions.cjs', 'security.cjs', 'windows-transport.cjs']);
@@ -11,6 +12,9 @@ const SOURCE = path.resolve(__dirname, '../../desktop-pi');
 const hash = b => crypto.createHash('sha256').update(b).digest('hex');
 const refuse = () => core.InstallErrorRefuse('Pi extension ownership or path could not be verified');
 const listing = files => JSON.stringify(files);
+// HU-052: a folder that is there WITHOUT our manifest is somebody else's (a hand copy, another tool): refused with its own code so the
+// human is told what to do. Never adopted, never touched. A folder WITH a manifest that does not verify keeps the generic refusal.
+const foreign = () => Object.assign(core.InstallErrorRefuse('Pi extension folder is not an Abito install'), { foreignExtension: true });
 function dirCheck(dir, uid) {
   const st = fs.lstatSync(dir);
   if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== uid || (st.mode & 0o022) || fs.realpathSync(dir) !== dir) throw refuse();
@@ -45,6 +49,7 @@ function bytes(file, uid, source = false, max = 1024 * 1024) {
 }
 function owned(target, uid) {
   try { dirCheck(target, uid); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+  if (!fs.readdirSync(target).includes(MANIFEST)) throw foreign();
   if (listing(fs.readdirSync(target).sort()) !== listing([...FILES, MANIFEST].sort())) throw refuse();
   const raw = bytes(path.join(target, MANIFEST), uid, false, 16384);
   let manifest;
@@ -88,6 +93,7 @@ function pruneBackups(root, keep, uid) {
   }
 }
 function planPi({home, uid, remove, execPath, binPath}) {
+  if (winfs.active()) return require('./install-pi-win.cjs').planPi({home, remove, execPath, binPath});
   const parent = parents(home, uid);
   const target = path.join(parent, 'abito-island');
   const root = backupRoot(home, uid);
@@ -123,6 +129,7 @@ function cleanStage(dir) {
   } catch { /* leave evidence, never recursively remove unknown data */ }
 }
 async function applyPi(plan, {backupPath, out, err}) {
+  if (winfs.active()) return require('./install-pi-win.cjs').applyPi(plan, {backupPath, out, err});
   let stage = null, saved = false, published = false;
   try {
     if (!same(plan)) { err('changed since the preview'); return 70; }

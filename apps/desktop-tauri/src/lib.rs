@@ -25,6 +25,7 @@ pub mod agentconn;
 pub mod agentconn;
 pub mod winpolicy;
 pub mod winipc;
+pub mod winfs;
 pub mod approval;
 pub mod bridge;
 pub mod card;
@@ -44,6 +45,7 @@ pub mod sessionterm;
 pub mod github;
 pub mod githubcmd;
 pub mod daemonhost;
+pub mod piinstall;
 #[cfg(any(debug_assertions, feature = "probe"))]
 pub mod fakebridge;
 #[cfg(any(debug_assertions, feature = "probe"))]

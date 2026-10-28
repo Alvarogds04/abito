@@ -155,7 +155,7 @@ fn target_private(target: &std::path::Path, sid: &str) -> bool {
 fn run() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.as_slice() == ["--help"] {
-        println!("Usage: abito-private-session [--verify | --parent-check <pid> | --check-target <agent-id>]\nNo arguments: publish bounded session JSON from stdin.\n--verify: read-only canonical session ACL/server identity/hello-ready check; silent exit 0 on success, 1 on refusal. No path arguments.\n--parent-check <pid>: Windows own-user process image/SID evidence as bounded JSON; silent exit 1 if unavailable.\n--check-target <agent-id>: read-only Windows default hook target owner/DACL/reparse check (claude, codex, copilot, opencode, recap, statusline); silent exit 0 when private, 1 otherwise. Does not authorize installation or check audit/side files.");
+        println!("Usage: abito-private-session [--verify | --parent-check <pid> | --check-target <agent-id> | --check-path <p> | ...]\nNo arguments: publish bounded session JSON from stdin.\n--verify: read-only canonical session ACL/server identity/hello-ready check; silent exit 0 on success, 1 on refusal. No path arguments.\n--parent-check <pid>: Windows own-user process image/SID evidence as bounded JSON; silent exit 1 if unavailable.\n--check-path|--make-dir|--delete <abs path>, --move <from> <to>, --write-private <path> --expect none|<sha256> (stdin): Windows installer filesystem operations with owner/DACL/reparse checks; one JSON line abito-fs/1, exit 1 on refusal.\n--check-target <agent-id>: read-only Windows default hook target owner/DACL/reparse check (claude, codex, copilot, opencode, recap, statusline); silent exit 0 when private, 1 otherwise. Does not authorize installation or check audit/side files.");
         return 0;
     }
     if args.first().map(String::as_str) == Some("--parent-check") {
@@ -176,6 +176,17 @@ fn run() -> i32 {
         }
         #[cfg(not(windows))]
         { let _ = parts; return 1; }
+    }
+    if let Some(cmd) = winpolicy::parse_fs_args(&args) {
+        #[cfg(windows)]
+        {
+            return match abito_island::winfs::ffi::run(&cmd, &mut std::io::stdin()) {
+                Ok(json) => { println!("{json}"); 0 }
+                Err(reason) => { println!("{{\"schema\":\"abito-fs/1\",\"ok\":false,\"reason\":\"{reason}\"}}"); 1 }
+            };
+        }
+        #[cfg(not(windows))]
+        { let _ = cmd; return 1; }
     }
     let verify = args.as_slice() == ["--verify"];
     if !args.is_empty() && !verify { return fail("usage: abito-private-session [--verify]"); }

@@ -2,7 +2,8 @@
 import { h, clear } from "../views/dom.js";
 import { card, row, select, label } from "./ui.js";
 import { notchCard, notchRow } from "./notch.js";
-import { action, field, note, section, status, trusted, session, preserveFocus } from "./runtime.js";
+import { action, field, note, section, status, trusted, session, preserveFocus, foldable } from "./runtime.js";
+import { piInstallControl } from "./piinstall.js";
 const PRESETS = [
   ["anthropic", "Anthropic", "https://api.anthropic.com/v1", "anthropic-messages"],
   ["google", "Google", "https://generativelanguage.googleapis.com/v1beta", "google-generative-ai"],
@@ -29,6 +30,7 @@ async function renderAccounts({ invoke, V, listen, timers, page = "all", keys: s
   let filter = "", flow = null, flowKey = "", waiting = null, lastKey = "";
   let keyPresence = null, keyBusy = "", keyError = "";
   const keys = h("section", {});
+  const piControl = piInstallControl({ call, watch, work, onDone: () => work(() => agent({ action: "view" }), (next) => apply(next)) });
   const withoutError = (st) => JSON.stringify({ ...st, last_error: null });
   function apply(next) {
     if (!s.alive() || !next || typeof next !== "object") return;
@@ -300,6 +302,10 @@ async function renderAccounts({ invoke, V, listen, timers, page = "all", keys: s
       ...retry ? [retry] : chat ? [restart] : []
     );
     if (page !== "integrations") root.append(engine);
+    if (chat) {
+      piControl.update(state);
+      root.append(piControl.element);
+    }
     if (!chat && page !== "integrations") root.append(section("Motor", row(d.rowTitle, conn?.aria || d.rowSub, restart)));
     const ownedSec = chat ? notchCard("Otros endpoints") : section("Configuración de proveedores");
     if (form) ownedSec.append(card(form));
@@ -366,6 +372,7 @@ async function renderAccounts({ invoke, V, listen, timers, page = "all", keys: s
         ...[r.error, r.note].filter(Boolean).length ? [h("div", { class: "hint", text: [r.error, r.note].filter(Boolean).join(" · ") })] : []
       );
       c.setAttribute("id", `provider-${r.id}`);
+      if (chat && !compact) foldable(c, `chat:${r.id}`, login?.providerId === r.id && login?.phase === "active");
       if (chat) target.append(c);
       else cards.push(c);
     }
@@ -376,8 +383,10 @@ async function renderAccounts({ invoke, V, listen, timers, page = "all", keys: s
       for (const input of flow.querySelectorAll("input")) input.value = "";
       flow = null;
     }
-    if (chat) slot("").append(ownedSec);
-    else if (page !== "integrations") root.append(...cards, providers);
+    if (chat) {
+      foldable(ownedSec, "chat:otros-endpoints", !!form);
+      slot("").append(ownedSec);
+    } else if (page !== "integrations") root.append(...cards, providers);
     if (!chat && page !== "integrations" && showKeys) root.append(keys);
     root.append(message);
     for (const restore of restores) restore();

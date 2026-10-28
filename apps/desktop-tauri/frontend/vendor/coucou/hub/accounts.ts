@@ -2,7 +2,8 @@
 import { h, clear } from '../views/dom.js';
 import { card, row, select, label } from './ui.js';
 import { notchCard, notchRow } from './notch.js';
-import { action, field, note, section, status, trusted, session, preserveFocus } from './runtime.js';
+import { action, field, note, section, status, trusted, session, preserveFocus, foldable } from './runtime.js';
+import { piInstallControl } from './piinstall.js';
 const PRESETS = [
   ['anthropic', 'Anthropic', 'https://api.anthropic.com/v1', 'anthropic-messages'],
   ['google', 'Google', 'https://generativelanguage.googleapis.com/v1beta', 'google-generative-ai'],
@@ -25,6 +26,7 @@ export async function renderAccounts({ invoke, V, listen, timers, page = 'all', 
   let filter = '', flow: HTMLElement | null = null, flowKey = '', waiting: any = null, lastKey = '';
   let keyPresence: any = null, keyBusy = '', keyError = '';
   const keys = h('section', {});
+  const piControl = piInstallControl({ call, watch, work, onDone: () => work(() => agent({ action: 'view' }), (next: any) => apply(next)) });
   const withoutError = (st: any) => JSON.stringify({ ...st, last_error: null });
   function apply(next: any) {
     if (!s.alive() || !next || typeof next !== 'object') return;
@@ -161,6 +163,8 @@ export async function renderAccounts({ invoke, V, listen, timers, page = 'all', 
       h('span', { class: 'state-ico', 'aria-hidden': 'true', text: engineWord[1] }), h('span', { class: 'state-word', text: engineWord[2] }),
       ...(conn?.aria && conn.kind !== 'connecting' ? [h('span', { class: 'hint', text: conn.aria.replace(/^[^:]+: /, '') })] : []), ...(retry ? [retry] : chat ? [restart] : []));
     if (page !== 'integrations') root.append(engine);
+    // HU-046: when the engine reports no Pi (or no Node) the Chat page offers «Instalar Pi» (trusted click, shows what it runs first)
+    if (chat) { piControl.update(state); root.append(piControl.element); }
     if (!chat && page !== 'integrations') root.append(section('Motor', row(d.rowTitle, conn?.aria || d.rowSub, restart)));
     const ownedSec = chat ? notchCard('Otros endpoints') : section('Configuración de proveedores');
     if (form) ownedSec.append(card(form));
@@ -199,6 +203,8 @@ export async function renderAccounts({ invoke, V, listen, timers, page = 'all', 
       const c = (compact ? notchRow : notchCard)(r.name, h('span', { class: `card-state ${kind}` }, h('span', { class: 'state-ico', 'aria-hidden': 'true', text: icon }), h('span', { class: 'state-word', text: word })),
         ...(primary ? [primary] : []), ...extra, ...([r.error, r.note].filter(Boolean).length ? [h('div', { class: 'hint', text: [r.error, r.note].filter(Boolean).join(' · ') })] : []));
       c.setAttribute('id', `provider-${r.id}`);
+      // HU-044: on the Chat page every standalone apartado opens folded; one with a login running stays open while the human uses it
+      if (chat && !compact) foldable(c, `chat:${r.id}`, login?.providerId === r.id && login?.phase === 'active');
       if (chat) target.append(c); else cards.push(c);
     }
     if (flowLive) {
@@ -206,7 +212,7 @@ export async function renderAccounts({ invoke, V, listen, timers, page = 'all', 
       target.append(card(renderFlow(auth, prompt, ev)));
     }
     else if (flow) { for (const input of flow.querySelectorAll('input')) (input as HTMLInputElement).value = ''; flow = null; }
-    if (chat) slot('').append(ownedSec);
+    if (chat) { foldable(ownedSec, 'chat:otros-endpoints', !!form); slot('').append(ownedSec); } // HU-044; open while its form is
     else if (page !== 'integrations') root.append(...cards, providers);
     if (!chat && page !== 'integrations' && showKeys) root.append(keys);
     root.append(message); for (const restore of restores) restore();

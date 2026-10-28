@@ -20,6 +20,33 @@ function action(text, fn, disabled = false) {
 }
 const field = (id, title, type = "text", value = "") => h("input", { id, class: "hub-input", type, value, "aria-label": title, autocomplete: type === "password" ? "new-password" : "off" });
 const note = (text) => h("p", { class: "hub-note", role: "status", text });
+const foldOpen = /* @__PURE__ */ new Map();
+function foldable(card2, key, forceOpen = false) {
+  const title = card2.children[0];
+  const fold = h("button", { type: "button", class: "card-fold", "aria-expanded": "false", "aria-label": "Desplegar apartado", text: "▸" });
+  const show = (open) => {
+    card2.classList.toggle("folded", !open);
+    fold.setAttribute("aria-expanded", String(open));
+    fold.setAttribute("aria-label", open ? "Plegar apartado" : "Desplegar apartado");
+    fold.textContent = open ? "▾" : "▸";
+  };
+  const toggleOpen = () => {
+    const open = fold.getAttribute("aria-expanded") !== "true";
+    foldOpen.set(key, open);
+    show(open);
+  };
+  fold.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleOpen();
+  });
+  title.addEventListener("click", (e) => {
+    if (!e.target.closest(".hub-info-wrap, .card-fold, a, input, select")) toggleOpen();
+  });
+  card2.classList.add("foldable");
+  title.append(fold);
+  show(forceOpen || foldOpen.get(key) === true);
+  return card2;
+}
 const section = (title, ...children) => children.some(Boolean) ? h("section", {}, label(title), card(...children)) : h("section", {}, label(title));
 const status = (v) => row(v?.word || v?.say || "Leyendo…", v?.note || null);
 function preserveFocus(root) {
@@ -93,6 +120,7 @@ function session(invoke, listen, timers = globalThis) {
 export {
   action,
   field,
+  foldable,
   note,
   preserveFocus,
   section,

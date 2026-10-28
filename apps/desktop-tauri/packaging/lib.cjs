@@ -56,6 +56,7 @@ FRONTEND_FILES.push(
   'vendor/coucou/hub/notch.ts', 'vendor/coucou/hub/notch.js',
   'vendor/coucou/hub/agents.ts', 'vendor/coucou/hub/agents.js',
   'vendor/coucou/hub/chat.ts', 'vendor/coucou/hub/chat.js',
+  'vendor/coucou/hub/piinstall.ts', 'vendor/coucou/hub/piinstall.js', // HU-046: imported by accounts.js and agents.js
   'vendor/coucou/hub/integrations.ts', 'vendor/coucou/hub/integrations.js',
   'vendor/coucou/hub/shortcuts.ts', 'vendor/coucou/hub/shortcuts.js',
   'vendor/coucou/hub/recap.ts', 'vendor/coucou/hub/recap.js',
@@ -188,7 +189,7 @@ const DAEMON_FILES = ['package.json', 'identity.md', 'THIRD-PARTY-NOTICES.md',
 // install the Claude/Codex/recap/status-line hooks. Closed under require(): packaging-check pins that.
 const HARNESS_FILES = ['bin/abito-hook.cjs', 'bin/abito-recap-hook.cjs', 'bin/abito-statusline.cjs', 'package.json',
   'src/claude-ask.cjs', 'src/claude-suggestions.cjs', 'src/claude.cjs', 'src/client.cjs', 'src/codex.cjs', 'src/config.cjs', 'src/copilot.cjs', 'src/deadline.cjs', 'src/file-permission.cjs', 'src/hook-common.cjs', 'src/identity.cjs',
-  'src/install-claude.cjs', 'src/install-codex.cjs', 'src/install-copilot.cjs', 'src/install-opencode.cjs', 'src/install-pi.cjs', 'src/install-recap.cjs', 'src/install-statusline.cjs', 'src/install-ui.cjs', 'src/installer-platform.cjs',
+  'src/install-claude.cjs', 'src/install-codex.cjs', 'src/install-copilot.cjs', 'src/install-opencode.cjs', 'src/install-pi.cjs', 'src/install-pi-win.cjs', 'src/win-fs.cjs', 'src/install-recap.cjs', 'src/install-statusline.cjs', 'src/install-ui.cjs', 'src/installer-platform.cjs',
   'src/opencode.cjs', 'src/projection.cjs', 'src/recap-hook.cjs', 'src/redact.cjs', 'src/security.cjs', 'src/statusline.cjs', 'src/title-cache.cjs', 'src/windows-transport.cjs'];
 // Host modules come from Pi; no npm payload or dependency installation.
 const PI_FILES = ['pi-extension.ts', 'adapter.cjs', 'ask-tool.cjs', 'config.cjs', 'native-ask.cjs', 'questions.cjs', 'security.cjs', 'windows-transport.cjs'];

@@ -23,15 +23,14 @@ Claude Code and Codex hooks do not. Without them the island still opens and show
 
 ## Windows limitations
 
-Automatic hook and Pi-extension installation from Settings is not available on Windows yet.
-Affected rows show «No disponible en esta plataforma todavía» and do not offer installation.
-The terminal installer shares the same filesystem limitations and is not a supported workaround.
-Windows support requires verified audit creation, status-line side-file handling, and bundled-script trust checks.
+Hooks (Claude Code, Codex, Copilot CLI, OpenCode, resumen semanal, relay de línea de estado) and the Pi extension can now be installed from *Ajustes · Agentes* on Windows. Abito only writes a configuration file or folder that is private to your Windows user (owner = you, no write access for other accounts, no links or junctions), keeps a backup, writes atomically and records a private audit entry. If any check fails, nothing is written and Ajustes says why. Installed files are verified against an install manifest; if you modify the installation, reinstall Abito.
+
+Known limit: a program running as the same Windows user can still race the folder check, and could replace Abito's own files together with their manifest; both are planned fixes and give that program nothing it could not already do by editing your configuration directly.
 
 ## Connect your agents
 
 - **Claude Code / Codex:** Abito installs their hooks from *Ajustes → Agentes*.
-- **Pi:** install the Abito extension from *Ajustes → Agentes* (Linux and macOS), or load it by hand with
+- **Pi:** install the Abito extension from *Ajustes → Agentes*, or load it by hand with
   `pi -e apps/desktop-pi/pi-extension.ts`. Pi's yes/no confirmations then also appear in the island (credential,
   token and consent prompts stay in the terminal).
 

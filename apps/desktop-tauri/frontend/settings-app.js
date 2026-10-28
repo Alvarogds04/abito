@@ -22,7 +22,7 @@ import { privacyPage } from './vendor/coucou/hub/privacy-page.js';
 import { renderGeneral } from './vendor/coucou/hub/general.js';
 import { card, row } from './vendor/coucou/hub/ui.js';
 const rawInvoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
-const allowed = new Set(['prefs_action', 'hotkey_action', 'settings_window_action', 'agent_action', 'secret_action', 'oauth_action', 'models_action', 'specialists_action', 'daemon_action', 'plan_action', 'recap_action', 'monitor_action', 'sound_action', 'dictation_action', 'voice_action', 'failure_action']);
+const allowed = new Set(['prefs_action', 'hotkey_action', 'settings_window_action', 'agent_action', 'secret_action', 'oauth_action', 'models_action', 'specialists_action', 'daemon_action', 'pi_install_action', 'plan_action', 'recap_action', 'monitor_action', 'sound_action', 'dictation_action', 'voice_action', 'failure_action']);
 // The host answers these commands through ONE shared limiter: 30 calls per fixed 1 s window (src/bridge.rs RATE_LIMIT_PER_WINDOW),
 // shared with the island window. A page that reads a lot at load (the combined «Integraciones y agentes» makes ~34 calls) used to get
 // `rate-exceeded` on its tail calls and paint «No se pudo completar» before the human touched anything (#503 S32 gate). So they leave
@@ -49,6 +49,8 @@ const invoke = (command, args) => {
   // Dormant until Product/Pestañas-activas is re-enabled; never alter the stored main pill from Settings.
   if (command === 'prefs_action' && args?.payload?.action === 'set_main_pill') return Promise.reject(new Error('No disponible'));
   if (command === 'daemon_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || args.payload.action !== 'restart')) return Promise.reject(new Error('No disponible'));
+  // HU-046: exactly {action:'run'|'status'|'open_node'}: no package, path or URL from the page
+  if (command === 'pi_install_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['run', 'status', 'open_node'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
   if (command === 'plan_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['claude', 'codex'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
   if (command === 'recap_action') {
     const p = args?.payload;
@@ -119,7 +121,7 @@ const personal = { ...options, C: window.AbitoPillCatalog };
 startHub(root, {
   // The page Rust chose when it opened this window (a closed list: the shell ignores anything else), e.g. «Configurar Pi…» -> chat.
   initialPage: window.__abitoHubPage,
-  version: '0.1.0', flowPages: { ...inactivePages, voice: voicePage, privacy: (page, ctx) => privacyPage(page, ctx, invoke), dictation: dictationPage, flowsettings: (page, ctx) => flowSettingsPage(page, ctx, invoke), dictionary: dictionaryPage, snippets: snippetsPage, styles: stylesPage, insights: insightsPage },
+  version: window.__abitoVersion, flowPages: { ...inactivePages, voice: voicePage, privacy: (page, ctx) => privacyPage(page, ctx, invoke), dictation: dictationPage, flowsettings: (page, ctx) => flowSettingsPage(page, ctx, invoke), dictionary: dictionaryPage, snippets: snippetsPage, styles: stylesPage, insights: insightsPage },
   async renderNotch(page, container, navigate) {
     if (page === 'general') {
       try {

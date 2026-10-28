@@ -103,6 +103,10 @@ cpal = { version = "0.18", features = ["pulseaudio"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 # #503 key store on macOS: the Keychain (same `keyring` API as Linux/Windows; this build is not compiled in CI yet).
 keyring = { version = "3", features = ["apple-native"] }
+# HU-049/HU-050: frontmost app (NSWorkspace) and activate (NSRunningApplication); already in Cargo.lock via tauri/tao.
+core-foundation = "0.10"
+core-graphics = "0.25"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication"] }
 
 [target.'cfg(windows)'.dependencies]
 # #467 key store: Windows Credential Manager.
@@ -121,7 +125,7 @@ keyring = { version = "3", features = ["windows-native"] }
 # OVERLAPPED/GetOverlappedResult/CancelIoEx, Storage_FileSystem for
 # ReadFile/WriteFile/MoveFileExW, Security_Cryptography for BCryptGenRandom
 # (128-bit pipe instance). Symbols verified against the cached 0.61.2 source.
-windows-sys = { version = "0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_Security_Cryptography", "Win32_Graphics_Dwm"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 # tests only: fake key presses on a PRIVATE Xvfb (tests/hotkey_x11.rs). Never shipped.
