@@ -1542,7 +1542,7 @@ test("set_paused: a persistence failure answers failed, keeps the previous state
 
 // ----- HU-041 T6a-1: custom provider account frames, end to end (real manager + store) -----
 
-test("custom provider: create -> key via auth_start/auth_reply -> discovery; inert for inference; nothing secret on the wire", async (t) => {
+test("custom provider: create -> key via auth_start/auth_reply -> discovery; guarded activation; nothing secret on the wire", async (t) => {
 	const http = require("node:http");
 	const { AccountManager, helperEnv } = require("../src/auth.cjs");
 	const { ProfileStore } = require("../src/profiles.cjs");
@@ -1594,16 +1594,21 @@ test("custom provider: create -> key via auth_start/auth_reply -> discovery; ine
 	c.send({ type: "models_list", providerId: "custom-gateway", accountId: "gateway" });
 	await c.wait((f) => f.type === "models");
 
-	// Inert: no profile can be saved or selected for it through any public frame.
+	// T6a-2: the guarded transport is installed on activation (profile frames carry no URL/key).
 	c.send({ type: "profile_save", id: "gw", label: "G", role: "main", accountId: "gateway", provider: "custom-gateway", modelId: "model-a" });
-	await c.wait((f) => f.type === "error" && f.code === "failed" && f.seq > prompt.seq);
+	await c.wait((f) => f.type === "profiles" && f.profiles.length === 1);
 	c.send({ type: "profile_select", id: "gw" });
-	await waitFor(() => c.frames.filter((f) => f.type === "error" && f.code === "failed").length >= 3);
-	assert.deepEqual(profiles.list().profiles, []);
-	assert.equal(fs.existsSync(path.join(root, "island", "agent", "auth.json")), false);
+	await waitFor(() => profiles.list().active === "gw");
+	assert.equal(fs.existsSync(path.join(root, "island", "agent", "extensions", "abito-custom-provider.js")), true);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(root, "island", "agent", "custom-provider.json"), "utf8")).baseUrl, baseUrl);
+	c.send({ type: "profile_save", id: "bad", label: "B", role: "main", accountId: "gateway", provider: "custom-gateway", modelId: "model-z" });
+	await c.wait((f) => f.type === "profiles" && f.profiles.length === 2);
+	c.send({ type: "profile_select", id: "bad" });
+	await c.wait((f) => f.type === "error" && f.code === "failed");
+	assert.equal(profiles.list().active, "gw", "a refused activation changes nothing");
 
 	c.send({ type: "accounts_list" });
 	await c.wait((f) => f.type === "accounts" && f.accounts.length === 1 && f.accounts[0].configured === true);
 	const wire = JSON.stringify(c.frames);
-	for (const banned of [KEY, "sk-fake", "127.0.0.1", "baseUrl", "model-a"]) assert.equal(wire.includes(banned), false, banned);
+	for (const banned of [KEY, "sk-fake", "127.0.0.1", "baseUrl"]) assert.equal(wire.includes(banned), false, banned);
 });
