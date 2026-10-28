@@ -4,15 +4,28 @@ const path = require('node:path');
 const net = require('node:net');
 const { EventEmitter } = require('node:events');
 
-// A real AF_UNIX socket, strictly below this worktree; not the installed app.
+// The platform's real transport, strictly below this worktree; not the installed app.
+// Linux/macOS: an AF_UNIX socket at `<runtime>/p-XXXXXX/s`. Windows: a local named pipe `\\.\pipe\...` (AF_UNIX
+// listen is refused there) plus the `<runtime>\endpoint.json` metadata file the adapter validates; the receiver then
+// carries `platform: 'win32'` and an `open` seam that connects straight to the pipe (the native relay .exe that
+// production uses in between is covered by windows-transport.test.cjs and the island's Rust tests).
 // `runtime` (optional) binds a SECOND receiver under an existing private root: the handoff test needs the same
 // runtime to publish a different endpoint, exactly as an island restart does.
 async function fakeReceiver(t, { questions = false, busyReason = false, structured = false, runtime: parent } = {}) {
   const runtime = parent ?? fs.mkdtempSync(path.join(path.resolve(__dirname, '..'), '.test-'));
-  fs.chmodSync(runtime, 0o700);
-  const directory = fs.mkdtempSync(path.join(runtime, 'p-'));
-  fs.chmodSync(directory, 0o700);
-  const endpoint = path.join(directory, 's');
+  const windows = process.platform === 'win32';
+  let directory, endpoint, listenOn, transport = {};
+  if (windows) {
+    listenOn = `\\\\.\\pipe\\abito-test-${process.pid}-${require('node:crypto').randomBytes(6).toString('hex')}`;
+    endpoint = path.win32.join(runtime, 'endpoint.json');
+    fs.writeFileSync(endpoint, JSON.stringify({ v: 1, pipe: listenOn }));
+    transport = { platform: 'win32', open: () => net.createConnection(listenOn) };
+  } else {
+    fs.chmodSync(runtime, 0o700);
+    directory = fs.mkdtempSync(path.join(runtime, 'p-'));
+    fs.chmodSync(directory, 0o700);
+    endpoint = listenOn = path.join(directory, 's');
+  }
   const capabilities = new Map();
   const clients = new Set(), frames = [], rawFrames = [], events = new EventEmitter();
   const server = net.createServer(socket => {
@@ -40,8 +53,8 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
       }
     });
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve); });
-  fs.chmodSync(endpoint, 0o600);
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(listenOn, resolve); });
+  if (!windows) fs.chmodSync(endpoint, 0o600);
   let closed;
   // Idempotent stop: models an island restart (socket closes) without waiting for the test to end.
   const close = () => closed ??= (async () => {
@@ -62,7 +75,7 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
       events.on('frame', handler);
     });
   }
-  return { runtime, endpoint, frames, rawFrames, clients, next, close,
+  return { ...transport, runtime, endpoint, frames, rawFrames, clients, next, close,
     send: value => { for (const c of clients) c.write(JSON.stringify(value) + '\n'); },
     replyBusy: (q, code) => {
       const replies = [];
