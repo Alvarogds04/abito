@@ -13,10 +13,13 @@ const { normalizeRequest } = require('./questions.cjs');
 const CHOICE = 'ask_user_choice', QUESTIONNAIRE = 'ask_user_question';
 const OTHER_ROW = 'Other…', CUSTOM_ROW = 'Type something.', DONE_ROW = 'Done';
 
-// SECURITY: consent / authorization prompts must never be answerable from Abito. Deliberately broad: a false
-// positive only means the native terminal dialog runs as today.
-const SENSITIVE = /consent|authori[sz]|autoriz|grant|conced|declin|rechaz|permission|permiso|token|binding|envelope|lineage|provider|credential|secret|password/i;
-const isSensitive = value => typeof value === 'string' && SENSITIVE.test(value);
+// SECURITY: what stays terminal-only is decided by the SAME classifier as the HU-042 confirm route (sensitiveText, defined
+// below) in its 'ask' mode, plus a few hard markers. A false positive only means the native terminal dialog runs as today.
+const isSensitive = value => typeof value === 'string' && isSensitiveAsk([value], false);
+// gentle-ai review consent envelopes: refused wherever they appear in the call (keys, values, texts).
+// separators and case are ignored: «consent-binding», «Consent_Binding», «gentle-ai.review_integration» all count.
+const CONSENT_MARKER = /consentbinding|gentleaireviewintegration/;
+const hasConsentMarker = value => CONSENT_MARKER.test(JSON.stringify(value).toLowerCase().replace(/[^a-z0-9]/g, ''));
 // Values that read as plain words (`yes-once`, `main`, `dev_2`); opaque ids, hex, JSON or digit runs do not.
 const PLAIN_VALUE = /^[A-Za-z][A-Za-z0-9]*(?:[-_ .][A-Za-z0-9]+)*$/;
 const plainValue = v => typeof v === 'string' && v.length <= 32 && PLAIN_VALUE.test(v) &&
@@ -230,7 +233,7 @@ function createNativeAskHandler({ controller, env = process.env } = {}) {
       if (env.ABITO_NATIVE_ASK === '0' || !event) return undefined;
       const plan = event.toolName === CHOICE ? planChoice(event.input)
         : event.toolName === QUESTIONNAIRE ? planQuestionnaire(event.input) : null;
-      if (!plan || plan.scan.some(isSensitive)) return undefined;
+      if (!plan || hasConsentMarker(event.input) || isSensitiveAsk(plan.scan, plan.items.some(i => i.free))) return undefined;
       for (const item of plan.items) {
         if (new Set(item.choices.map(rowOf)).size !== item.choices.length) return undefined;
         if (item.free && [item.freeRow, DONE_ROW].some(r => item.choices.some(c => rowOf(c) === r))) return undefined;
@@ -276,15 +279,41 @@ const CONFIRM_WORDS = ['credential', 'credencial', 'creds', 'token', 'secret', '
   'review', 'revision', 'binding', 'envelope', 'lineage', 'receipt', 'maintenance', 'mantenimiento', 'reclaim', 'cookie'];
 const CONFIRM_SHORT = new Set(['key', 'keys', 'clave', 'claves', 'rdd', 'otp', 'totp', 'mfa', 'auth', 'reauth', 'sso', 'pin']);
 // Multi-valued look-alikes: a letter may be written with any of these («6rant», «lo9in», «8inding», «+oken», «(redential»).
-const LOOKALIKE = { a: '4@', b: '68', c: '(<{[', d: ')', e: '3', g: '69', h: '#', i: '1!|', l: '1|', o: '0', p: '>*', s: '5$', t: '7+', z: '2' };
+const LOOKALIKE = { a: '4@', b: '68', c: '(<{[', d: ')', e: '3', g: '69', h: '#', i: '1!|', l: '1|i', o: '0', p: '>*', s: '5$', t: '7+', z: '2' };
 const esc = s => s.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&');
 const wordPattern = w => [...w].map(ch => `[${esc(ch)}${esc(LOOKALIKE[ch] || '')}]`).join('');
-const CONFIRM_WORD_RE = new RegExp(CONFIRM_WORDS.map(wordPattern).join('|'));
-// A run of 1-3 symbols inside a word may stand for ONE letter nobody listed («secre|2», «gr4n|2», «0a#th»): for every
-// word of 5+ letters, each position may also be such a run. Matched on a form that keeps every symbol.
-const SYMBOL_RUN = '[^a-z0-9\\s]{1,3}';
-const CONFIRM_WILD_RE = new RegExp(CONFIRM_WORDS.filter(w => w.length >= 5).flatMap(w => [...w].map((_, i) =>
-  [...w].map((ch, j) => (j === i ? SYMBOL_RUN : `[${esc(ch)}${esc(LOOKALIKE[ch] || '')}]`)).join(''))).join('|'));
+// The matchers are built by one function from a word list, so confirm and ask mode share every rule.
+function buildMatchers(words) {
+  const word = new RegExp(words.map(wordPattern).join('|'));
+  // A run of 1-3 symbols inside a word may stand for ONE letter nobody listed («secre|2», «gr4n|2», «0a#th»): for every
+  // word of 5+ letters, each position may also be such a run. Matched on a form that keeps every symbol.
+  const SYMBOL_RUN = '[^a-z0-9\\s]{1,3}';
+  const wild = new RegExp(words.filter(w => w.length >= 5).flatMap(w => [...w].map((_, i) =>
+    [...w].map((ch, j) => (j === i ? SYMBOL_RUN : `[${esc(ch)}${esc(LOOKALIKE[ch] || '')}]`)).join(''))).join('|'));
+  return { word, wild };
+}
+const CONFIRM_MATCH = buildMatchers(CONFIRM_WORDS);
+const CONFIRM_WORD_RE = CONFIRM_MATCH.word, CONFIRM_WILD_RE = CONFIRM_MATCH.wild;
+// ONE rule for ask_user_choice, ask_user_question AND the yes/no confirm (HU-042/HU-052): topic words drop out (permission,
+// provider, grant, authori*, review…); words that only matter when
+// the user is asked to TYPE a value (token, key, clave, api key) are judged by askedForValue instead.
+// «consent» (and so «consentimiento») is NOT a topic word: a consent prompt stays terminal-only in both routes.
+const ASK_TOPIC_WORDS = new Set(['permission', 'permiso', 'provider', 'proveedor', 'grant', 'conced', 'authori', 'autoriz', 'review', 'revision']);
+const ASK_VALUE_WORDS = new Set(['token', 'apikey', 'llave']);
+const ASK_VALUE_SHORT = new Set(['key', 'keys', 'clave', 'claves', 'cle', 'cles']);
+// «gentle-ai» (separators are removed before matching, so «gentle ai» / «gentle-ai» both read «gentleai») marks the review / RDD /
+// maintenance authorizations, which stay terminal-only; «RDD» is also read straight from the text, because the leetspeak fold
+// turns «(RDD)» into «crdd».
+const ASK_MATCH = buildMatchers([...CONFIRM_WORDS.filter(w => !ASK_TOPIC_WORDS.has(w) && !ASK_VALUE_WORDS.has(w)), 'gentleai',
+  // secret VALUES named in other languages / as codes (nobody is ever asked to type these from the island)
+  'passwort', 'senha', 'motdepasse', 'verificationcode', 'securitycode', 'codigodeverificacion', 'codigoverificacion', 'codigodeseguridad']);
+const RDD_RE = /rdd/;
+// “Token:”, “API key =”, “the token is”, “tu clave es” ask for the value without a verb.
+const ASK_COLON_RE = /(?:token|key|clave|llave|cle)\s*[:=]/;
+const ASK_IS_RE = /(?:token|key|clave|llave)\s+(?:is|es|=)\b/;
+const ASK_SHORT = new Set([...CONFIRM_SHORT].filter(w => !ASK_VALUE_SHORT.has(w)));
+const ASK_VALUE_RE = new RegExp([...ASK_VALUE_WORDS, 'clave'].map(wordPattern).join('|'));
+const ASK_VERB_RE = /(?:^|[^a-z])(?:pega|pegas|pegue|ingresa|ingresas|ingrese|escribe|escribis|escriba|introduce|introduci|introduzca|input|put|share|pon|ponga|pone|digita|digite|tipea|indica|indique|enter|paste|type|provide|dame|dime|manda|mandame|pasa|pasas|pasame|proporciona|proporcione)(?![a-z])/;
 // «key» inside a compound (privatekey, keystore, keyfile, keygen, sshkey…); only «keyboard» is let through.
 const CONFIRM_KEY_RE = new RegExp(`${wordPattern('key')}(?!${wordPattern('board')})`);
 const LEET = { 0: 'o', 2: 'z', 3: 'e', 4: 'a', 5: 's', 6: 'g', 7: 't', 8: 'b', 9: 'g', '@': 'a', $: 's', '!': 'i', '|': 'i', '+': 't', '(': 'c', '<': 'c' };
@@ -322,24 +351,62 @@ const opaqueWord = word => {
     if (run.length >= 12 && mixedCase(run)) return true;                                // mixed-case id
     if (run.length >= 16 && /[0-9]/.test(run) && /[A-Za-z]/.test(run)) return true;     // letter+digit id
     if (run.length >= 12 && /^[0-9a-f]+$/i.test(run) && /[0-9]/.test(run)) return true; // hex / long digits
+    if (run.length >= 12 && /[A-Za-z]/.test(run) && (run.match(/[0-9]/g) || []).length >= 3) return true; // lowercase letter+digit id
     if (run.length >= 20) return true;                                                   // letters-only blob
   }
   const joined = word.replace(/[^A-Za-z0-9]/g, '');                                      // split by - _ / + = . ~ :
+  if (joined.length >= 16 && joined !== word && /^[0-9a-f]+$/i.test(joined) && /[0-9]/.test(joined)) return true; // dash-split hex
   return joined.length >= 12 && mixedCase(joined);
 };
-function sensitiveText(raw) {
+function sensitiveText(raw, ask = false) {
   const v = decoded(raw);
   if (SENSITIVE_RAW.some(re => re.test(v)) || v.split(/\s+/).some(opaqueWord)) return true;
+  return sensitiveWords(raw, ask);
+}
+// The word half alone (denylist words and short words, obfuscation folded). Used on its own for text GLUED together from several
+// fields, where an opaque-id or raw-shape check would only find the glue («ExtrasOnefirstTwoThree»).
+function sensitiveWords(raw, ask) {
+  const v = decoded(raw);
   // compact: decoded, ASCII-art letters folded, accents stripped, lower case, separators removed; every symbol that can
   // stand for a letter (LOOKALIKE) is kept, so nothing that reads as a letter is dropped unread.
   const compact = stripMarks(artFold(v)).replace(/[^a-z0-9@$!|+(<{[)#>*]/g, '');
+  if (ask) {
+    return ASK_MATCH.word.test(compact) || ASK_MATCH.wild.test(stripMarks(v).replace(/\s+/g, '')) || RDD_RE.test(compact) ||
+      folds(v).some(f => f.split(/[^a-z]+/).some(t => ASK_SHORT.has(t)));
+  }
   if (CONFIRM_WORD_RE.test(compact) || CONFIRM_KEY_RE.test(compact)) return true;
   if (CONFIRM_WILD_RE.test(stripMarks(v).replace(/\s+/g, ''))) return true;
   return folds(v).some(f => f.split(/[^a-z]+/).some(t => CONFIRM_SHORT.has(t)));
 }
+// Ask mode: does the text mention a token / key / clave / api key (obfuscation folded like the rest)?
+function mentionsValueWord(raw) {
+  const v = decoded(raw);
+  const compact = stripMarks(artFold(v)).replace(/[^a-z0-9@$!|+(<{[)#>*]/g, '');
+  return ASK_VALUE_RE.test(compact) || CONFIRM_KEY_RE.test(compact) ||
+    folds(v).some(f => f.split(/[^a-z]+/).some(t => ASK_VALUE_SHORT.has(t)));
+}
+// ask_user_choice / ask_user_question: `texts` is everything the human would read, `freeText` whether free text is allowed.
+// True = terminal-only. Same showable gate and denylist as confirm (ask mode), and a token/key word only counts when the
+// text asks to type / paste / enter / provide a value, or when free text is allowed alongside it.
+function isSensitiveAsk(texts, freeText) {
+  if (!texts.every(t => typeof t === 'string' && showable(t, true))) return true;
+  return sensitiveTexts(texts, freeText);
+}
+// The denylist half alone (the caller has already applied the showable gate that suits its own fields).
+function sensitiveTexts(texts, freeText) {
+  if (texts.some(t => sensitiveText(t, true))) return true;
+  const all = texts.join('\n');
+  // a word may be split across the fields the human reads together («Your pass» + «word»): the joined text is read too
+  if (texts.length > 1 && (sensitiveWords(texts.join(''), true) || sensitiveWords(all, true))) return true;
+  if (!mentionsValueWord(all)) return false;
+  if (freeText === true) return true;
+  const plain = stripMarks(decoded(all));
+  return folds(plain).some(f => ASK_VERB_RE.test(f) || ASK_COLON_RE.test(f) || ASK_IS_RE.test(f));
+}
+// The yes/no confirm: same rule, no free text. The title is a single line, the message may have several.
 const isSensitiveConfirm = (title, message) =>
   typeof title !== 'string' || typeof message !== 'string' || !showable(title, false) || !showable(message, true) ||
-  sensitiveText(title) || sensitiveText(message);
+  sensitiveTexts([title, message], false);
 
 const CONFIRM_TITLE_MAX = 200, CONFIRM_PREVIEW_MAX = 1200, CONFIRM_PREVIEW_LINES = 12;
 const YES_NO = [{ value: 'yes', label: 'Sí', description: '' }, { value: 'no', label: 'No', description: '' }];

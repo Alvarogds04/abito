@@ -111,9 +111,9 @@ test('a non-git, non-sensitive confirm is routed too (no allowlist)', async () =
 // One test per denylist class: the confirm is never sent to the island, the original confirm runs UNCHANGED.
 const DENIED = {
   credential: ['Store credential?', 'Save the credential for later'],
-  token: ['Rotate token?', 'git push origin main'],
-  key: ['Replace the SSH key?', 'ssh-keygen -f ~/.ssh/id'],
-  'api key': ['Use this API key?', 'OPENAI api-key from env'],
+  'token value': ['Paste your token', 'git push origin main'],
+  'key value': ['Enter the SSH key', 'ssh-add'],
+  'api key value': ['Enter this API key', 'OPENAI api-key from env'],
   password: ['Reset password?', 'passwd alvaro'],
   secret: ['Delete secret?', 'gh secret delete PROD'],
   login: ['Log in again?', 'pi login anthropic'],
@@ -122,7 +122,7 @@ const DENIED = {
   consent: ['Give consent?', 'The provider asks for consent'],
   consentimiento: ['¿Das tu consentimiento?', 'Pedido del proveedor'],
   'provider consent': ['Provider consent required', 'gentle-ai provider consent'],
-  'permission grant': ['Grant permission to the tool?', 'bash: rm -rf build'],
+  'RDD': ['Start the native check (RDD)?', 'run it now'],
   'review/RDD consent': ['Start native review (RDD)?', 'gentle-ai review start'],
   'maintenance authorization': ['Authorize maintenance?', 'gentle-ai review reclaim'],
   'opaque token': ['Approve this request?', 'binding 3f9a2c81e4b7d6a5f0c1e2d3b4a59687'],
@@ -159,11 +159,11 @@ const DISGUISED = [
   ['homoglyph (Cyrillic о)', 'Allow t\u043eken refresh?'], ['fullwidth', 'Allow \uff54\uff4f\uff4b\uff45\uff4e refresh?'],
   ['soft hyphen', 'Allow to\u00adken refresh?'], ['combining grapheme joiner', 'Allow to\u034fken refresh?'],
   ['variation selector', 'Delete\ufe0fbranch'], ['interlinear annotation', 'Delete\ufff9branch'],
-  ['decomposed ñ', 'Ingresa la contrase\u0303a'], ['leetspeak', 'Allow t0ken refresh?'], ['symbol leet', 'Enter p@$$word'],
+  ['decomposed ñ', 'Ingresa la contrase\u0303a'], ['leetspeak', 'Paste t0ken now'], ['symbol leet', 'Enter p@$$word'],
   ['split by space', 'Set pass word now?'], ['split by tab', 'Set pass\tword now?'], ['split by dot', 'Set pass.word now?'],
   ['split credential', 'Enter cre dential'], ['NBSP sign in', 'Sign\u00a0in now?'], ['NBSP log in', 'log\u00a0in again'],
-  ['underscore log in', 'log_in now?'], ['underscore sign in', 'sign_in now?'], ['Spanish llave', '¿Usar la llave privada?'],
-  ['glued review', 'Approve ReviewRDD gate?'], ['reviewer', 'Ping the reviewer?'], ['passcode', 'Enter one time passcode?'],
+  ['underscore log in', 'log_in now?'], ['underscore sign in', 'sign_in now?'], ['Spanish llave', '¿Pegás la llave privada?'], ['Spanish llave (voseo)', 'Escribís la llave'],
+  ['passcode', 'Enter one time passcode?'],
   ['passkey', 'Register a passkey?'], ['NEL', 'Proceed?\u0085next'], ['line separator', 'Proceed?\u2028next'],
   ['short mixed opaque', 'Approve Xk9Qp2mLa7Rb3Tc8Vd1?'], ['dash-split opaque', 'Use AbCd1234EfGh-5678IjKlMnOp?'],
   ['slash-split opaque', 'Use QUJDREVGRzEy/MzQ1Njc4OTAxMj/Z?'], ['letters-only opaque', 'Use abcdefghijklmnopqrstuvwxyzABCD?'],
@@ -171,21 +171,19 @@ const DISGUISED = [
   ['scheme-less userinfo', 'git push alvaro:x@host:r'], ['protocol-relative userinfo', 'fetch //alvaro:x@host/r'],
   ['spaced userinfo', 'git push https://alvaro :x@host/r'],
   // recheck mvqtr7qv-a-z76n — blockers
-  ['digit 6 for g', 'Allow 6rant?'], ['digit 9 for g', 'Allow lo9in?'], ['digit 8 for b', 'Allow 8inding?'],
-  ['digit 2 for z', 'Allow autori2ar?'], ['plus for t', 'Allow +oken?'], ['paren for c', 'Allow (redential?'], ['angle for c', 'Allow <redential?'],
+  ['digit 9 for g', 'Allow lo9in?'], ['digit 8 for b', 'Allow 8inding?'], ['plus for t', 'Paste +oken'], ['paren for c', 'Allow (redential?'], ['angle for c', 'Allow <redential?'],
   ['Inicia sesion', 'Inicia sesion?'], ['Inicia sesión', 'Inicia sesión?'], ['Logging in', 'Logging in again?'],
-  ['creds', 'store creds now'], ['pwd', 'enter pwd here'], ['privatekey', 'Load privatekey?'], ['keystore', 'Open keystore?'],
-  ['keyfile', 'Use keyfile?'], ['keygen', 'Run keygen?'],
+  ['creds', 'store creds now'], ['pwd', 'enter pwd here'], ['privatekey', 'Paste privatekey'], ['keystore', 'Paste keystore'],
+  ['keyfile', 'Paste keyfile'], ['keygen', 'Enter keygen'],
   // recheck mvqtr7qv-a-z76n — advisory, closed too (fail closed)
   ['percent-encoded userinfo', 'Run //alvaro%3Ax%40host'], ['percent-encoded at', 'Run //alvaro%40host'],
   ['15 mixed opaque', 'id Xk9Qp2mLa7Rb3Tc'], ['dash-split short opaque', 'id Xk9-Qp2-mLa7-Rb3'], ['space-split opaque', 'id Xk9Qp2mLa7Rb3 Tc8Vd1'],
   ['letters-only split opaque', 'id abcdefghijklmnopqrstuvw-xyz'], ['Logged in', 'Logged in?'], ['PIN', 'Enter PIN?'], ['Abrir sesión', '¿Abrir sesión?'],
   // final recheck mvqtxdhe-b-l605 — blockers (ASCII-art letters, symbols the compact step dropped)
-  ['|< for k in token', 'Allow to|<en?'], ['|< for k in key', 'Load |<3y?'], ['|< for k in keychain', 'Open |<3ychain?'],
+  ['|< for k in token', 'Paste to|<en'], ['|< for k in key', 'Enter |<3y'], ['|< for k in keychain', 'Open |<3ychain?'],
   ['# in oauth', 'Allow 0a#th?'], ['|> for p', 'Set |>assword?'], ['|* for p', 'Set |*assword?'], ['|2 for r in secret', 'Show secre|2?'],
-  ['|2 for r in review', 'Approve |2eview?'], ['|2 for r in grant', 'Allow gr4n|2?'], ['|> for p in permission', 'Allow |>erm1ss10n?'],
   ['|v| for m', 'Run |v|aintenance?'], ['|\\| for n in login', 'Allow logi|\\|?'], ['|\\| for n in consent', 'Allow co|\\|sent?'],
-  ['\\/ for v in review', 'Approve re\\/iew?'], ['\\/ for v in provider', 'Allow pr0\\/ider?'], [') for d', 'Show cr3)3nt1al?'],
+  [') for d', 'Show cr3)3nt1al?'],
   // final recheck — advisory, closed (encoded text is decoded before the checks)
   ['percent-encoded o', 'Allow %6Fauth?'], ['percent-encoded p', 'Set %70assword?'], ['double percent-encoded at', 'Run //alvaro%2540host'],
   ['HTML entity userinfo', 'Run //alvaro&#58;x&#64;host'], ['escaped at (literal backslash-u text)', 'Run //alvaro\\u0040host'],
@@ -251,4 +249,47 @@ test('the wrapper never throws: a broken controller falls back to the terminal a
   const run = r.ui.confirm(TITLE, PREVIEW); await tick();
   r.term.resolvers[0](true);
   assert.equal(await run, true);
+});
+
+// HU-052: ONE rule for confirm and ask. TOPIC words route; secret VALUE words and consents stay terminal-only (input for input).
+test('confirm: topic words are routed, value prompts and consents stay terminal-only (pinned inputs)', () => {
+  const pinned = [
+    // routed: the topic is a permission / provider / token, nobody is asked to type a secret
+    ['¿Qué permisos damos?', '', false], ['¿Permitir que X borre la rama?', '', false], ['Elegir proveedor', '', false],
+    ['¿Rotamos el token de la API?', '', false], ['¿Autorizas el despliegue?', '', false], ['Grant access?', '', false],
+    ['Review the diff?', '', false], ['Rechazar cambios', '', false], ['Which branch?', '', false], ['Delete the build folder?', 'rm -rf build', false],
+    ['Rotate the key', '', false],
+    // terminal-only: secrets, value-asking, consents, gentle-ai authorizations, opaque ids, look-alikes
+    ['Pega tu contraseña', '', true], ['Enter your API key', '', true], ['Pega tu token de la API', '', true], ['Do you consent?', '', true],
+    ['¿Das tu consentimiento?', '', true], ['Start native review (RDD)?', 'gentle-ai review start', true], ['Authorize maintenance?', 'gentle-ai review reclaim', true],
+    ['Allow?', 'binding 3f9a2c81e4b7d6a5f0c1e2d3b4a59687', true], ['Pеga', '', true],
+  ];
+  for (const [t, m, expected] of pinned) assert.equal(isSensitiveConfirm(t, m), expected, t);
+});
+
+// HU-052 independent security review (mvr5ku6s-k-kfdp): reproduced bypasses, now closed; each is checked for confirm AND for the ask tools.
+test('HU-052 review: split words, other languages, codes, obfuscated gentle-ai/RDD and look-alike ids stay terminal-only', () => {
+  const { isSensitive } = require('../native-ask.cjs');
+  const denied = [
+    ['Enter your pass', 'word:'], ['Gentle', 'AI review?'],                                   // a word split across title and message
+    ['Ingresa el código de verificación', ''], ['Código de verificación:', ''], ['Passwort:', ''], ['Mot de passe ?', ''], ['Senha:', ''],
+    ['Approve ReviewRDD gate?', ''], ['R.D.D. review', ''], ['gentIe-ai review', ''],       // RDD / gentle-ai, separators and I-for-l
+    ['Input your token', ''], ['Put your token here', ''], ['Pon tu clave', ''], ['Digita tu clave', ''], ['API key =', ''], ['The token is', ''], ['Token:', ''],
+    ['Approve x7kq9plm2zt4?', ''], ['Use a1b2-c3d4-e5f6-a7b8-c9d0-e1f2?', ''],               // opaque ids outside the first shapes
+  ];
+  for (const [t, m] of denied) assert.equal(isSensitiveConfirm(t, m), true, JSON.stringify([t, m]));
+  assert.equal(isSensitive('Pega tu t0ken'), true);
+});
+
+test('HU-052 review: consent markers are found whatever the separators and case (choice, option value, extra field)', async () => {
+  const { createNativeAskHandler } = require('../native-ask.cjs');
+  assert.equal(typeof createNativeAskHandler, 'function');
+  const marker = /consentbinding|gentleaireviewintegration/;
+  const folded = v => JSON.stringify(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const v of [{ 'consent-binding': 'x' }, { Consent_Binding: 'x' }, { a: 'gentle-ai.review_integration' }, { a: 'Gentle-AI.Review-Integration' }]) assert.ok(marker.test(folded(v)), JSON.stringify(v));
+});
+
+// Accepted by the human's decision (HU-052): a yes/no that only MENTIONS a key or token as a topic is routed; no value can travel in a yes/no.
+test('HU-052 decision: a topic mention of a token or key in a yes/no is routed (no value asked)', () => {
+  for (const t of ['¿Rotamos el token de la API?', 'Use API key?', 'Clave?', 'Use the token?']) assert.equal(isSensitiveConfirm(t, ''), false, t);
 });

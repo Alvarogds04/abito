@@ -25,6 +25,7 @@ pub mod agentconn;
 pub mod agentconn;
 pub mod winpolicy;
 pub mod winipc;
+pub mod winfs;
 pub mod approval;
 pub mod bridge;
 pub mod card;

@@ -66,12 +66,20 @@ pub fn is_abito(c: &Candidate) -> bool {
     c.app_id.to_lowercase().contains("abito") || c.app_name.to_lowercase().contains("abito")
 }
 
+/// Longest app name / window title sent to the model, in characters, on every OS: a title can be a
+/// whole document name or a page of text, and it leaves the machine.
+pub const MAX_CONTEXT_CHARS: usize = 200;
+
+fn capped(text: &str) -> String {
+    text.trim().chars().take(MAX_CONTEXT_CHARS).collect()
+}
+
 /// Most recent window that is not Abito and has an app name (NotchBuddy: `guard let appName`).
 pub fn pick_external(recent: &[Candidate]) -> Option<ActiveWindow> {
     recent
         .iter()
         .find(|c| !is_abito(c) && !c.app_name.trim().is_empty())
-        .map(|c| ActiveWindow { app: c.app_name.trim().to_string(), title: c.title.trim().to_string() })
+        .map(|c| ActiveWindow { app: capped(&c.app_name), title: capped(&c.title) })
 }
 
 /// The exact text NotchBuddy sends to the model (ClaudeService.swift: first message only).
@@ -82,6 +90,40 @@ pub fn format_context(w: &ActiveWindow) -> String {
 /// Build candidates from the extension's `a(sss)` reply.
 pub fn from_reply(rows: Vec<(String, String, String)>) -> Vec<Candidate> {
     rows.into_iter().map(|(app_id, app_name, title)| Candidate { app_id, app_name, title }).collect()
+}
+
+/// A top-level window as Windows/macOS report it (stacking order, topmost first).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeWindow {
+    pub pid: u32,
+    pub app: String,
+    pub title: String,
+}
+
+/// App name when the OS refuses to reveal the process (elevated/protected): the title still goes.
+pub const UNKNOWN_APP: &str = "unknown app";
+
+fn is_shell_desktop(w: &NativeWindow) -> bool {
+    w.app.eq_ignore_ascii_case("explorer") && w.title.trim() == "Program Manager"
+}
+
+/// Windows: windows with a title only; drops our own process and the shell desktop.
+pub fn from_native(own_pid: u32, rows: Vec<NativeWindow>) -> Vec<Candidate> {
+    rows.into_iter()
+        .filter(|w| w.pid != own_pid && !w.title.trim().is_empty() && !is_shell_desktop(w))
+        .map(|w| {
+            let app_name = if w.app.trim().is_empty() { UNKNOWN_APP.to_string() } else { w.app };
+            Candidate { app_id: format!("{} {}", w.pid, app_name), app_name, title: w.title }
+        })
+        .collect()
+}
+
+/// macOS: the app name needs no permission, the title does; keep the app when the title is empty.
+pub fn from_native_app_only(own_pid: u32, rows: Vec<NativeWindow>) -> Vec<Candidate> {
+    rows.into_iter()
+        .filter(|w| w.pid != own_pid && !w.app.trim().is_empty())
+        .map(|w| Candidate { app_id: format!("{} {}", w.pid, w.app), app_name: w.app, title: w.title })
+        .collect()
 }
 
 /// Build candidates from X data: `(instance, class, title)` per window, TOPMOST LAST
@@ -261,9 +303,130 @@ pub mod x11 {
     }
 }
 
-/// The context to attach, or `None`. Extension first, X11 fallback.
+/// Windows (HU-050): top-level windows in z-order, topmost first, via EnumWindows. A process
+/// the OS will not describe (elevated, protected) gets no app name, never an error.
+#[cfg(windows)]
+mod native {
+    use super::{from_native, Candidate, NativeWindow};
+    use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    };
+
+    fn title(hwnd: HWND) -> String {
+        let mut buf = [0u16; 512];
+        // SAFETY: the buffer outlives the call and its length is passed.
+        let n = unsafe { GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
+        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    }
+
+    /// The executable's file stem ("chrome"), or empty when the process cannot be opened.
+    fn app_name(pid: u32) -> String {
+        // SAFETY: a failed OpenProcess (null) is handled; the handle is closed on every path.
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() { return String::new(); }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len);
+            CloseHandle(process);
+            if ok == 0 { return String::new(); }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+        }
+    }
+
+    unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> i32 {
+        // SAFETY: lparam is the `&mut Vec` passed by `recent_windows` for this synchronous call.
+        let out = &mut *(lparam as *mut Vec<NativeWindow>);
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 { return 1; }
+        if (GetWindowLongW(hwnd, GWL_EXSTYLE) as u32) & WS_EX_TOOLWINDOW != 0 { return 1; }
+        let mut cloaked = 0u32;
+        let hr = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED as u32, &mut cloaked as *mut u32 as *mut _, 4);
+        if hr == 0 && cloaked != 0 { return 1; }
+        let text = title(hwnd);
+        if text.trim().is_empty() { return 1; }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        out.push(NativeWindow { pid, app: app_name(pid), title: text });
+        1
+    }
+
+    pub fn recent_windows() -> Option<Vec<Candidate>> {
+        let mut rows: Vec<NativeWindow> = Vec::new();
+        // SAFETY: EnumWindows is synchronous; `rows` outlives it.
+        let ok = unsafe { EnumWindows(Some(each), &mut rows as *mut Vec<NativeWindow> as LPARAM) };
+        if ok == 0 { return None; }
+        Some(from_native(std::process::id(), rows))
+    }
+
+    /// Titles need no extra permission here.
+    pub fn titles_allowed() -> bool { true }
+}
+
+/// macOS (HU-050): CGWindowList in stacking order. The owner (app) name needs no permission;
+/// the window title is only filled in once the human has granted Screen Recording, which is
+/// only ever READ (preflight), never requested.
+#[cfg(target_os = "macos")]
+mod native {
+    use super::{from_native_app_only, Candidate, NativeWindow};
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::{CFString, CFStringRef};
+    use core_graphics::access::ScreenCaptureAccess;
+    use core_graphics::window::{
+        copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements,
+        kCGWindowListOptionOnScreenOnly, kCGWindowName, kCGWindowOwnerName, kCGWindowOwnerPID,
+    };
+
+    fn text(d: &CFDictionary<CFString, CFType>, key: CFStringRef) -> Option<String> {
+        // SAFETY: the CG key constants are valid static CFStrings.
+        let key = unsafe { CFString::wrap_under_get_rule(key) };
+        d.find(&key)?.downcast::<CFString>().map(|s| s.to_string())
+    }
+
+    fn number(d: &CFDictionary<CFString, CFType>, key: CFStringRef) -> Option<i64> {
+        // SAFETY: as above.
+        let key = unsafe { CFString::wrap_under_get_rule(key) };
+        d.find(&key)?.downcast::<CFNumber>().and_then(|n| n.to_i64())
+    }
+
+    pub fn titles_allowed() -> bool { ScreenCaptureAccess.preflight() }
+
+    pub fn recent_windows() -> Option<Vec<Candidate>> {
+        let list = copy_window_info(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID)?;
+        let allowed = titles_allowed();
+        let mut rows = Vec::new();
+        for item in list.iter() {
+            // SAFETY: CGWindowListCopyWindowInfo returns an array of CFDictionary.
+            let d: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(*item as CFDictionaryRef) };
+            // Layer 0 = ordinary app windows (menu bar, Dock and overlays live on other layers).
+            // SAFETY (all three keys): static CoreGraphics constants.
+            if number(&d, unsafe { kCGWindowLayer }) != Some(0) { continue; }
+            let Some(app) = text(&d, unsafe { kCGWindowOwnerName }) else { continue };
+            let pid = number(&d, unsafe { kCGWindowOwnerPID }).unwrap_or(0) as u32;
+            let title = if allowed { text(&d, unsafe { kCGWindowName }).unwrap_or_default() } else { String::new() };
+            rows.push(NativeWindow { pid, app, title });
+        }
+        Some(from_native_app_only(std::process::id(), rows))
+    }
+}
+
+/// Whether window TITLES can be read on this OS right now (always true off macOS).
 #[cfg(not(target_os = "linux"))]
-pub fn capture(_bus_address: Option<&str>, _display: Option<&str>) -> Option<ActiveWindow> { None }
+pub fn titles_allowed() -> bool { native::titles_allowed() }
+
+/// The context to attach, or `None`. Windows/macOS read the native stacking order.
+#[cfg(not(target_os = "linux"))]
+pub fn capture(_bus_address: Option<&str>, _display: Option<&str>) -> Option<ActiveWindow> {
+    native::recent_windows().as_deref().and_then(pick_external)
+}
 
 #[cfg(not(target_os = "linux"))]
 pub fn capture_at(_point: (f64, f64), _scale: f64) -> Option<(ActiveWindow, Rect)> { None }

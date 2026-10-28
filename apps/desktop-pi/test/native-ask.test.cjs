@@ -153,17 +153,15 @@ test('not intercepted (undefined, no Abito question, no terminal dialog): off sw
 
 test('SECURITY: consent / authorization prompts are never answerable from Abito (both sides of the rule)', async () => {
   const sensitive = [
-    choiceEvent({ question: 'Grant consent for this review candidate?' }),
-    choiceEvent({ question: 'Allow the push?', options: [{ label: 'Granted', description: '', value: 'granted' }, { label: 'Declined', description: '', value: 'declined' }] }),
-    choiceEvent({ question: 'Authorize the migration?' }),
-    choiceEvent({ question: 'Choose', options: [{ label: 'Yes', description: 'Autoriza la operación', value: 'yes' }, OPTIONS[1]] }),
-    choiceEvent({ question: 'Choose', options: [{ label: 'Yes', description: 'grant a permission token', value: 'yes' }, OPTIONS[1]] }),
+    choiceEvent({ question: 'Grant consent for this review candidate?', consentBinding: 'b' }),
+    choiceEvent({ question: 'gentle-ai.review-integration: allow the push?' }),
+    choiceEvent({ question: 'Authorize maintenance?' }),
     choiceEvent({ question: 'Provider envelope', options: OPTIONS }),
     choiceEvent({ question: 'Decide', options: [{ label: 'A', description: '', value: 'gentle-ai.review-integration.consent/v3:abc' }, OPTIONS[1]] }),
     choiceEvent({ question: 'Decide', options: [{ label: 'A', description: '', value: 'a3f9c2d41b7e8a90c1d2e3f405a6b7c8' }, OPTIONS[1]] }),
     choiceEvent({ question: 'Decide', options: [{ label: 'A', description: '', value: 'id-20260101123456' }, OPTIONS[1]] }),
     choiceEvent({ question: 'Decide', options: [{ label: 'A', description: '', value: '{"binding":1}' }, OPTIONS[1]] }),
-    questionEvent({ question: 'Do you consent to this?' }),
+    questionEvent({ question: 'Enter your password' }),
   ];
   for (const event of sensitive) {
     const r = rig();
@@ -176,7 +174,8 @@ test('SECURITY: consent / authorization prompts are never answerable from Abito 
     assert.equal(r.abito.asks.length, 1); r.term.selectResolvers[0](undefined); await run;
   }
   assert.equal(isSensitive('Which branch should I use?'), false);
-  assert.equal(isSensitive('please GRANT access'), true);
+  assert.equal(isSensitive('please GRANT access'), false, 'HU-052: grant is a topic word for ask tools');
+  assert.equal(isSensitive('paste your password'), true);
 });
 
 test('ask_user_question: exactly one single-select question is raced, with the questionnaire texts', async () => {
@@ -321,7 +320,7 @@ test('structured shapes WITHOUT the capability: native only, nothing asked anywh
 test('structured shapes: limits, five questions, sensitive text anywhere, duplicate rows -> not intercepted', async () => {
   const five = formEvent(...Array.from({ length: 5 }, (_, i) => route()));
   const tooLong = formEvent({ ...route(), question: 'q'.repeat(2001) });
-  const sensitive = formEvent(route(), q2({ options: [{ label: 'Yes', description: 'grant the permission token' }, { label: 'No', description: '' }] }));
+  const sensitive = formEvent(route(), q2({ options: [{ label: 'Yes', description: 'binding envelope' }, { label: 'No', description: '' }] }));
   const dup = formEvent(q2({ options: [{ label: 'Same', description: '' }, { label: 'Same', description: '' }] }));
   const longHeader = formEvent({ ...route(), header: 'h'.repeat(33) });
   for (const event of [five, tooLong, sensitive, dup, longHeader]) {
@@ -329,7 +328,7 @@ test('structured shapes: limits, five questions, sensitive text anywhere, duplic
     assert.equal(r.abito.asks.length, 0); assert.equal(r.term.selects.length, 0);
   }
   // the largest accepted shapes DO go through
-  const big = formEvent(...Array.from({ length: 4 }, (_, i) => ({ ...route(), question: 'q'.repeat(1500) + i, options: [{ label: 'l'.repeat(60), description: 'd'.repeat(300) }, { label: 'm'.repeat(60), description: '' }] })));
+  const big = formEvent(...Array.from({ length: 4 }, (_, i) => ({ ...route(), question: 'ab '.repeat(500) + i, options: [{ label: 'l '.repeat(30), description: 'd '.repeat(150) }, { label: 'm '.repeat(30), description: '' }] })));
   const r = rig({ structured: true }); const run = handler(r)(big, r.ctx); await tick();
   assert.equal(r.abito.asks.length, 1); r.term.selectResolvers[0](undefined); await run;
 });
@@ -382,7 +381,7 @@ test('no notification when nothing was decided or the call was not intercepted; 
   assert.deepEqual(r.term.notes, []);
   r = rig({ available: false }); await handler(r)(choiceEvent(), r.ctx);
   assert.deepEqual(r.term.notes, []);
-  r = rig(); run = handler(r)(choiceEvent({ question: 'Grant consent?' }), r.ctx); assert.equal(await run, undefined);
+  r = rig(); run = handler(r)(choiceEvent({ question: 'Enter your password' }), r.ctx); assert.equal(await run, undefined);
   assert.deepEqual(r.term.notes, []);
   r = rig(); run = handler(r)(choiceEvent(), r.ctx); await tick(); r.abito.resolvers[0]({ status: 'busy' }); await tick();
   assert.deepEqual(r.term.notes, []); r.term.selectResolvers[0](undefined); await run;
@@ -396,4 +395,64 @@ test('no notification when nothing was decided or the call was not intercepted; 
   assert.deepEqual(await run, { block: true, reason: 'User selected: 1. Alpha (value: val-alpha)' });
   r = rig(); delete r.ctx.ui.notify; run = handler(r)(choiceEvent(), r.ctx); await tick();
   r.term.selectResolvers[0]('Beta'); assert.match((await run).reason, /^User selected: 2\. Beta/);
+});
+
+// ---- HU-052: ordinary questions are routed; only real secret prompts and opaque consents stay terminal-only ----
+async function routed(event, r = rig({ structured: true })) {
+  const run = handler(r)(event, r.ctx); await tick();
+  const sent = r.abito.asks.length === 1;
+  if (sent) { r.term.selectResolvers[0](undefined); await run; } else { assert.equal(await run, undefined); }
+  return sent;
+}
+const choiceQ = (question, over = {}) => choiceEvent({ question, ...over });
+
+test('HU-052: ordinary questions that only MENTION permisos / proveedor / token / rechazar are routed to Abito', async () => {
+  const events = [
+    choiceQ('¿Qué permisos le damos al agente?'),
+    choiceQ('Elige el proveedor de modelos'),
+    choiceQ('¿Rotamos el token de la API?'),
+    choiceQ('¿Rechazamos estos cambios?', { options: [{ label: 'Rechazar', description: 'descartar', value: 'reject' }, { label: 'Declinar', description: '', value: 'decline' }] }),
+    choiceQ('Review the diff before merging?'),
+    choiceQ('Which permission level?'),
+    choiceQ('Grant access to the staging folder?'),
+    choiceQ('¿Autorizas el despliegue?'),
+    choiceQ('Choose', { options: [{ label: 'Yes', description: 'grant a permission token', value: 'yes' }, OPTIONS[1]] }),
+    choiceQ('¿Rotamos la clave de la API?'),
+    questionEvent({ question: '¿Qué permisos damos?' }),
+    questionEvent({ question: 'Elige proveedor', options: [{ label: 'Rechazar', description: 'no' }, { label: 'Aceptar', description: 'sí' }] }),
+  ];
+  for (const event of events) assert.equal(await routed(event), true, JSON.stringify(event.input).slice(0, 90));
+});
+
+test('HU-052: secret VALUE prompts stay terminal-only (free-text asks for a password / key / token value)', async () => {
+  const events = [
+    choiceQ('Pega tu contraseña'), choiceQ('Enter your API key'), choiceQ('Pega tu token de la API'),
+    choiceQ('Escribe la clave de la API'), choiceQ('Please paste the secret'), choiceQ('Dame el token'),
+    choiceQ('Introduce tu passphrase'), choiceQ('Login required'), choiceQ('Type your credentials'),
+    choiceQ('Which one?', { options: [{ label: 'Paste your token', description: '', value: 'a' }, OPTIONS[1]] }),
+    choiceQ('¿Rotamos el token de la API?', { allowCustomResponse: true }), // token + free text allowed
+    questionEvent({ question: '¿Rotamos el token de la API?' }),            // a questionnaire always allows free text
+    questionEvent({ question: 'Which secreto?' }),
+  ];
+  for (const event of events) assert.equal(await routed(event), false, JSON.stringify(event.input).slice(0, 90));
+});
+
+test('HU-052: opaque values, consent envelopes and maintenance authorizations stay terminal-only', async () => {
+  const opaque = v => choiceQ('Decide', { options: [{ label: 'A', description: '', value: v }, OPTIONS[1]] });
+  const events = [
+    opaque('a3f9c2d41b7e8a90c1d2e3f405a6b7c8'), opaque('id-20260101123456'), opaque('{"x":1}'),
+    choiceQ('Decide', { consentBinding: 'x' }),
+    choiceQ('Decide', { options: [{ label: 'A', description: '', value: 'yes', consentBinding: 'x' }, OPTIONS[1]] }),
+    choiceQ('gentle-ai.review-integration consent'),
+    choiceQ('Decide', { options: [{ label: 'A', description: 'gentle-ai.review-integration', value: 'yes' }, OPTIONS[1]] }),
+    choiceQ('Authorize maintenance?'), choiceQ('Provider envelope'), choiceQ('Do you consent to the plan?'), choiceQ('¿Das tu consentimiento?'),
+    questionEvent({ question: 'ok?', options: [{ label: 'A', description: 'consentBinding' }, { label: 'B', description: '' }] }),
+  ];
+  for (const event of events) assert.equal(await routed(event), false, JSON.stringify(event.input).slice(0, 90));
+});
+
+test('HU-052: the showable gate and obfuscation folding still apply to ask tools', async () => {
+  const events = [choiceQ('Pеga tu contraseña'), choiceQ('Which branch\u200b?'), choiceQ('Pega tu t0ken'), choiceQ('Enter the p@ssw0rd'), choiceQ('Reset the pass word')];
+  for (const event of events) assert.equal(await routed(event), false, JSON.stringify(event.input).slice(0, 60));
+  assert.equal(await routed(choiceQ('¿Qué rama uso?')), true);
 });

@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const readline = require('node:readline');
+const winfs = require('./win-fs.cjs');
 
 const BIN_PATH = path.resolve(__dirname, '../bin/abito-hook.cjs');
 const MAX_BYTES = 1024 * 1024;
@@ -77,6 +78,8 @@ function resolveUserSettings(env, homedir = os.homedir, file = CLAUDE_PROFILE.de
   return path.join(home, ...file);
 }
 function checkParent(settingsPath, uid) {
+  const w = winfs.active();
+  if (w) return winCheckParent(w, settingsPath);
   const dir = path.dirname(settingsPath);
   let st, real;
   try { st = fs.lstatSync(dir); real = fs.realpathSync(dir); } catch { throw refuse('settings directory does not exist'); }
@@ -86,8 +89,33 @@ function checkParent(settingsPath, uid) {
   if (st.mode & 0o002) throw refuse('settings directory is world-writable');
 }
 
+// ---- Windows (HU-047): the native helper decides owner/DACL/reparse; Node only reads and refuses ----
+const WIN_WHY = { not_private: 'is not private to the current user', reparse: 'goes through a link or junction', too_large: 'is too large', unsafe_path: 'has an unsafe path',
+  exists: 'already exists', missing: 'is missing', mismatch: 'changed since the preview', io: 'could not be accessed', helper_failed: 'could not be verified', helper_untrusted: 'could not be verified' };
+function winRefuse(e, what) {
+  if (e instanceof InstallError) return e;
+  const reason = e && e.reason;
+  const err = refuse(`${what} ${WIN_WHY[reason] || 'could not be verified'}`);
+  err.reason = reason || 'helper_failed';
+  return err;
+}
+function winCheckParent(w, settingsPath) {
+  let f;
+  try { f = w.checkPath(settingsPath); } catch (e) { throw winRefuse(e, 'settings directory'); }
+  if (!f.parent_ok) { const err = refuse('settings directory does not exist or is not private to the current user'); err.reason = 'not_private'; throw err; }
+}
+function winReadTarget(w, settingsPath) {
+  let got;
+  try { got = w.readPrivate(settingsPath); } catch (e) { throw winRefuse(e, 'settings file'); }
+  if (got === null) return null;
+  if (!Buffer.from(got.buf.toString('utf8'), 'utf8').equals(got.buf)) throw refuse('settings file is not valid UTF-8');
+  return { buf: got.buf, sig: { size: got.size, mtimeMs: got.mtimeMs, sha256: got.sha256 }, mode: 0o600 };
+}
+
 // ---- reading ----
 function readTarget(settingsPath, uid) {
+  const w = winfs.active();
+  if (w) return winReadTarget(w, settingsPath);
   let lst;
   try { lst = fs.lstatSync(settingsPath); } catch (e) {
     if (e.code === 'ENOENT') return null;
@@ -311,7 +339,7 @@ function buildPatch(base, top, member, newHooks, style) {
   return { start: at, end: at, text: (last ? ',' : '') + style.eol + style.mi + entry + (tailHasNewline ? '' : style.eol) };
 }
 
-function planClaudeSettings({ settingsPath, timeoutSec, remove = false, binPath = BIN_PATH, execPath = process.execPath, uid = process.getuid(), profile = CLAUDE_PROFILE }) {
+function planClaudeSettings({ settingsPath, timeoutSec, remove = false, binPath = BIN_PATH, execPath = process.execPath, uid = winfs.uidOf(), profile = CLAUDE_PROFILE }) {
   if (timeoutSec === undefined) timeoutSec = profile.defaultTimeoutSec;
   const EVENTS = profile.events;
   const plannedEntry = (event, t, b, x) => profile.buildEntry(event, t, b, x);
@@ -426,6 +454,14 @@ function defaultVerify(parsed, plan, text) {
   return text.length === prefix.length + p.text.length + suffix.length && text.startsWith(prefix) && text.endsWith(suffix) && text === plan.after;
 }
 function restore(plan, backupPath) {
+  const w = winfs.active();
+  if (w) {
+    try {
+      const cur = w.readPrivate(plan.settingsPath);
+      if (backupPath) { w.writePrivate(plan.settingsPath, w.readPrivate(backupPath).buf, cur ? cur.sha256 : null); } else if (cur) w.remove(plan.settingsPath);
+      return true;
+    } catch { return false; }
+  }
   try {
     if (backupPath) {
       const tmpf = tempPath(plan.settingsPath);
@@ -436,6 +472,8 @@ function restore(plan, backupPath) {
 }
 
 async function applyPlan(plan, { backupPath, verify = defaultVerify, out, err }) {
+  const w = winfs.active();
+  if (w) return winApplyPlan(w, plan, { backupPath, verify, out, err });
   const target = plan.settingsPath;
   const data = Buffer.from(plan.after, 'utf8');
   if (plan.patch && plan.exists) {
@@ -480,6 +518,44 @@ async function applyPlan(plan, { backupPath, verify = defaultVerify, out, err })
   return 0;
 }
 
+async function winApplyPlan(w, plan, { backupPath, verify, out, err }) {
+  const target = plan.settingsPath;
+  const data = Buffer.from(plan.after, 'utf8');
+  const stale = () => { err('refused: settings file changed since the preview; nothing was written\n'); return 70; };
+  if (plan.patch && plan.exists) {
+    const orig = Buffer.from(plan.before, 'utf8');
+    const pre = Buffer.from(plan.baseText.slice(0, plan.patch.start), 'utf8'), suf = Buffer.from(plan.baseText.slice(plan.patch.end), 'utf8');
+    if (!(data.subarray(0, pre.length).equals(orig.subarray(0, pre.length)) && data.subarray(data.length - suf.length).equals(orig.subarray(orig.length - suf.length)))) {
+      err('refused: bytes outside the hooks span would change; nothing was written\n'); return 70;
+    }
+  }
+  let backupMade = false;
+  try {
+    const cur = winReadTarget(w, target);
+    if ((plan.sig ? cur === null || cur.sig.sha256 !== plan.sig.sha256 : cur !== null)) return stale();
+    if (plan.exists) { w.writePrivate(backupPath, cur.buf, null); backupMade = true; }
+    // The helper re-checks the expected hash under the same call that replaces the file.
+    w.writePrivate(target, data, plan.exists ? plan.sig.sha256 : null);
+  } catch (e) {
+    if (e && e.reason === 'mismatch') return stale();
+    err(`error: could not write settings (${(e && e.reason) || 'unverified'}); target unchanged\n`);
+    return 70;
+  }
+  let ok = false;
+  try { const written = w.readPrivate(target).buf.toString('utf8'); ok = !!verify(plan.profile && plan.profile.rawText ? null : JSON.parse(written), plan, written); } catch { ok = false; }
+  if (!ok) {
+    const restored = restore(plan, backupMade ? backupPath : null);
+    if (restored) err('error: verification failed; the previous settings were restored\n');
+    else if (backupMade) err(`error: verification failed; could not restore automatically; your original is at ${backupPath}\n`);
+    else err(`error: verification failed; could not restore automatically; remove the new file ${target} by hand\n`);
+    return 70;
+  }
+  out(`Done. ${plan.remove ? 'Removed' : 'Installed'} Abito hook entries in ${target}\n`);
+  if (backupMade) out(`Backup: ${backupPath}\n`);
+  for (const n of plan.profile.postNotes(plan)) out(n + '\n');
+  return 0;
+}
+
 function parseInstallArgs(argv, name = 'claude') {
   if (!Array.isArray(argv) || argv[0] !== name) return null;
   const o = { settings: null, user: false, timeoutSec: null, remove: false, apply: false };
@@ -514,7 +590,7 @@ async function runInstall(argv, opts = {}) {
       if (!isTTY()) { err('refused: --apply needs an interactive terminal on stdin and stdout; nothing was written\n'); return 77; }
     }
     const plan = (opts.plan || planClaudeSettings)({ settingsPath, timeoutSec: o.timeoutSec === null ? profile.defaultTimeoutSec : o.timeoutSec, remove: o.remove, profile,
-      binPath: opts.binPath || BIN_PATH, execPath: opts.execPath || process.execPath, uid: opts.uid === undefined ? process.getuid() : opts.uid });
+      binPath: opts.binPath || BIN_PATH, execPath: opts.execPath || process.execPath, uid: opts.uid === undefined ? winfs.uidOf() : opts.uid });
     const now = (opts.now || (() => new Date()))();
     const backupPath = backupPathFor(settingsPath, now);
     out(renderPreview(plan, { backupPath, apply: o.apply }));
@@ -532,4 +608,4 @@ async function runInstall(argv, opts = {}) {
   }
 }
 
-module.exports = { numberIsLossless, readTarget, checkParent, detectStyle, sameSig, DIFF_LINES, diffLines, changedOutsidePatch, checkTimeout, CLAUDE_PROFILE, InstallErrorRefuse: refuse, shq, isObj, askLine, promptTimeoutFromEnv, scanSettings, defaultVerify, BIN_PATH, USAGE, InstallError, planClaudeSettings, renderPreview, runInstall, applyPlan, resolveUserSettings, checkSettingsSyntax, parseInstallArgs, backupPathFor, MAX_BYTES };
+module.exports = { winRefuse, numberIsLossless, readTarget, checkParent, detectStyle, sameSig, DIFF_LINES, diffLines, changedOutsidePatch, checkTimeout, CLAUDE_PROFILE, InstallErrorRefuse: refuse, shq, isObj, askLine, promptTimeoutFromEnv, scanSettings, defaultVerify, BIN_PATH, USAGE, InstallError, planClaudeSettings, renderPreview, runInstall, applyPlan, resolveUserSettings, checkSettingsSyntax, parseInstallArgs, backupPathFor, MAX_BYTES };

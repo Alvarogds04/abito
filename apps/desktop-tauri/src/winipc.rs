@@ -193,12 +193,12 @@ pub mod ffi {
     const MAX_META_FILE: u64 = 4096;
     const PIPE_BUFFER: u32 = 8192;
 
-    fn wide(text: &str) -> Vec<u16> {
+    pub(crate) fn wide(text: &str) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt as _;
         std::ffi::OsStr::new(text).encode_wide().chain(Some(0)).collect()
     }
 
-    fn last_error() -> io::Error {
+    pub(crate) fn last_error() -> io::Error {
         io::Error::from_raw_os_error(unsafe { GetLastError() } as i32)
     }
 
@@ -317,7 +317,7 @@ pub mod ffi {
         winpolicy::dacl_private(&owner, current, Some(&allowed))
     }
 
-    fn owner_and_dacl(target: &Path) -> Option<(String, Vec<String>)> {
+    pub(crate) fn owner_and_dacl(target: &Path) -> Option<(String, Vec<String>)> {
         let wide = wide(&target.to_string_lossy());
         let (mut owner, mut dacl, mut descriptor) =
             (std::ptr::null_mut(), std::ptr::null_mut::<ACL>(), std::ptr::null_mut());
@@ -369,7 +369,7 @@ pub mod ffi {
 
     /// Never follow a junction, symlink or other reparse point, including in
     /// ancestors. Shared by daemon file checks and receiver directory checks.
-    fn plain_path(target: &Path) -> bool {
+    pub(crate) fn plain_path(target: &Path) -> bool {
         target.is_absolute() && target.ancestors().all(|path| {
             let attributes = unsafe { GetFileAttributesW(wide(&path.to_string_lossy()).as_ptr()) };
             attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
@@ -389,7 +389,7 @@ pub mod ffi {
         prepare_private_directory(root, sid, boundary)
     }
 
-    fn prepare_private_directory(root: &Path, sid: &str, boundary: &Path) -> io::Result<()> {
+    pub(crate) fn prepare_private_directory(root: &Path, sid: &str, boundary: &Path) -> io::Result<()> {
         if !root.is_absolute() || !sid_shape_ok(sid) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid private directory identity"));
         }

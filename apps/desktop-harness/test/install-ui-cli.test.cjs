@@ -51,7 +51,7 @@ function runMany(lists, env) {
 }
 const cli = (args, env) => runMany([['install', ...args]], env)[0];
 
-test('Windows UI install refuses before reading settings or creating audit/backup/lock files', t => {
+test('Windows UI install with an unverifiable install manifest refuses before reading settings or creating audit/backup/lock files (HU-047 fail closed)', t => {
   const dir = tmp(t);
   const settings = path.join(dir, 'settings.json');
   fs.writeFileSync(settings, '{"keep":true}\n');
@@ -61,9 +61,9 @@ test('Windows UI install refuses before reading settings or creating audit/backu
       const args = ['install', harness, '--settings', settings, '--json', ...extra];
       const script = "Object.defineProperty(process,'platform',{value:'win32'}); process.getuid=undefined; process.argv=[process.execPath,...JSON.parse(process.argv[1])]; require(process.argv[1]);";
       const result = spawnSync(process.execPath, ['-e', script, JSON.stringify([BIN, ...args])], {encoding:'utf8', timeout:5000});
-      assert.equal(result.status, 77, result.stdout + result.stderr);
+      assert.equal(result.status, 65, result.stdout + result.stderr);
       assert.equal(result.stderr, '');
-      assert.equal(result.stdout, JSON.stringify({schema:'abito-hook-install/1',ok:false,code:'unsupported_platform',message:'Automatic hook installation is not available on this platform yet.'}) + '\n');
+      assert.equal(result.stdout, JSON.stringify({schema:'abito-hook-install/1',ok:false,code:'install_unverified',message:'the installed Abito files could not be verified; nothing was written'}) + '\n');
       assert.deepEqual(fs.readdirSync(dir), ['settings.json']);
       assert.deepEqual(fs.readFileSync(settings), before);
     }

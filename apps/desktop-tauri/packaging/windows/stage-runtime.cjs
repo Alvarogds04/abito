@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { DAEMON_FILES, HARNESS_FILES, PI_FILES } = require('../lib.cjs');
 const crate = path.resolve(__dirname, '../..');
-const BINARY_FILES = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe'];
+const BINARY_FILES = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe', 'abito-install.json'];
 const RUNTIME_FILES = [...DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...HARNESS_FILES.map(f => `desktop-harness/${f}`), ...PI_FILES.map(f => `desktop-pi/${f}`)].sort();
 const RUNTIME_DIRS = [...new Set(RUNTIME_FILES.flatMap(f => {
   const dirs = []; for (let d = path.posix.dirname(f); d !== '.'; d = path.posix.dirname(d)) dirs.push(d);

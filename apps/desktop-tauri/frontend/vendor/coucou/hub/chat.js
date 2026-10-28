@@ -379,7 +379,10 @@ async function renderChatSettings({ invoke, V, listen, timers }) {
     live.disabled = typeof prefs.liveContext !== "boolean";
     ctxBody.append(row(t("Live context"), live), h("div", { class: "hub-note", text: t("When you write in the chat, Abito adds a short read-only summary of what it already knows: your coding-agent sessions, pending questions and the status of your connected integrations. It makes no new requests, and sends no keys, mail bodies or diffs. The chat still cannot run or approve anything. On by default.") }));
     const available = prefs.windowContextAvailable;
-    ctxBody.append(h("div", { class: "hub-note", text: available === true ? "La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL." : available === false ? "La extensión de GNOME no está disponible. En GNOME Wayland no se pueden leer ventanas nativas sin ella; el respaldo X11 solo ve ventanas XWayland." : "No se pudo comprobar la extensión de GNOME." }));
+    if (prefs.windowContextNative === true) {
+      ctxBody.append(h("div", { class: "hub-note", text: "Abito lee la app y el título de la ventana activa del sistema. No se captura la URL." + (typeof prefs.windowContextNote === "string" ? " Contexto " + prefs.windowContextNote + ". Para activarlo: Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla. Abito no pide ese permiso por ti." : "") }));
+    } else
+      ctxBody.append(h("div", { class: "hub-note", text: available === true ? "La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL." : available === false ? "La extensión de GNOME no está disponible. En GNOME Wayland no se pueden leer ventanas nativas sin ella; el respaldo X11 solo ve ventanas XWayland." : "No se pudo comprobar la extensión de GNOME." }));
     if (available !== true) {
       ctxBody.append(
         h("div", { class: "hub-note", text: "Para instalarla, desde la raíz del repositorio ejecuta:" }),

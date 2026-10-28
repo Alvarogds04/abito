@@ -52,22 +52,16 @@ const SESSION_HELPER_TIMEOUT_MS = 5000;
  */
 function sessionHelperCandidates(srcDir = __dirname) {
 	if (process.platform !== "win32") return [];
-	return [
-		// Installed layout: the helper ships next to the daemon package root.
-		path.resolve(srcDir, "..", "..", "abito-private-session.exe"),
-		// Development/CI layout: the sibling desktop-tauri crate's debug build.
-		path.resolve(srcDir, "..", "..", "desktop-tauri", "target", "debug", "abito-private-session.exe"),
-	];
+	// Installed layout only: the helper ships next to the daemon package root, and findSessionHelper additionally
+	// requires its sha256 to match abito-install.json (HU-047 M2). No development build is ever a candidate.
+	return [path.resolve(srcDir, "..", "..", "abito-private-session.exe")];
 }
 
 /** The first existing helper candidate, or undefined (fail closed). */
 function findSessionHelper(deps = {}) {
-	for (const candidate of sessionHelperCandidates()) {
-		try {
-			if ((deps.stat ?? fs.statSync)(candidate).isFile()) return candidate;
-		} catch {}
-	}
-	return undefined;
+	if (process.platform !== "win32") return undefined;
+	// One resolver shared with the hook installer: verified against the install manifest, never PATH/cwd/dev build.
+	return (deps.resolveHelper ?? require("../../desktop-harness/src/win-fs.cjs").resolveHelper)();
 }
 
 /**
