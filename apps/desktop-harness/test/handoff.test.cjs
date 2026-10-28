@@ -18,10 +18,13 @@ function put(rcv, text, mode = 0o600) {
 }
 const resolve = (rcv, o, uid = owner) => resolveConfig({ ABITO_SOCKET_DIR: rcv.runtime }, uid, o);
 
+// Linux: $XDG_RUNTIME_DIR, else /run/user/<uid>. macOS has neither: the canonical per-user temp dir (src/config.cjs defaultRuntime).
+const mac = process.platform === 'darwin';
+const macBase = () => fs.realpathSync(require('node:os').tmpdir());
 test('default runtime matrix', () => {
   assert.equal(resolveConfig({ ABITO_SOCKET_DIR: '/x/r', XDG_RUNTIME_DIR: '/run/user/9' }, 1, { procExists: () => false }).runtime, '/x/r');
-  assert.equal(resolveConfig({ XDG_RUNTIME_DIR: '/tmp/xdg-none' }, 1).runtime, '/tmp/xdg-none/abito-island');
-  const fallback = '/run/user/1234/abito-island';
+  assert.equal(resolveConfig({ XDG_RUNTIME_DIR: '/tmp/xdg-none' }, 1).runtime, mac ? `${macBase()}/abito-island` : '/tmp/xdg-none/abito-island');
+  const fallback = mac ? `${macBase()}/abito-island` : '/run/user/1234/abito-island';
   for (const xdg of [undefined, '', 'rel', '/', '/a/', '/a/../b', '/a\0b'])
     assert.equal(resolveConfig({ XDG_RUNTIME_DIR: xdg }, 1234, { procExists: () => false }).runtime, fallback, String(xdg));
   assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: 'rel' }, 1), /Invalid ABITO_SOCKET_DIR/);
@@ -154,8 +157,9 @@ test('a real zombie pid is not a live handoff process', async t => {
     if (child.exitCode === null && child.signalCode === null) await new Promise(resolve => child.once('close', resolve));
     if (zombiePid !== undefined) {
       const until = Date.now() + 2000;
-      while (fs.existsSync(`/proc/${zombiePid}`) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
-      assert.equal(fs.existsSync(`/proc/${zombiePid}`), false, 'zombie helper must reap its child before exit');
+      const exists = () => process.platform === 'darwin' ? require('../src/config.cjs').darwinProc.exists(zombiePid) : fs.existsSync(`/proc/${zombiePid}`);
+      while (exists() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(exists(), false, 'zombie helper must reap its child before exit');
     }
   });
   const pid = await new Promise((resolve, reject) => {
@@ -165,7 +169,9 @@ test('a real zombie pid is not a live handoff process', async t => {
   });
   if (pid === null) { t.skip('python3 is unavailable for constructing an unreaped child'); return; }
   zombiePid = pid;
+  // Linux reads /proc/<pid>/stat; macOS has no /proc, so the same fact comes from the production `ps` probe (config.cjs darwinProc).
   const state = () => {
+    if (process.platform === 'darwin') return require('../src/config.cjs').darwinProc.state(pid);
     try {
       const raw = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
       return raw.slice(raw.lastIndexOf(')') + 1).trimStart()[0];

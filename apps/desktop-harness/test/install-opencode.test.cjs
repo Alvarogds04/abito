@@ -1,4 +1,6 @@
 'use strict';
+// macOS: os.tmpdir() is /var/folders/... and /var is a symlink to /private/var; the installers refuse a settings path that contains a
+// symlink (correct for a real home), so the fixture home is canonicalized (as the other install tests already do).
 // Installer: Abito owns ONE plugin file (~/.config/opencode/plugins/abito-island.js). Never opencode.json.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -8,7 +10,7 @@ const path = require('node:path');
 const { planOpencodePlugin, runInstallOpencode, MARKER, STUB, OPENCODE_PROFILE } = require('../src/install-opencode.cjs');
 
 const BIN = '/opt/abito/bin/abito-hook.cjs', NODE = '/usr/bin/node';
-const tmp = t => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-ocI-')); fs.chmodSync(d, 0o700); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
+const tmp = t => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-ocI-'))); fs.chmodSync(d, 0o700); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
 const plan = (p, o = {}) => planOpencodePlugin({ settingsPath: p, binPath: BIN, execPath: NODE, ...o });
 
 test('a new plugin file carries the ownership marker and the exact deadline', t => {
