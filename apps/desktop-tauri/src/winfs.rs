@@ -7,8 +7,8 @@
 //! * `check_path` is strictly read-only.
 //! * `write_private` verifies the parent chain, creates the temp file in the same
 //!   directory WITH a protected owner-only DACL at creation (CREATE_NEW), writes
-//!   bounded bytes, flushes, replaces atomically (MoveFileExW REPLACE_EXISTING |
-//!   WRITE_THROUGH) and re-verifies the final file.
+//!   bounded bytes, flushes, replaces atomically (a rename by the temp handle,
+//!   relative to the held parent directory, ReplaceIfExists) and re-verifies the final file.
 //! * Owner policy: current user SID; BUILTIN\Administrators only for an elevated token.
 //! * Paths: drive-letter absolute only (`winpolicy::fs_path_ok`), reparse points
 //!   refused on every component.
@@ -32,10 +32,10 @@ pub mod ffi {
     use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
     use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_QUERY};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, DeleteFileW, GetFileAttributesW, GetFileInformationByHandle, MoveFileExW, RemoveDirectoryW,
+        CreateFileW, GetFileAttributesW, GetFileInformationByHandle, GetFinalPathNameByHandleW, SetFileInformationByHandle, FileDispositionInfo, FileRenameInfo, FILE_DISPOSITION_INFO, FILE_RENAME_INFO, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, DELETE, FILE_GENERIC_READ,
         BY_HANDLE_FILE_INFORMATION, CREATE_NEW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -51,8 +51,8 @@ pub mod ffi {
         (ok != 0).then_some(info.TokenIsElevated != 0)
     }
 
-    struct Who { sid: String, elevated: bool }
-    fn who() -> Result<Who, Refusal> {
+    pub struct Who { sid: String, elevated: bool }
+    pub fn who() -> Result<Who, Refusal> {
         Ok(Who { sid: current_user_sid().ok_or("io")?, elevated: token_elevated().ok_or("io")? })
     }
 
@@ -80,7 +80,7 @@ pub mod ffi {
 
     /// Parent-directory policy: plain chain (no reparse anywhere), a real directory,
     /// install owner and private principals.
-    fn dir_ok(dir: &Path, who: &Who) -> bool {
+    pub fn dir_ok(dir: &Path, who: &Who) -> bool {
         plain_path(dir) && attrs(dir).is_some_and(|a| a & FILE_ATTRIBUTE_DIRECTORY != 0) && entry_private(dir, who)
     }
 
@@ -88,6 +88,120 @@ pub mod ffi {
     fn file_ok(file: &Path, who: &Who) -> bool {
         plain_path(file) && attrs(file).is_some_and(|a| a & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) == 0)
             && link_count(file) == Some(1) && entry_private(file, who)
+    }
+
+
+    /// HU-047 M3: the verified parent directory, opened ONCE and kept open for the whole operation.
+    /// Share mode is READ|WRITE and deliberately WITHOUT FILE_SHARE_DELETE, so while this value lives nobody can rename,
+    /// delete or replace that directory (or an ancestor) with a junction: such a call fails with a sharing violation.
+    /// `real` is the handle's own final path (the OS resolves 8.3 names and links), taken once at open: anything created
+    /// in the directory must resolve to `real` + name, and `still_here` re-asserts that the handle still sits there.
+    /// EVERY ancestor up to the drive root is held the same way (top down, none may be a reparse point), so the chain
+    /// cannot be re-pointed after the check without relying on how NTFS treats child handles. The plain-chain check
+    /// (`dir_ok`) runs AFTER the opens. All swaps, renames and deletes below go through THIS handle (RootDirectory).
+    pub struct HeldDir { handle: OwnedHandle, _ancestors: Vec<OwnedHandle>, dir: std::path::PathBuf, real: String }
+
+    fn final_path(h: HANDLE) -> Option<String> {
+        let mut buf = vec![0u16; 1024];
+        let n = unsafe { GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, 0) } as usize;
+        if n == 0 || n >= buf.len() { return None; }
+        Some(String::from_utf16_lossy(&buf[..n]))
+    }
+    /// `\\?\C:\a\b` -> `c:\a\b` (case-insensitive compare form).
+    fn norm(p: &str) -> String { p.strip_prefix(r"\\?\").unwrap_or(p).trim_end_matches('\\').to_ascii_lowercase() }
+
+    impl HeldDir {
+        /// Opens `dir` without following a reparse point, refuses anything that is not a plain directory, and
+        /// refuses when the handle does not point at exactly the requested path. Share mode excludes DELETE.
+        pub fn open(dir: &Path) -> Result<HeldDir, Refusal> {
+            let mut chain: Vec<&Path> = dir.ancestors().filter(|a| !a.as_os_str().is_empty()).collect();
+            chain.reverse(); // drive root first
+            let mut held: Vec<OwnedHandle> = Vec::new();
+            let last = chain.len().saturating_sub(1);
+            // Ancestors need only FILE_READ_ATTRIBUTES (we may not own C:\\Users); the directory itself also needs the add rights
+            // because it is the RootDirectory of the relative rename.
+            for (i, level) in chain.into_iter().enumerate() { held.push(open_plain_dir(level, i == last)?); }
+            let handle = held.pop().ok_or("unsafe_path")?;
+            let real = final_path(handle.as_raw_handle() as HANDLE).ok_or("io")?;
+            Ok(HeldDir { handle, _ancestors: held, dir: dir.to_path_buf(), real })
+        }
+        #[allow(dead_code)]
+        pub fn path(&self) -> &Path { &self.dir }
+        /// True while the held handle still resolves to the same path (cheap re-assertion right before a swap).
+        pub fn still_here(&self) -> bool {
+            final_path(self.handle.as_raw_handle() as HANDLE).is_some_and(|r| norm(&r) == norm(&self.real))
+        }
+        /// Policy on the held directory: plain chain, a real directory, install owner and private principals.
+        pub fn verified(dir: &Path, who: &Who) -> Result<HeldDir, Refusal> {
+            let held = HeldDir::open(dir)?;
+            if !dir_ok(dir, who) { return Err("not_private"); }
+            Ok(held)
+        }
+    }
+
+    /// One directory level, opened without following a reparse point and WITHOUT FILE_SHARE_DELETE.
+    fn open_plain_dir(dir: &Path, target: bool) -> Result<OwnedHandle, Refusal> {
+        let access = if target { FILE_LIST_DIRECTORY | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES } else { FILE_READ_ATTRIBUTES };
+        let h = unsafe {
+            CreateFileW(wide(&dir.to_string_lossy()).as_ptr(), access, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, std::ptr::null_mut())
+        };
+        if h == INVALID_HANDLE_VALUE {
+            return Err(match last_error().raw_os_error() { Some(2) | Some(3) => "missing", Some(32) => "busy", _ => "io" });
+        }
+        let handle = unsafe { OwnedHandle::from_raw_handle(h as _) };
+        let info = handle_info(handle.as_raw_handle() as HANDLE).ok_or("io")?;
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 { return Err("reparse"); }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 { return Err("unsafe_path"); }
+        Ok(handle)
+    }
+
+    fn handle_info(h: HANDLE) -> Option<BY_HANDLE_FILE_INFORMATION> {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        (unsafe { GetFileInformationByHandle(h, &mut info) } != 0).then_some(info)
+    }
+
+    /// Opens an EXISTING entry of the held directory (file or directory) without following a link, WITHOUT FILE_SHARE_DELETE,
+    /// with DELETE access so the same handle can rename or delete it. It must resolve directly under the held directory.
+    fn open_entry(held: &HeldDir, name: &str) -> Result<(OwnedHandle, BY_HANDLE_FILE_INFORMATION), Refusal> {
+        let path = held.dir.join(name);
+        let h = unsafe {
+            CreateFileW(wide(&path.to_string_lossy()).as_ptr(), DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, std::ptr::null_mut())
+        };
+        if h == INVALID_HANDLE_VALUE {
+            return Err(match last_error().raw_os_error() { Some(2) | Some(3) => "missing", Some(32) => "busy", _ => "io" });
+        }
+        let handle = unsafe { OwnedHandle::from_raw_handle(h as _) };
+        let info = handle_info(handle.as_raw_handle() as HANDLE).ok_or("io")?;
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 { return Err("reparse"); }
+        if !lives_under(handle.as_raw_handle() as HANDLE, held, name) { return Err("reparse"); }
+        Ok((handle, info))
+    }
+
+    /// Rename (or move) the open `file` into `dest` under the name `leaf`, relative to the held `dest` handle (RootDirectory):
+    /// no path is resolved again. `replace` is the only way an existing target is overwritten.
+    fn rename_into(file: HANDLE, dest: &HeldDir, leaf: &str, replace: bool) -> Result<(), Refusal> {
+        let name: Vec<u16> = leaf.encode_utf16().collect();
+        let off = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+        let bytes = off + name.len() * 2 + 2;
+        let mut buf = vec![0u64; bytes.div_ceil(8)];
+        unsafe {
+            let info = buf.as_mut_ptr() as *mut FILE_RENAME_INFO;
+            (*info).Anonymous.ReplaceIfExists = replace;
+            (*info).RootDirectory = dest.handle.as_raw_handle() as HANDLE;
+            (*info).FileNameLength = (name.len() * 2) as u32;
+            std::ptr::copy_nonoverlapping(name.as_ptr(), (buf.as_mut_ptr() as *mut u8).add(off) as *mut u16, name.len());
+            if SetFileInformationByHandle(file, FileRenameInfo, buf.as_ptr().cast(), bytes as u32) == 0 {
+                return Err(match last_error().raw_os_error() { Some(80) | Some(183) => "exists", Some(32) => "busy", _ => "io" });
+            }
+        }
+        Ok(())
+    }
+
+    /// A file just created (or about to be replaced) must live directly under the held directory.
+    fn lives_under(file: HANDLE, held: &HeldDir, name: &str) -> bool {
+        final_path(file).is_some_and(|r| norm(&r) == format!("{}\\{}", norm(&held.real), name.to_ascii_lowercase()))
     }
 
     fn parent_of(path: &Path) -> Result<&Path, Refusal> { path.parent().ok_or("unsafe_path") }
@@ -127,7 +241,7 @@ pub mod ffi {
     pub fn make_dir(path: &str) -> Result<String, Refusal> {
         let who = who()?;
         let dir = Path::new(path);
-        if !dir_ok(parent_of(dir)?, &who) { return Err("not_private"); }
+        let _held = HeldDir::verified(parent_of(dir)?, &who)?; // M3: held (no FILE_SHARE_DELETE) until the directory exists and is checked
         let existed = std::fs::symlink_metadata(dir).is_ok();
         if existed {
             if !dir_ok(dir, &who) { return Err(if attrs(dir).is_some_and(|a| a & FILE_ATTRIBUTE_REPARSE_POINT != 0) { "reparse" } else { "not_private" }); }
@@ -139,11 +253,16 @@ pub mod ffi {
     }
 
     pub fn write_private(path: &str, expect: &Expect, data: &[u8]) -> Result<String, Refusal> {
+        write_private_with(path, expect, data, &|| {})
+    }
+
+    /// `before_swap` runs after the temp file is written and BEFORE the rename (tests use it to attack that window).
+    pub fn write_private_with(path: &str, expect: &Expect, data: &[u8], before_swap: &dyn Fn()) -> Result<String, Refusal> {
         if data.len() > MAX_WRITE { return Err("too_large"); }
         let who = who()?;
         let target = Path::new(path);
         let dir = parent_of(target)?;
-        if !dir_ok(dir, &who) { return Err("not_private"); }
+        let held = HeldDir::verified(dir, &who)?; // M3: parent chain held through check, create, swap and re-verification
         match (std::fs::symlink_metadata(target), expect) {
             (Err(e), Expect::Absent) if e.kind() == std::io::ErrorKind::NotFound => {}
             (Err(e), Expect::Sha256(_)) if e.kind() == std::io::ErrorKind::NotFound => return Err("missing"),
@@ -155,50 +274,89 @@ pub mod ffi {
                 if &hex(&read_bounded(target)?) != want { return Err("mismatch"); }
             }
         }
-        let name = target.file_name().ok_or("unsafe_path")?.to_string_lossy().into_owned();
+        let leaf = target.file_name().ok_or("unsafe_path")?.to_string_lossy().into_owned();
         let sddl = crate::winipc::sddl_owner_full(&who.sid).ok_or("io")?;
         let sddl_w = wide(&sddl);
         let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl_w.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) } == 0 { return Err("io"); }
         let attributes = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd, bInheritHandle: 0 };
+        // The temp handle (share mode 0, DELETE|read|write) stays OPEN until after the swap: nobody can rename or replace it
+        // in between, and the same handle is renamed relative to the held parent and read back for the hash.
         let mut created: Option<(std::path::PathBuf, OwnedHandle)> = None;
         for attempt in 0..8u32 {
             let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-            let candidate = dir.join(format!(".{name}.abito-tmp-{}-{nonce}-{attempt}", std::process::id()));
-            let h = unsafe { CreateFileW(wide(&candidate.to_string_lossy()).as_ptr(), GENERIC_WRITE, 0, &attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, std::ptr::null_mut()) };
-            if h != INVALID_HANDLE_VALUE { created = Some((candidate, unsafe { OwnedHandle::from_raw_handle(h as _) })); break; }
+            let candidate = dir.join(format!(".{leaf}.abito-tmp-{}-{nonce}-{attempt}", std::process::id()));
+            let h = unsafe { CreateFileW(wide(&candidate.to_string_lossy()).as_ptr(), GENERIC_WRITE | FILE_GENERIC_READ | DELETE, 0, &attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, std::ptr::null_mut()) };
+            if h != INVALID_HANDLE_VALUE {
+                let h = unsafe { OwnedHandle::from_raw_handle(h as _) };
+                let tmp_name = candidate.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if !lives_under(h.as_raw_handle() as HANDLE, &held, &tmp_name) {
+                    // Created somewhere else: delete exactly what we hold (by handle), never by path.
+                    let _ = mark_delete(h.as_raw_handle() as HANDLE);
+                    unsafe { LocalFree(sd.cast()) };
+                    return Err("reparse");
+                }
+                created = Some((candidate, h));
+                break;
+            }
             if last_error().raw_os_error() != Some(ERROR_FILE_EXISTS as i32) { break; }
         }
         unsafe { LocalFree(sd.cast()) };
-        let (tmp, handle) = created.ok_or("io")?;
+        let (_tmp, handle) = created.ok_or("io")?;
+        let raw = handle.as_raw_handle() as HANDLE;
         let result = (|| -> Result<(), Refusal> {
-            let mut f = std::fs::File::from(handle);
+            let mut f = std::fs::File::from(handle.try_clone().map_err(|_| "io")?);
             f.write_all(data).map_err(|_| "io")?;
             f.sync_all().map_err(|_| "io")?;
-            drop(f);
-            // Final guard right before the swap: the directory must still be ours and private.
-            if !dir_ok(dir, &who) { return Err("not_private"); }
-            if unsafe { MoveFileExW(wide(&tmp.to_string_lossy()).as_ptr(), wide(path).as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) } == 0 { return Err("io"); }
-            Ok(())
+            before_swap();
+            // Final guard right before the swap: the chain is still the held one and still private.
+            if !held.still_here() || !dir_ok(dir, &who) { return Err("not_private"); }
+            rename_into(raw, &held, &leaf, true)
         })();
-        if let Err(e) = result { let _ = std::fs::remove_file(&tmp); return Err(e); }
+        if let Err(e) = result { let _ = mark_delete(raw); return Err(e); }
+        // Verify the file we renamed (same handle): right place, right bytes, private.
+        if !lives_under(raw, &held, &leaf) { return Err("reparse"); }
+        let mut back = std::fs::File::from(handle);
+        use std::io::Seek;
+        back.seek(std::io::SeekFrom::Start(0)).map_err(|_| "io")?;
+        let mut buf = Vec::new();
+        (&mut back).take((MAX_WRITE + 1) as u64).read_to_end(&mut buf).map_err(|_| "io")?;
+        if hex(&buf) != hex(data) { return Err("mismatch"); }
         if !file_ok(target, &who) { return Err("not_private"); }
-        if hex(&read_bounded(target)?) != hex(data) { return Err("mismatch"); }
         Ok(format!("{{\"schema\":\"abito-fs/1\",\"ok\":true,\"sha256\":\"{}\",\"size\":{}}}", hex(data), data.len()))
+    }
+
+    /// Marks the entry behind `h` for deletion (it goes when the last handle closes). By handle, never by path.
+    fn mark_delete(h: HANDLE) -> Result<(), Refusal> {
+        let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+        if unsafe { SetFileInformationByHandle(h, FileDispositionInfo, (&info as *const FILE_DISPOSITION_INFO).cast(), std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32) } == 0 { return Err("io"); }
+        Ok(())
     }
 
     /// Rename within ONE volume and ONE private parent chain each; never replaces, never copies.
     pub fn move_entry(from: &str, to: &str) -> Result<String, Refusal> {
+        move_entry_with(from, to, &|| {})
+    }
+
+    /// `before_rename` runs after the source is verified and BEFORE the rename (tests use it to attack that window).
+    pub fn move_entry_with(from: &str, to: &str, before_rename: &dyn Fn()) -> Result<String, Refusal> {
         let who = who()?;
         let (src, dst) = (Path::new(from), Path::new(to));
         if from.as_bytes()[0].to_ascii_lowercase() != to.as_bytes()[0].to_ascii_lowercase() { return Err("unsafe_path"); }
-        if !dir_ok(parent_of(src)?, &who) || !dir_ok(parent_of(dst)?, &who) { return Err("not_private"); }
-        let a = attrs(src).ok_or("missing")?;
-        if a & FILE_ATTRIBUTE_REPARSE_POINT != 0 { return Err("reparse"); }
-        let ok = if a & FILE_ATTRIBUTE_DIRECTORY != 0 { dir_ok(src, &who) } else { file_ok(src, &who) };
+        let (sp, dp) = (parent_of(src)?, parent_of(dst)?);
+        let held_src = HeldDir::verified(sp, &who)?; // M3: both parents held until the rename is done
+        let held_dst = if norm(&sp.to_string_lossy()) == norm(&dp.to_string_lossy()) { None } else { Some(HeldDir::verified(dp, &who)?) };
+        let (sleaf, dleaf) = (src.file_name().ok_or("unsafe_path")?.to_string_lossy().into_owned(), dst.file_name().ok_or("unsafe_path")?.to_string_lossy().into_owned());
+        // The SOURCE is held too (no FILE_SHARE_DELETE) from the check to the rename, and renamed by its own handle.
+        let (entry, info) = open_entry(&held_src, &sleaf)?;
+        let is_dir = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let ok = if is_dir { dir_ok(src, &who) } else { info.nNumberOfLinks == 1 && file_ok(src, &who) };
         if !ok { return Err("not_private"); }
-        if std::fs::symlink_metadata(dst).is_ok() { return Err("exists"); }
-        if unsafe { MoveFileExW(wide(from).as_ptr(), wide(to).as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 { return Err("io"); }
+        before_rename();
+        let dest = held_dst.as_ref().unwrap_or(&held_src);
+        if !held_src.still_here() || !dest.still_here() { return Err("not_private"); }
+        rename_into(entry.as_raw_handle() as HANDLE, dest, &dleaf, false)?;
+        if !lives_under(entry.as_raw_handle() as HANDLE, dest, &dleaf) { return Err("reparse"); }
         Ok("{\"schema\":\"abito-fs/1\",\"ok\":true}".into())
     }
 
@@ -206,13 +364,13 @@ pub mod ffi {
     pub fn delete_entry(path: &str) -> Result<String, Refusal> {
         let who = who()?;
         let t = Path::new(path);
-        if !dir_ok(parent_of(t)?, &who) { return Err("not_private"); }
-        let a = attrs(t).ok_or("missing")?;
-        if a & FILE_ATTRIBUTE_REPARSE_POINT != 0 { return Err("reparse"); }
-        let dir = a & FILE_ATTRIBUTE_DIRECTORY != 0;
-        if !(if dir { dir_ok(t, &who) } else { file_ok(t, &who) }) { return Err("not_private"); }
-        let done = unsafe { if dir { RemoveDirectoryW(wide(path).as_ptr()) } else { DeleteFileW(wide(path).as_ptr()) } };
-        if done == 0 { return Err("io"); }
+        let held = HeldDir::verified(parent_of(t)?, &who)?; // M3: parent chain AND the entry held until it is gone
+        let leaf = t.file_name().ok_or("unsafe_path")?.to_string_lossy().into_owned();
+        let (entry, info) = open_entry(&held, &leaf)?;
+        let dir = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        if !(if dir { dir_ok(t, &who) } else { info.nNumberOfLinks == 1 && file_ok(t, &who) }) { return Err("not_private"); }
+        mark_delete(entry.as_raw_handle() as HANDLE)?; // a non-empty directory refuses here; deleted when `entry` closes
+        drop(entry);
         Ok("{\"schema\":\"abito-fs/1\",\"ok\":true}".into())
     }
 
@@ -288,5 +446,148 @@ mod native_tests {
         assert!(make_dir(&p(&d, "sub")).unwrap().contains("\"created\":true"));
         assert!(make_dir(&p(&d, "sub")).unwrap().contains("\"created\":false"));
         assert!(delete_entry(&p(&d, "sub")).is_ok());
+    }
+
+    // ---- HU-047 M3: the verified parent stays held; a swap for a junction cannot happen during an operation ----
+
+    #[test]
+    fn a_held_parent_cannot_be_renamed_deleted_or_replaced_by_a_junction() {
+        let d = temp_dir("h");
+        let sub = d.join("sub");
+        assert!(make_dir(&sub.to_string_lossy()).is_ok());
+        let who = who().unwrap();
+        let held = HeldDir::verified(&sub, &who).unwrap();
+        let (moved, real) = (d.join("moved"), d.join("real"));
+        std::fs::create_dir(&real).unwrap();
+        assert_eq!(std::fs::rename(&sub, &moved).unwrap_err().raw_os_error(), SHARING_VIOLATION, "renaming a held directory must fail (sharing violation)");
+        assert_eq!(std::fs::remove_dir(&sub).unwrap_err().raw_os_error(), SHARING_VIOLATION, "deleting a held directory must fail");
+        assert_eq!(std::fs::rename(&d, d.with_extension("gone")).unwrap_err().raw_os_error(), SHARING_VIOLATION, "renaming an ANCESTOR of a held directory must fail too");
+        assert!(held.still_here());
+        // the junction swap needs the rename first, so it is impossible while held
+        assert!(!moved.exists());
+        drop(held);
+        assert!(std::fs::rename(&sub, &moved).is_ok(), "once released the directory is an ordinary one again");
+    }
+
+    const SHARING_VIOLATION: Option<i32> = Some(32);
+
+    /// Every swap the attacker can attempt inside the operation's own window must FAIL with a sharing violation
+    /// (the verifier's R-a/R-b/R-d), not merely "not happen to land".
+    #[test]
+    fn the_windows_inside_write_and_move_cannot_be_used_to_swap_anything() {
+        let d = temp_dir("w2");
+        let sub = d.join("sub");
+        assert!(make_dir(&sub.to_string_lossy()).is_ok());
+        let kinds = std::cell::RefCell::new(Vec::<Option<i32>>::new());
+        let attack_write = || {
+            // after the temp file is written, before the swap: the temp, the parent and an ancestor are all taken
+            let tmp = std::fs::read_dir(&sub).unwrap().map(|e| e.unwrap().path()).find(|p| p.to_string_lossy().contains(".abito-tmp-")).expect("the temp file exists in the window");
+            kinds.borrow_mut().push(std::fs::rename(&tmp, sub.join("stolen")).err().and_then(|e| e.raw_os_error()));
+            kinds.borrow_mut().push(std::fs::remove_file(&tmp).err().and_then(|e| e.raw_os_error()));
+            kinds.borrow_mut().push(std::fs::File::create(&tmp).err().and_then(|e| e.raw_os_error()));
+            kinds.borrow_mut().push(std::fs::rename(&sub, d.join("sub-away")).err().and_then(|e| e.raw_os_error()));
+            kinds.borrow_mut().push(std::fs::rename(&d, d.with_extension("away")).err().and_then(|e| e.raw_os_error()));
+        };
+        let f = p(&sub, "a.json");
+        assert!(write_private_with(&f, &Expect::Absent, b"good", &attack_write).is_ok());
+        assert_eq!(kinds.borrow().len(), 5);
+        assert!(kinds.borrow().iter().all(|k| *k == SHARING_VIOLATION), "every attempt must be a sharing violation, got {:?}", kinds.borrow());
+        assert_eq!(std::fs::read(&f).unwrap(), b"good");
+        assert!(!sub.join("stolen").exists());
+
+        kinds.borrow_mut().clear();
+        let g = p(&sub, "b.json");
+        let attack_move = || {
+            // after the source is verified, before the rename: the SOURCE itself is held
+            kinds.borrow_mut().push(std::fs::rename(&f, sub.join("hijack")).err().and_then(|e| e.raw_os_error()));
+            kinds.borrow_mut().push(std::fs::remove_file(&f).err().and_then(|e| e.raw_os_error()));
+            kinds.borrow_mut().push(std::fs::rename(&sub, d.join("sub-away")).err().and_then(|e| e.raw_os_error()));
+        };
+        assert!(move_entry_with(&f, &g, &attack_move).is_ok());
+        assert!(kinds.borrow().iter().all(|k| *k == SHARING_VIOLATION), "got {:?}", kinds.borrow());
+        assert_eq!(std::fs::read(&g).unwrap(), b"good");
+        assert!(!sub.join("hijack").exists() && !std::path::Path::new(&f).exists());
+    }
+
+    /// Attacker thread hammering the swap with NO outer hold: control first (the attack works when nothing is held),
+    /// then the operations either succeed in the real directory or refuse; nothing ever lands elsewhere.
+    #[test]
+    fn writes_moves_and_deletes_stay_in_the_verified_directory_under_a_swap_race() {
+        let d = temp_dir("r");
+        let (sub, away) = (d.join("sub"), d.join("away"));
+        assert!(make_dir(&sub.to_string_lossy()).is_ok());
+        let run_attacker = |stop: std::sync::Arc<std::sync::atomic::AtomicBool>, swapped: std::sync::Arc<std::sync::atomic::AtomicU32>| {
+            let (sub, away) = (sub.clone(), away.clone());
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if std::fs::rename(&sub, &away).is_ok() {
+                        swapped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let _ = std::fs::rename(&away, &sub);
+                    }
+                }
+            })
+        };
+        // control: with nothing held the attacker DOES swap (the test would otherwise prove nothing)
+        let (stop, swapped) = (std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)));
+        let t = run_attacker(stop.clone(), swapped.clone());
+        let started = std::time::Instant::now();
+        while swapped.load(std::sync::atomic::Ordering::Relaxed) == 0 && started.elapsed().as_secs() < 5 { std::thread::yield_now(); }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        t.join().unwrap();
+        assert!(swapped.load(std::sync::atomic::Ordering::Relaxed) > 0, "control: the attacker must be able to swap an unheld directory");
+        // now the real operations against the same attacker
+        let (stop, swapped) = (std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)));
+        let t = run_attacker(stop.clone(), swapped.clone());
+        let mut ok = 0;
+        for i in 0..100 {
+            let (f, g) = (p(&sub, &format!("f{i}.json")), p(&sub, &format!("g{i}.json")));
+            if write_private(&f, &Expect::Absent, b"{}").is_err() { continue; }
+            if move_entry(&f, &g).is_ok() && delete_entry(&g).is_ok() { ok += 1; }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        t.join().unwrap();
+        // Each operation holds the directory for its own duration; the attacker may swap only BETWEEN operations, never inside one.
+        // So whatever an operation did, it did in the directory it verified: nothing is ever created next to it or under `away`.
+        let names = |p: &std::path::Path| std::fs::read_dir(p).map(|r| r.map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
+        let top = names(&d);
+        assert!(top.iter().all(|n| n == "sub" || n == "away"), "nothing was created outside the verified directory: {top:?}");
+        for dir in [&sub, &away] { assert!(names(dir).is_empty(), "no leftover temp/file in {dir:?}: {:?}", names(dir)); }
+        assert!(ok > 0, "operations must still complete between the attacker's swaps (else the test proves nothing)");
+    }
+
+    /// An ancestor with NO child open must resist rename/delete while a deeper directory is held: the ancestor handle itself
+    /// carries the protection (error 32), asserted by kind.
+    #[test]
+    fn a_held_ancestor_resists_rename_on_its_own() {
+        let d = temp_dir("a");
+        let (mid, leaf) = (d.join("mid"), d.join("mid").join("leaf"));
+        assert!(make_dir(&mid.to_string_lossy()).is_ok());
+        assert!(make_dir(&leaf.to_string_lossy()).is_ok());
+        let who = who().unwrap();
+        let held = HeldDir::verified(&leaf, &who).unwrap();
+        // `mid` has the open child `leaf`, but `d` only has `mid` below it, which is itself only held via its own ancestor handle
+        for victim in [&mid, &d] {
+            let e = std::fs::rename(victim, victim.with_extension("away")).unwrap_err();
+            assert_eq!(e.raw_os_error(), SHARING_VIOLATION, "{victim:?}: {e}");
+        }
+        let e = std::fs::remove_dir(&leaf).unwrap_err();
+        assert_eq!(e.raw_os_error(), SHARING_VIOLATION);
+        drop(held);
+        assert!(std::fs::rename(&mid, d.join("mid2")).is_ok(), "released: ordinary again");
+    }
+
+    #[test]
+    fn a_parent_swapped_for_a_junction_before_the_open_is_refused_by_every_operation() {
+        let d = temp_dir("p");
+        let (real, link) = (d.join("real"), d.join("link"));
+        std::fs::create_dir(&real).unwrap();
+        let ok = std::process::Command::new("cmd").args(["/C", "mklink", "/J", &link.to_string_lossy(), &real.to_string_lossy()]).output().map(|o| o.status.success()).unwrap_or(false);
+        assert!(ok);
+        let who = who().unwrap();
+        assert!(matches!(HeldDir::verified(&link, &who), Err("reparse")), "a junction is refused at the open, not after");
+        assert!(write_private(&p(&link, "x"), &Expect::Absent, b"1").is_err());
+        assert!(make_dir(&p(&link, "y")).is_err());
+        assert!(delete_entry(&p(&link, "z")).is_err());
+        assert!(std::fs::read_dir(&real).unwrap().next().is_none(), "nothing was written through the junction");
     }
 }

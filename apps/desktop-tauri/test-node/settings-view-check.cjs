@@ -1053,6 +1053,13 @@ test('details: plan_changed re-shows the NEW plan; audit_unavailable and install
   // HU-052: a Pi extension folder Abito did not install gets its own sentence (what to do), never the generic one
   assert.equal(rowOf(plan({ state: 'error', detail: 'foreign_extension', plan_hash: null, summary: null })).note,
     'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.');
+  // HU-047: the refused folder is named exactly; chmod only for the writable case
+  assert.equal(rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: '/home/u/.pi/agent/extensions', folder_reason: 'writable', plan_hash: null, summary: null })).note,
+    'La carpeta /home/u/.pi/agent/extensions la puede modificar otro usuario o grupo; quitale el permiso de escritura (chmod g-w,o-w /home/u/.pi/agent/extensions) y volvé a intentar.');
+  const foreignNote = rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: '/srv/a b', folder_reason: 'foreign_owner', plan_hash: null, summary: null })).note;
+  assert.match(foreignNote, /^La carpeta \/srv\/a b pertenece a otro usuario/); assert.doesNotMatch(foreignNote, /chmod/);
+  assert.match(rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: 'C:\\Users\\u\\.pi', folder_reason: 'acl', plan_hash: null, summary: null })).note, /^La carpeta C:\\Users\\u\\\.pi tiene permisos de Windows \(ACL\)/);
+  assert.match(rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: '/x\n', folder_reason: 'writable', plan_hash: null, summary: null })).note, /no es privado/, 'a bad folder falls back to the generic sentence');
   assert.match(rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null })).note, /no se tocó|no se pudo/i);
   // an error without a plan cannot be retried blindly with a stale one
   const noPlan = rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null }));

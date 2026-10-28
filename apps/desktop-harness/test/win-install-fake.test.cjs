@@ -91,7 +91,8 @@ test('Windows flow: a symlinked settings file or a non-private parent writes not
   assert.equal(fs.readFileSync(real, 'utf8'), '{}\n');
   const open = path.join(d, 'open'); fs.mkdirSync(open); fs.chmodSync(open, 0o777);
   const r2 = await run(['claude', '--settings', path.join(open, 'settings.json'), '--json']);
-  assert.equal(r2.json.ok, false); assert.equal(r2.json.code, 'unsafe_target');
+  assert.equal(r2.json.ok, false); assert.equal(r2.json.code, 'unsafe_folder');
+  assert.equal(r2.json.message, `La carpeta ${open} tiene permisos de Windows (ACL) que dan acceso a otros usuarios o no es tuya; dejala accesible solo para tu usuario (Propiedades > Seguridad) y volvé a intentar.`);
   assert.deepEqual(fs.readdirSync(open), []);
 });
 
