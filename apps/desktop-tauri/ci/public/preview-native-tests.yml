@@ -69,6 +69,11 @@ jobs:
           # HU-069: Node lookup in version-manager layouts, verified Node download core, and the Finder/Explorer-minimal-environment flow
           cargo test --locked --lib -- nodefinder nodeinstall gui_launch --nocapture
           exit $LASTEXITCODE
+      - name: TEMP clock-skew native tests
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked --lib -- question protocol claude_plan
+          exit $LASTEXITCODE
       - name: Click-through decision, island shape, tray menu, install host (app crate)
         if: ${{ !cancelled() }}
         run: |
@@ -119,6 +124,9 @@ jobs:
           cargo test --locked --lib piinstall -- --nocapture
           # HU-069: Node lookup in version-manager layouts, verified Node download core, and the Finder/Explorer-minimal-environment flow
           cargo test --locked --lib -- nodefinder nodeinstall gui_launch --nocapture
+      - name: TEMP clock-skew native tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --lib -- question protocol claude_plan
       - name: Click-through decision, island shape, tray menu, install host (app crate)
         if: ${{ !cancelled() }}
         run: |
