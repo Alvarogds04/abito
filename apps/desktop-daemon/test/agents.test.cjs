@@ -372,6 +372,16 @@ test("connect with the matching plan_hash applies; already connected is a no-op"
 	assert.equal(s.calls().filter((c) => c.argv.includes("--apply-plan")).length, 1, "no second apply");
 });
 
+test("HU-047: an unsafe folder keeps its own detail with the folder and the closed reason, on preview and apply", async (t) => {
+	const unsafe = (folder, folder_reason) => ({ exit: 65, stdout: { schema: SCHEMA, ok: false, code: "unsafe_folder", message: "fixed", folder, folder_reason } });
+	const s = setup(t, { claude: { preview: unsafe("/home/u/.claude", "writable") } });
+	const a = byId(await s.manager.list(), "claude-code");
+	assert.deepEqual([a.state, a.detail, a.folder, a.folder_reason], ["error", "unsafe_folder", "/home/u/.claude", "writable"]);
+	const s2 = setup(t, { claude: { preview: { exit: 0, stdout: preview() }, apply: unsafe("/home/u/.claude", "bogus") } });
+	const b = byId(await s2.manager.connect("claude-code"), "claude-code");
+	assert.deepEqual([b.detail, b.folder], ["unsafe_folder", undefined], "an unknown reason never forwards the folder");
+});
+
 test("apply failures map to closed details", async (t) => {
 	const cases = [
 		[{ exit: 70, stdout: { schema: SCHEMA, ok: false, code: "plan_changed", message: "m" } }, "plan_changed"],
@@ -497,4 +507,18 @@ test("a pending migration (old Abito PreToolUse entry to remove, every wire row 
 	const claude = byId(await s.manager.list(), "claude-code");
 	assert.equal(claude.state, "outdated", "the human can apply the migration from the island");
 	assert.equal(claude.plan_hash, HASH_A);
+});
+
+test("HU-047 L4: a timed-out installer is killed as a TREE on Windows (taskkill /T /F, no shell) and by group elsewhere", () => {
+	const { killTree } = require("../src/agents.cjs");
+	const calls = [];
+	const run = (...a) => calls.push(a);
+	killTree({ pid: 4321 }, "win32", run);
+	assert.equal(calls.length, 1);
+	assert.match(calls[0][0], /System32\\taskkill\.exe$/i);
+	assert.deepEqual(calls[0][1], ["/PID", "4321", "/T", "/F"]);
+	assert.equal(calls[0][2].shell, false);
+	for (const bad of [[{ pid: 4 }, "win32"], [{ pid: "1; calc" }, "win32"], [null, "win32"], [{ pid: 4321 }, "linux"], [{ pid: 4321 }, "darwin"]]) killTree(bad[0], bad[1], run);
+	assert.equal(calls.length, 1, "never for a bogus pid or off Windows (POSIX uses the process group)");
+	assert.doesNotThrow(() => killTree({ pid: 4321 }, "win32", () => { throw new Error("x"); }));
 });
