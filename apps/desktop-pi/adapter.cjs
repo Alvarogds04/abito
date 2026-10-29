@@ -43,11 +43,30 @@ function registerAdapter(pi, { endpoint, runtime, retryMs = 5000, heartbeatMs = 
     const previous = socket; socket = undefined;
     previous?.destroy();
   }
+  // Unflushed writes of the CURRENT connection, oldest first: { bytes, at }. Exact UTF-8 byte accounting (the stream's own
+  // `writableLength` counts UTF-16 units for strings, so it cannot bound bytes). A write callback fires in FIFO order.
+  let inflight = [];
+  const INFLIGHT_GRACE_MS = 1000;
   function write(type, extra = {}, at = Date.now()) {
-    if (!socket || socket.destroyed || !identity || socket.writableLength > 0) return false;
+    // Not a one-frame lock: a pipe/relay completes a write a moment after the peer read it, so a small frame in flight (e.g. a
+    // heartbeat) must not drop the next `settled`/`question`. Order is the stream's own FIFO (every frame goes through this one
+    // socket.write). A STALLED receiver is refused promptly, as before: the oldest unflushed write is older than the grace period.
+    // Memory is bounded in TOTAL by bytes: at most one max frame pending plus the frame itself (2 x STRUCTURED_FRAME_BYTES + newline).
+    // A refusal returns `false`: a question turns that into status `disconnected` (questions.cjs ask), hello/questions_hello/heartbeat
+    // callers destroy the connection (reconnect), and a refused `settled` is dropped without a result, as it always was.
+    if (!socket || socket.destroyed || !identity) return false;
+    const now = Date.now();
+    if (inflight.length > 0 && (now - inflight[0].at > INFLIGHT_GRACE_MS ||
+        inflight.reduce((sum, entry) => sum + entry.bytes, 0) > STRUCTURED_FRAME_BYTES)) return false;
     const bytes = JSON.stringify({ v: 1, type, project: identity.project, sessionId: identity.sessionId, at, ...extra });
     if (Buffer.byteLength(bytes) > (extra.questionVersion ? (structuredReady ? STRUCTURED_FRAME_BYTES : FRAME_BYTES) : 512)) return false;
-    try { socket.write(bytes + '\n'); return true; } catch { return false; }
+    const entry = { bytes: Buffer.byteLength(bytes) + 1, at: now };
+    const mine = inflight;
+    mine.push(entry);
+    try {
+      socket.write(bytes + '\n', () => { const i = mine.indexOf(entry); if (i >= 0) mine.splice(i, 1); });
+      return true;
+    } catch { const i = mine.indexOf(entry); if (i >= 0) mine.splice(i, 1); return false; }
   }
   function schedule() {
     if (!stopped && !transportError) { clearTimeout(retry); retry = setTimeout(connect, retryMs); retry.unref(); }
@@ -65,6 +84,7 @@ function registerAdapter(pi, { endpoint, runtime, retryMs = 5000, heartbeatMs = 
     const openConnection = open ?? (platform === 'win32' ? createWindowsConnection : net.createConnection);
     const connection = openConnection(target);
     socket = connection;
+    inflight = [];
     let bytes = Buffer.alloc(0), count = 0, period = Date.now(), questionAttempted = false;
     connection.setTimeout(3000, () => connection.destroy());
     connection.on('connect', () => {

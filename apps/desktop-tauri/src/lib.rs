@@ -42,6 +42,10 @@ pub mod files;
 pub mod contextwin;
 pub mod focushost;
 pub mod sessionterm;
+#[cfg(target_os = "macos")]
+pub mod sessionterm_mac;
+#[cfg(windows)]
+pub mod sessionterm_win;
 pub mod github;
 pub mod githubcmd;
 pub mod daemonhost;
@@ -53,9 +57,10 @@ pub mod fakemodel;
 pub mod flow;
 pub mod dictation_cmd;
 pub mod geometry;
-#[cfg(target_os = "linux")]
+// HU-068: macOS publishes the same Unix-socket handoff as Linux (it has a receiver since M-T1); only Windows has none.
+#[cfg(unix)]
 pub mod handoff;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 #[path = "handoff_unavailable.rs"]
 pub mod handoff;
 pub mod hotkey;

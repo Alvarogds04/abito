@@ -23,6 +23,7 @@ const { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } = 
 const path = require("node:path");
 const { validateCustomBaseUrl, validateLocalBaseUrl, validateLocalModelIds } = require("./protocol.cjs");
 const { CustomProviderError, discoverModels } = require("./custom-provider.cjs");
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 const { ENV_ALLOWLIST, assertSecurePath, ensurePrivateDir, writePrivateFile } = require("./isolation.cjs");
 
 const STRICT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -658,6 +659,7 @@ class AccountManager extends EventEmitter {
 		if (typeof apiKey !== "string" || apiKey.trim() === "" || apiKey.length > 8192 || /[\r\n\u0000]/.test(apiKey)) {
 			throw fail("Invalid API key");
 		}
+		if (meta.kind === "custom" && CONTROL_CHARS.test(apiKey)) throw fail("Invalid API key");
 		this.assertIdle();
 		return this.mutate(async () => {
 			this.assertIdle();
@@ -816,6 +818,9 @@ class AccountManager extends EventEmitter {
 		if (!flow || flow.id !== flowId || flow.finished) throw fail("No such sign-in flow");
 		if (!flow.prompts.has(promptId)) throw fail("No such prompt");
 		if (typeof value !== "string" || value.length > 8192) throw fail("Invalid answer");
+		// A custom gateway key goes into an HTTP header: refuse control characters before any side effect
+		// (the prompt stays open so the user can try again).
+		if (this.requireMeta(flow.accountId).kind === "custom" && CONTROL_CHARS.test(value)) throw fail("Invalid API key");
 		flow.prompts.delete(promptId);
 		clearTimeout(flow.promptTimer);
 		flow.session.write({ cmd: "answer", flowId, promptId, value });
