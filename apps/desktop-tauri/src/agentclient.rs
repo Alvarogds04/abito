@@ -188,8 +188,55 @@ fn strict_id(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty() && b.len() <= 64 && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit()) && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-'))
 }
+/// Mirror of the daemon's `validateCustomBaseUrl` (protocol.cjs): `https`, or `http` only for a literal
+/// loopback address (127.0.0.0/8, [::1]); plain host[:port] and `/segment` path, no userinfo, query,
+/// fragment, escapes, dot segments or numeric-host shorthand. The daemon validates again: this is the
+/// first of two gates, never the only one.
+fn custom_base_url_ok(raw: &str) -> bool {
+    if raw.is_empty() || raw.len() > 200 || !raw.is_ascii() { return false; }
+    let (https, rest) = if let Some(r) = raw.strip_prefix("https://") { (true, r) } else if let Some(r) = raw.strip_prefix("http://") { (false, r) } else { return false };
+    let (authority, path) = match rest.find('/') { Some(i) => (&rest[..i], &rest[i..]), None => (rest, "") };
+    let (host, port) = if authority.starts_with('[') {
+        let Some(end) = authority.find(']') else { return false };
+        let host = &authority[..=end];
+        if host.len() < 4 || !host[1..end].bytes().all(|c| c.is_ascii_hexdigit() || c == b':') { return false; }
+        match &authority[end + 1..] { "" => (host, None), t if t.starts_with(':') => (host, Some(&t[1..])), _ => return false }
+    } else {
+        match authority.split_once(':') { Some((h, p)) => (h, Some(p)), None => (authority, None) }
+    };
+    if !host.starts_with('[') {
+        let b = host.as_bytes();
+        if b.is_empty() || !b[0].is_ascii_alphanumeric() || !b[b.len() - 1].is_ascii_alphanumeric()
+            || !b.iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-')) { return false; }
+    }
+    if let Some(p) = port {
+        if p.is_empty() || p.len() > 5 || !p.bytes().all(|c| c.is_ascii_digit()) || !matches!(p.parse::<u32>(), Ok(1..=65535)) { return false; }
+    }
+    let trimmed = path.strip_suffix('/').unwrap_or(path);
+    if !trimmed.is_empty() {
+        for seg in trimmed.strip_prefix('/').unwrap_or("\0").split('/') {
+            if seg.is_empty() || seg == "." || seg == ".." || !seg.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'~' | b'-')) { return false; }
+        }
+    }
+    let host_lc = host.to_ascii_lowercase();
+    if !https {
+        let loopback = host_lc == "[::1]" || {
+            let parts: Vec<&str> = host_lc.split('.').collect();
+            parts.len() == 4 && parts[0] == "127" && parts.iter().all(|x| !x.is_empty() && x.len() <= 3 && x.bytes().all(|c| c.is_ascii_digit()) && (*x == "0" || !x.starts_with('0')) && x.parse::<u16>().is_ok_and(|n| n <= 255))
+        };
+        if !loopback { return false; }
+    }
+    // The WHATWG parse must leave the host exactly as written (lowercased): rejects 127.1, 0x7f.1, decimal IPs.
+    let Ok(url) = tauri::Url::parse(raw) else { return false };
+    url.username().is_empty() && url.password().is_none() && url.query().is_none() && url.fragment().is_none() && url.host_str() == Some(host_lc.as_str())
+}
 fn flow_id(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-' | b':'))
+}
+/// Labels that travel to the daemon are measured as the daemon does (JS string length = UTF-16 units),
+/// so Rust never accepts a label the daemon would refuse. Local-only names keep `label_ok`.
+fn wire_label_ok(s: &str) -> bool {
+    !s.trim().is_empty() && s.encode_utf16().count() <= 80 && !has_control(s)
 }
 fn label_ok(s: &str) -> bool {
     !s.trim().is_empty() && s.chars().count() <= 80 && !has_control(s)
@@ -267,10 +314,36 @@ pub fn parse_ui_command(payload: &Value) -> Result<UiCommand, CommandError> {
             exact(1)?;
             wire(&[("type", action)])
         }
+        // HU-041: the reviewed custom (LiteLLM / OpenAI-compatible) gateway. Name and Base URL only: the API key
+        // travels the existing auth_start api_key / auth_reply path, never here. Same URL rule as the daemon.
+        "custom_account_create" => {
+            exact(3)?;
+            let (label, url) = (get("label")?, get("baseUrl")?);
+            if !wire_label_ok(label) || !custom_base_url_ok(url) {
+                return Err(CommandError);
+            }
+            wire(&[("type", "custom_account_create"), ("label", label), ("baseUrl", url)])
+        }
+        "custom_endpoint_set" => {
+            exact(3)?;
+            let (id, url) = (get("accountId")?, get("baseUrl")?);
+            if !strict_id(id) || !custom_base_url_ok(url) {
+                return Err(CommandError);
+            }
+            wire(&[("type", "custom_endpoint_set"), ("accountId", id), ("baseUrl", url)])
+        }
+        "custom_models_refresh" => {
+            exact(2)?;
+            let id = get("accountId")?;
+            if !strict_id(id) {
+                return Err(CommandError);
+            }
+            wire(&[("type", "custom_models_refresh"), ("accountId", id)])
+        }
         "account_create" => {
             exact(3)?;
             let (provider, label) = (get("provider")?, get("label")?);
-            if !strict_id(provider) || !label_ok(label) {
+            if !strict_id(provider) || !wire_label_ok(label) {
                 return Err(CommandError);
             }
             wire(&[("type", "account_create"), ("provider", provider), ("label", label)])
@@ -520,7 +593,7 @@ impl ClientState {
                         _ => "error",
                     };
                     let detail = match a.get("detail").and_then(Value::as_str) {
-                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform" | "unsafe_target" | "install_unverified" | "foreign_extension")) => json!(d),
+                        Some(d @ ("config_invalid" | "not_writable" | "backup_failed" | "plan_changed" | "audit_unavailable" | "install_failed" | "unsupported_platform" | "unsafe_target" | "install_unverified" | "foreign_extension" | "unsafe_folder")) => json!(d),
                         _ => Value::Null,
                     };
                     // the plan exists only for a state that offers a button, and only when BOTH parts look like ours
@@ -531,12 +604,19 @@ impl ClientState {
                         (true, Some(h), Some(t)) => (json!(h), json!(t)),
                         _ => (Value::Null, Value::Null),
                     };
-                    out.push(json!({
+                    // HU-047: the refused folder travels only with its closed reason and only for that detail (the user's own path, bounded).
+                    let folder = a.get("folder").and_then(Value::as_str).filter(|f| detail == json!("unsafe_folder") && !f.is_empty() && f.chars().count() <= 400 && !has_control(f));
+                    let folder_reason = a.get("folder_reason").and_then(Value::as_str).filter(|r| matches!(*r, "writable" | "foreign_owner" | "acl"));
+                    let (folder, folder_reason) = match (folder, folder_reason) { (Some(f), Some(r)) => (json!(f), json!(r)), _ => (Value::Null, Value::Null) };
+                    let mut entry = json!({
                         "id": id, "state": state, "backup": a.get("backup").and_then(Value::as_bool).unwrap_or(false), "detail": detail,
                         "plan_hash": plan_hash, "summary": plan_summary,
                         "reviewable": a.get("reviewable").and_then(Value::as_bool).unwrap_or(true),
                         "trust_review": a.get("trust_review").and_then(Value::as_bool).unwrap_or(false),
-                    }));
+                    });
+                    if !folder.is_null() { entry["folder"] = folder; entry["folder_reason"] = folder_reason; }
+                    out.push(entry);
+
                 }
                 self.agents = Value::Array(out);
             }
@@ -636,7 +716,7 @@ impl ClientState {
             "error" => {
                 // the daemon's closed code set (anything else reads as plain `failed`), never free text
                 let code = match frame.get("code").and_then(Value::as_str) {
-                    Some(c @ ("bad_request" | "busy" | "not_busy" | "unavailable" | "rate_limited" | "unknown_ask" | "failed")) => c,
+                    Some(c @ ("bad_request" | "busy" | "not_busy" | "unavailable" | "rate_limited" | "unknown_ask" | "failed" | "store_not_private")) => c,
                     _ => "failed",
                 };
                 let n = self.last_error["n"].as_u64().unwrap_or(0) + 1;
@@ -791,6 +871,8 @@ fn parse_account(payload: &Value) -> Result<AccountCommand, CommandError> {
     if !keep_key && shared_credential_ref(account_id).is_some() { return Err(CommandError); }
     let config: AccountConfig = serde_json::from_value(Value::Object(config.clone())).map_err(|_| CommandError)?;
     let local = matches!(provider, "ollama" | "lmstudio");
+    // HU-041: 'custom' is created/edited only through the daemon's reviewed custom_* gateway (see parse_ui_command).
+    if provider == "custom" { return Err(CommandError); }
     if !label_ok(&config.nombre) || !account_url(&config.base_url, local)
         || !matches!(config.api.as_str(), "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai")
         || config.compat.len() > 16 || config.compat.keys().any(|s| s.is_empty() || s.len() > 64 || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))

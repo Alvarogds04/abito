@@ -37,7 +37,7 @@
 import { createInterface } from "node:readline";
 import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
@@ -74,10 +74,15 @@ function resolveSdkModule() {
  */
 function resolveInstalledPiPackage() {
 	try {
-		for (const dir of (process.env.PATH ?? "").split(":")) {
+		// PATH uses ";" on Windows; the npm shims there are pi.cmd / pi.ps1 / pi.exe (HU-062).
+		const names = process.platform === "win32" ? ["pi.cmd", "pi.exe", "pi.ps1", "pi"] : ["pi"];
+		for (const dir of (process.env.PATH ?? "").split(delimiter)) {
 			if (!dir) continue;
-			const candidate = join(dir, "pi");
-			if (!existsSync(candidate)) continue;
+			const candidate = names.map((name) => join(dir, name)).find((file) => existsSync(file));
+			if (!candidate) continue;
+			// npm's global layout: the shim sits next to node_modules/<package> (the Windows prefix, and Unix <prefix>/lib/node_modules via the realpath walk below).
+			const sibling = packageEntry(join(dir, "node_modules", "@earendil-works", "pi-coding-agent"));
+			if (sibling) return sibling;
 			let current = realpathSync(candidate);
 			// The managed launcher (`<agent>/bin/pi`, a POSIX script, not a link into the package) runs
 			// `<agent>/install/releases/<install/current-version>/node_modules/.bin/pi`: resolve the same package, read-only.

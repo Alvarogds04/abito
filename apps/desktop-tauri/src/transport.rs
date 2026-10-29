@@ -774,15 +774,15 @@ fn peer_credentials(stream: &UnixStream) -> Option<(u32, u32)> {
     (result == 0 && credentials.pid > 0).then_some((credentials.uid, credentials.pid as u32))
 }
 
-/// macOS: `getpeereid` (the LOCAL_PEERCRED query). Any error means the peer is not admitted. The owner check is the uid;
-/// macOS has no `/proc` to freeze a birth identity from, so the pid is 0 and the session origin stays unknown (peer None).
+/// macOS: `getpeereid` (the LOCAL_PEERCRED query) for the owner check, `LOCAL_PEERPID` for the peer's pid (0 when the
+/// kernel will not say: the terminal origin then stays unknown). Any `getpeereid` error means the peer is not admitted.
 #[cfg(target_os = "macos")]
 fn peer_credentials(stream: &UnixStream) -> Option<(u32, u32)> {
     use std::os::unix::io::AsRawFd;
     let (mut uid, mut gid): (libc::uid_t, libc::gid_t) = (0, 0);
     // SAFETY: the fd is open for the whole call; both out-pointers are valid locals.
     let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
-    (result == 0).then_some((uid, 0))
+    (result == 0).then(|| (uid, crate::sessionterm_mac::peer_pid(stream.as_raw_fd()).unwrap_or(0)))
 }
 
 fn now_millis() -> u128 {
@@ -959,7 +959,7 @@ fn accept_loop(inner: Arc<Inner>, listener: UnixListener) {
                     continue;
                 };
                 // Freeze the kernel peer's birth identity now; resolution rechecks it at event admission.
-                let peer = crate::sessionterm::read_proc(Path::new("/proc"), peer_pid);
+                let peer = crate::sessionterm::read_peer(peer_pid);
                 let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
                 let prepared = {
                     let mut clients = inner.clients.lock().expect("clients lock");

@@ -399,7 +399,7 @@ function encodeServerFrame(frame, seq) {
 
 const EMITTED_ERROR_CODES = new Set([
 	"bad_request", "busy", "not_busy", "unavailable", "rate_limited", "unknown_ask", "paused", "failed",
-	"unknown_proposal", "digest_mismatch", "needs_setup", "signin_failed",
+	"unknown_proposal", "digest_mismatch", "needs_setup", "signin_failed", "store_not_private",
 ]);
 // Recognized by the host's broader enum, but collapsed to stale/failed before H2c can emit them.
 const RESERVED_CONNECTOR_ERROR_CODES = new Set(["already_decided", "session_mismatch", "pending_full"]);
@@ -576,7 +576,7 @@ function pendingFrame(data) {
 /** Fixed agent table: names never come from the dependency. */
 const AGENT_NAMES = Object.freeze({ pi: "Pi", "claude-code": "Claude Code", codex: "Codex", recap: "Resumen semanal", statusline: "Uso del plan (relay)", "copilot-cli": "Copilot CLI", opencode: "OpenCode" });
 const AGENT_STATES = new Set(["not_connected", "connected", "outdated", "working", "unavailable", "error"]);
-const AGENT_DETAILS = new Set(["config_invalid", "not_writable", "foreign_extension", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified"]);
+const AGENT_DETAILS = new Set(["config_invalid", "not_writable", "foreign_extension", "unsafe_folder", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified"]);
 const AGENT_SUMMARY_MAX = 400;
 /**
  * Reply/broadcast `agents`: rebuilt field by field from closed vocabularies. THROWS on invalid data
@@ -595,6 +595,12 @@ function agentsFrame(items) {
 		if (a.summary !== undefined) {
 			if (typeof a.summary !== "string" || a.summary === "" || a.summary.length > AGENT_SUMMARY_MAX || CONTROL.test(a.summary)) throw new Error("agents frame invalid");
 			out.summary = a.summary;
+		}
+		// HU-047: the one place a folder path travels (the user's own, bounded, no control characters) so Ajustes can name it.
+		// A bad folder never takes the whole list down: it is just not forwarded (the row then says the generic sentence).
+		if (a.detail === "unsafe_folder" && typeof a.folder === "string" && a.folder !== "" && [...a.folder].length <= 400 && !CONTROL.test(a.folder) && ["writable", "foreign_owner", "acl"].includes(a.folder_reason)) {
+			out.folder = a.folder;
+			out.folder_reason = a.folder_reason;
 		}
 		for (const key of ["reviewable", "trust_review"]) {
 			if (a[key] === undefined) continue;

@@ -1,5 +1,6 @@
-#![cfg(target_os = "linux")]
-// Linux-only integration: real receiver sockets, SO_PEERCRED, and XDG runtime policy.
+#![cfg(unix)]
+// Unix integration (Linux and macOS, HU-062): real receiver sockets over the platform's peer-credential check (SO_PEERCRED / getpeereid)
+// and runtime-root policy. Only the /proc terminal-origin test is Linux-only (macOS has its own pin below; Windows has windows_notice.rs).
 
 //! M2 integration tests: a real receiver bound in a private temp/runtime dir
 //! driven through real `UnixStream` clients — no GUI, no display.
@@ -35,7 +36,25 @@ fn now_ms() -> u64 {
 /// Fixtures are ours: leftovers from a previous run of the same test are
 /// stale test artifacts and are cleaned before recreating.
 fn runtime_root(tag: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(tag);
+    // sockaddr_un.sun_path holds 107 bytes on Linux and 103 on macOS, and the endpoint is `<root>/p-XXXXXX/s`. The cargo target tmp dir
+    // lives under the checkout, so a long checkout path (a worktree, a CI workspace) overflowed it (PathTooLong; the Node adapter also
+    // refuses longer endpoints). Use the cargo dir when the longest endpoint fits, else the short per-user runtime dir: `$XDG_RUNTIME_DIR`
+    // on Linux; on macOS the canonical per-user temp dir (`/private/var/folders/.../T`, 0700, the same base the receiver itself uses —
+    // `/var` is a symlink and the directory-chain check refuses symlinks). A world-writable /tmp would not pass the chain check.
+    #[cfg(target_os = "macos")]
+    const SUN_PATH_MAX: usize = 103;
+    #[cfg(not(target_os = "macos"))]
+    const SUN_PATH_MAX: usize = 107;
+    const ENDPOINT_TAIL: usize = "/p-XXXXXX/s".len();
+    let cargo = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(tag);
+    let dir = if cargo.as_os_str().len() + ENDPOINT_TAIL <= SUN_PATH_MAX - 7 { cargo } else {
+        let base = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().canonicalize().expect("canonical per-user temp dir"));
+        base.join(format!("abito-tr-{}", std::process::id())).join(tag)
+    };
+    if let Some(parent) = dir.parent() {
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).expect("create fixture parent");
+    }
     if dir.exists() {
         std::fs::remove_dir_all(&dir).expect("clean previous fixture");
     }
@@ -687,6 +706,8 @@ fn unchanged_node_producer_connects_and_settles() {
 }
 
 
+// Linux only: the terminal origin is frozen from /proc (macOS has none). macOS twin of the "no origin" half: the test below.
+#[cfg(target_os = "linux")]
 #[test]
 fn r21_socket_peer_notice_origin_is_host_only_bounded_and_revoked() {
     use abito_island::{focushost::{OriginRequest, OriginKind}, sessionterm};
@@ -764,10 +785,38 @@ fn r21_review_origin_resolution_does_not_hold_the_question_mutex() {
     send(&mut stream,&json!({"v":1,"type":"question","questionVersion":1,"project":project,"sessionId":"session-1","at":now_ms(),
         "id":"3f2b8a40-1c2d-4e5f-8a6b-7c8d9e0f1a2b","kind":"question","text":"Choose",
         "options":[{"value":"a","label":"A","description":""},{"value":"b","label":"B","description":""}],"allowFreeText":false,"expiresAt":now_ms()+30000})).unwrap();
+    // Linux (/proc + SO_PEERCRED) and, since HU-065, macOS (LOCAL_PEERPID + proc_pidinfo) both freeze the kernel peer's identity
+    // and resolve its terminal through the injected resolver while the question is admitted.
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     let t = transport.clone(); let (read_tx,read_rx) = mpsc::channel();
     let reader = std::thread::spawn(move || { let pending = t.question_snapshot().pending.is_some(); read_tx.send(pending).unwrap(); });
     let unlocked = read_rx.recv_timeout(Duration::from_millis(200));
     release_tx.send(()).unwrap(); reader.join().unwrap(); transport.close().unwrap();
-    assert_eq!(unlocked,Ok(false),"question snapshots/answers must remain available while herdr is resolving");
+    assert_eq!(unlocked,Ok(false),"question snapshots/answers must remain available while the terminal origin is resolving");
+}
+
+/// HU-065: on macOS the receiver resolves a peer's terminal from LOCAL_PEERPID + proc_pidinfo (sessionterm_mac.rs). A test process
+/// has no allowlisted terminal ancestor, so no origin may be invented for it, and the notice view never carries a process or terminal
+/// field. Linux twin: the r21 tests above; Windows: windows_notice.rs.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_origin_is_never_invented_even_for_an_accepted_notice() {
+    use abito_island::focushost::{OriginKind, OriginRequest};
+    let runtime = runtime_root("mac-origin");
+    let project = protocol::project_id("mac-origin");
+    let events = Arc::new(Events::default());
+    let e = events.clone();
+    let options = TransportOptions::new(&runtime, &project).on_notice(move |message| e.notice(message));
+    let transport = transport::create_transport(options).expect("receiver binds");
+    let mut stream = connect(transport.endpoint());
+    send(&mut stream, &hello(&project)).unwrap();
+    assert!(expect_ready(&stream));
+    let id = "3f2b8a40-1c2d-4e5f-8a6b-7c8d9e0f1a2b";
+    send(&mut stream, &json!({"v":1,"type":"settled","project":project,"sessionId":"session-1","at":now_ms(),"id":id})).unwrap();
+    assert!(events.wait(|e| e.notice_count() == 1, Duration::from_secs(2)));
+    assert!(transport.origin_for(&OriginRequest { kind: OriginKind::Notice, id: id.into() }).is_none(), "no terminal ancestor: no origin is invented");
+    let view = serde_json::to_value(&events.notices.lock().unwrap()[0]).unwrap();
+    for key in ["pid", "ppid", "starttime", "tty", "pane", "terminal", "origin"] { assert!(view.get(key).is_none(), "{key}"); }
+    transport.close().expect("close");
+    let _ = std::fs::remove_dir_all(&runtime);
 }
