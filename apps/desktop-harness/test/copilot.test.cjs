@@ -89,3 +89,18 @@ test('sessionEnd (event stop) sends ONE settled notice naming copilot-cli + proj
   assert.deepEqual(await handleCopilotHook({ event: 'stop', input: camel(), env: offlineDir('nonexistent-abito-test'), argv: [] }), { stdout: '', stderr: '', exitCode: 0 });
   assert.deepEqual(await handleCopilotHook({ event: 'weird', input: camel(), env: {}, argv: [] }), { stdout: '', stderr: '', exitCode: 0 });
 });
+
+// HU-062 (found on Windows CI): copilot.cjs called process.getuid() unguarded, which does not exist on Windows, so every Copilot hook
+// answered «invalid configuration» there. Simulate a Windows process on any OS (platform win32, no getuid) with a stub client.
+test('a Windows process (no getuid) reaches the island client: ask and stop both work', async t => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform'), getuid = process.getuid;
+  Object.defineProperty(process, 'platform', { value: 'win32' }); process.getuid = undefined;
+  t.after(() => { Object.defineProperty(process, 'platform', platform); process.getuid = getuid; });
+  const env = { ABITO_DESKTOP_SOCKET: 'C:\\copilot-win\\endpoint.json' };
+  let asked = 0, notified = 0;
+  const clientFactory = () => ({ ask: async () => { asked++; return { status: 'answered', answer: { type: 'option', value: 'allow' } }; }, notify: async () => { notified++; return { status: 'sent' }; } });
+  const r = await raw_handleCopilotHook({ event: 'permission-request', input: camel(), env, argv: [], clientFactory });
+  assert.equal(r.stdout, COPILOT_ALLOW); assert.equal(asked, 1);
+  await raw_handleCopilotHook({ event: 'stop', input: camel(), env, argv: [], clientFactory });
+  assert.equal(notified, 1);
+});

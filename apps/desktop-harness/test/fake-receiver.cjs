@@ -11,7 +11,7 @@ const { EventEmitter } = require('node:events');
 // and an `open` seam that connects straight to the pipe. Tests that build an IslandClient spread `transport(receiver)`.
 // Child-process tests (bin/abito-hook.cjs) go through the native relay, which the hosted runner does not have.
 let latest = {};
-async function fakeReceiver(t, { questions = false, busyReason = false, structured = false } = {}) {
+async function fakeReceiver(t, { questions = false, busyReason = false, structured = false, silent = false } = {}) {
   const runtime = fs.mkdtempSync(path.join(path.resolve(__dirname, '..'), '.test-'));
   const windows = process.platform === 'win32';
   let endpoint, listenOn, transport = {};
@@ -40,7 +40,7 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
         const raw = bytes.slice(0, end); rawFrames.push(raw + '\n');
         const frame = JSON.parse(raw); bytes = bytes.slice(end + 1);
         frames.push(frame); events.emit('frame', frame);
-        if (frame.type === 'hello') {
+        if (frame.type === 'hello' && !silent) { // `silent`: accepts the connection and answers nothing
           socket.write('{"v":1,"type":"ready"}\n');
 
         }

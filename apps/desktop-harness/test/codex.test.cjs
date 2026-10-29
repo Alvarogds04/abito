@@ -56,17 +56,8 @@ test('PermissionRequest: no decision, empty stdout, exit 0, and ONE attention no
 
 test('PermissionRequest never waits for the island: a silent receiver cannot hold the hook', async t => {
   // A receiver that accepts the connection and answers NOTHING: the hook must still return at once.
-  const runtime = fs.mkdtempSync(path.join(cwd, '.test-'));
-  fs.chmodSync(runtime, 0o700);
-  const dir = fs.mkdtempSync(path.join(runtime, 'p-'));
-  fs.chmodSync(dir, 0o700);
-  const endpoint = path.join(dir, 's');
-  const server = net.createServer(sock => { sock.on('error', () => {}); sock.on('data', () => {}); });
-  await new Promise(resolve => server.listen(endpoint, resolve));
-  fs.chmodSync(endpoint, 0o600);
-  const clients = [];
-  server.on('connection', c => clients.push(c));
-  t.after(async () => { for (const c of clients) c.destroy(); await new Promise(r => server.close(r)); fs.rmSync(runtime, { recursive: true }); });
+  const rcv = await fakeReceiver(t, { silent: true });
+  const { endpoint, runtime } = rcv;
   const started = Date.now();
   const r = await call('permission-request', {}, { ABITO_DESKTOP_SOCKET: endpoint, ABITO_SOCKET_DIR: runtime });
   const elapsed = Date.now() - started;

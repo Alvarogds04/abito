@@ -1,5 +1,6 @@
 'use strict';
-// Every test uses a private mkdtemp (0700) directory under os.tmpdir(); the real ~/.claude is never touched.
+const { tmpBase } = require('./platform-env.cjs');
+// Every test uses a private mkdtemp (0700) directory under tmpBase(); the real ~/.claude is never touched.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,7 +15,7 @@ const EXEC = process.execPath;
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instclaude-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instclaude-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;

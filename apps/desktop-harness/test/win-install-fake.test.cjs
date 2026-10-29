@@ -1,4 +1,5 @@
 'use strict';
+const { tmpBase } = require('./platform-env.cjs');
 // HU-047: the Windows install flow (audit, lock, settings, statusline side file, Pi) driven through a fake helper
 // backed by a POSIX temp dir. The fake enforces the same contract the native helper does (private parent, no
 // symlinks, expectation hashes) so a bypass in the Node flow shows up here without a Windows machine.
@@ -49,7 +50,7 @@ function fakeBackend(log = []) {
   return b;
 }
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-winfake-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-winfake-')));
   fs.chmodSync(d, 0o700);
   t.after(() => { winfs.useForTests(null); fs.rmSync(d, { recursive: true, force: true }); });
   return d;

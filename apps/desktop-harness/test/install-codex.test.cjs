@@ -1,5 +1,6 @@
 'use strict';
-// Temp dirs only (mkdtemp under os.tmpdir()); the real ~/.codex is never touched.
+const { tmpBase } = require('./platform-env.cjs');
+// Temp dirs only (mkdtemp under tmpBase()); the real ~/.codex is never touched.
 // S4/T2 (human L3, option A): the installed entries are NOTICE-ONLY — PermissionRequest (notice), PreToolUse with matcher
 // `request_user_input` (plan-mode questions, notice) and Stop (finished notice + the clearing frame). No entry asks the
 // island for a decision any more, so no `--timeout-sec` rides the command: the notice is fire-and-forget and bounded.
@@ -13,7 +14,7 @@ const cx = require('../src/install-codex.cjs');
 
 const BIN = path.resolve(__dirname, '../bin/abito-hook.cjs');
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instcodex-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instcodex-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
@@ -287,7 +288,7 @@ test('the notice entries are fixed: no path, timeout or flag is ever built from 
   // a bad timeout is still refused at the plan boundary (the CLI flag stays a validated number)
   assert.equal(cx.CODEX_PROFILE.defaultTimeoutSec, 5, 'the default is the notice bound, not a question budget');
   for (const bad of ['4; touch PWN', 4.5, '', NaN, 0, 3601, '035', null]) {
-    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instcodex-'));
+    const d = fs.mkdtempSync(path.join(tmpBase(), 'abito-instcodex-'));
     try {
       assert.throws(() => cx.planCodexHooks({ settingsPath: path.join(d, 'h.json'), timeoutSec: bad }), /timeout-sec/, String(bad));
     } finally { fs.rmSync(d, { recursive: true, force: true }); }

@@ -116,3 +116,17 @@ test('renderPlugin refuses paths that are not plain absolute', () => {
     assert.throws(() => renderPlugin({ execPath: '/usr/bin/node', binPath: '/opt/x.cjs', timeoutSec: 35, ...bad }), /refused|timeout/);
   }
 });
+
+// HU-062 (found on Windows CI): opencode.cjs called process.getuid() unguarded (absent on Windows) => «invalid configuration» on every event.
+test('a Windows process (no getuid) reaches the island client: ask and stop both work', async t => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform'), getuid = process.getuid;
+  Object.defineProperty(process, 'platform', { value: 'win32' }); process.getuid = undefined;
+  t.after(() => { Object.defineProperty(process, 'platform', platform); process.getuid = getuid; });
+  const env = { ABITO_DESKTOP_SOCKET: 'C:\\opencode-win\\endpoint.json' };
+  let asked = 0, notified = 0;
+  const clientFactory = () => ({ ask: async () => { asked++; return { status: 'answered', answer: { type: 'option', value: 'allow' } }; }, notify: async () => { notified++; return { status: 'sent' }; } });
+  const r = await handleOpencodeHook({ event: 'permission-request', input: perm(), env, argv: [], clientFactory });
+  assert.equal(r.stdout, OC_ALLOW); assert.equal(asked, 1);
+  await handleOpencodeHook({ event: 'stop', input: JSON.stringify({ sessionID: 'ses_1', directory: cwd }), env, argv: [], clientFactory });
+  assert.equal(notified, 1);
+});

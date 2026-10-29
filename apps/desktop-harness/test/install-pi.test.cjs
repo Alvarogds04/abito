@@ -1,4 +1,5 @@
 'use strict';
+const { tmpBase } = require('./platform-env.cjs');
 // HU-015 unit B: exercise the shipped installer CLI on isolated user directories only.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,7 +12,7 @@ const CLI = path.resolve(__dirname, '../bin/abito-hook.cjs');
 const MANIFEST = '.abito-manifest.json';
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function fixture(t) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-pi-install-'));
+  const base = fs.mkdtempSync(path.join(tmpBase(), 'abito-pi-install-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const home = path.join(base, 'home'); fs.mkdirSync(home, {mode:0o700});
   // Reproduce the packaged sibling layout/modes, not a group-writable development checkout.

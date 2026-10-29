@@ -18,4 +18,7 @@ const unixTest = (base, twin) => (name, fn) => base(name, unixOnly(twin), fn);
 // Child-process hook tests: on Windows preload pipe-preload.cjs and tell it which pipe to use (see that file).
 const hookNodeArgs = win ? ['-r', require('node:path').join(__dirname, 'pipe-preload.cjs')] : [];
 const pipeEnv = receiver => (receiver.pipe ? { ABITO_TEST_PIPE: receiver.pipe } : {});
-module.exports = { hookNodeArgs, pipeEnv, unixOnly, unixTest, offlineEnv, offlineDir, stubEndpoint };
+// os.tmpdir() on Windows runners is the 8.3 short form (C:\\Users\\RUNNER~1\\...); the installer's path rules (win-fs pathOk) refuse '~', as they
+// must for a real settings path. Fixtures use the long, canonical form (identity elsewhere).
+const tmpBase = () => require('node:fs').realpathSync.native(require('node:os').tmpdir());
+module.exports = { tmpBase, hookNodeArgs, pipeEnv, unixOnly, unixTest, offlineEnv, offlineDir, stubEndpoint };

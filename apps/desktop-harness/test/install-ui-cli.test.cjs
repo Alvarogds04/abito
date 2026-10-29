@@ -1,4 +1,5 @@
 'use strict';
+const { tmpBase } = require('./platform-env.cjs');
 // End-to-end tests of `abito-hook install <claude|codex> ... --json / --apply-plan` through REAL child processes.
 // The CLI is started by a wrapper node process, so its parent executable is node (ABITO_ISLAND_EXE = realpath(node)).
 // Temp dirs only; the real ~/.claude and ~/.codex are never touched.
@@ -18,7 +19,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'PI_SESSION_ID', 'PI_SESSION_FILE', 'AI_AGENT', 'GENTLE_PI_SESSION'];
 
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instuicli-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instuicli-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;

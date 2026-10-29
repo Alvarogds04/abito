@@ -96,3 +96,19 @@ test('R9 j: Bash projection command bytes unchanged including redaction', async 
   assert.equal(r.q.text, 'Claude Code pide permiso para Bash: ' + command); assert.equal(r.out.stdout, ALLOW);
   assert.deepEqual(describeToolDetailed('Bash', { command }), { text: 'Bash: ' + command, lossy: false, redactions: 0 });
 });
+
+// HU-062 (found on Windows CI): `inside` only recognised '../' and sensitivePath only '/', so on Windows a path like `..\x` counted as
+// INSIDE the folder (the «outside the session folder» downgrade never fired) and `repo\.git\config` was not sensitive; the
+// '/etc' check also matched every file on the current drive, so legitimate Write/Edit cards were all downgraded. Unix behaviour is unchanged.
+const { inside, sensitivePath } = require('../src/file-permission.cjs');
+test('inside() understands Windows separators and drives (path module injected, runs on every OS)', () => {
+  const w = path.win32;
+  assert.equal(inside('C:\\w', 'C:\\w\\a\\b', w), true);
+  assert.equal(inside('C:\\w', 'C:\\w', w), true);
+  for (const outside of ['C:\\x', 'C:\\w\\..\\x', 'C:\\w\\..\\..\\x', 'D:\\w\\a', 'C:\\wx']) assert.equal(inside('C:\\w', outside, w), false, outside);
+  assert.equal(inside('/w', '/w/a'), true); assert.equal(inside('/w', '/x'), false); assert.equal(inside('/w', '/w/../x'), false);
+});
+test('sensitivePath recognises dot-directories behind Windows separators', () => {
+  for (const p of ['C:\\proj\\.git\\config', 'C:\\proj\\.ssh\\id_rsa', 'C:\\proj\\.claude\\settings.json']) assert.equal(sensitivePath(p), true, p);
+  assert.equal(sensitivePath(path.join(cwd, 'uno.txt')), false);
+});

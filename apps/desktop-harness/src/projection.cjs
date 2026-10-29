@@ -10,11 +10,15 @@ const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SPOOF_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u0080-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 const stripSpoof = s => s.replace(SPOOF_RE, '');
 
-function sanitizeText(value, { max = 500, home = process.env.HOME } = {}) {
+function sanitizeText(value, { max = 500, home = process.env.HOME ?? process.env.USERPROFILE } = {}) {
   if (typeof value !== 'string') return '';
   let s = value.length > MAX_INPUT ? value.slice(0, MAX_INPUT) : value;
   if (typeof home === 'string' && home.length > 1 && home.startsWith('/')) {
     s = s.replace(new RegExp(escapeRe(home.replace(/\/+$/, '')) + '(?=/|\\s|$)', 'g'), '~');
+  } else if (typeof home === 'string' && /^[A-Za-z]:[\\/][^\\/]/.test(home)) {
+    // Windows profile: drive path, either separator, case-insensitive (the file system is).
+    const parts = home.replace(/[\\/]+$/, '').split(/[\\/]+/).map(escapeRe);
+    s = s.replace(new RegExp(parts.join('[\\\\/]+') + '(?=[\\\\/]|\\s|$)', 'gi'), '~');
   }
   s = stripSpoof(s).replace(/[\t\n\r\u2028\u2029]/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
     .replace(/\s+/g, ' ').trim();

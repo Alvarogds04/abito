@@ -1,4 +1,5 @@
 'use strict';
+const { tmpBase } = require('./platform-env.cjs');
 // Unit tests for src/install-ui.cjs (plan hash, preview JSON, guards, audit log). Temp dirs only; the real ~/.claude and ~/.codex are never touched.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,7 +13,7 @@ const hex64 = /^[0-9a-f]{64}$/;
 const CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instui-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instui-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;

@@ -132,9 +132,11 @@ test('SessionStart caches the title privately and prints nothing; the next quest
   const r = await handleClaudeHook({ event: 'session-start', input: start(), env, argv: [] });
   assert.deepEqual(r, { stdout: '', stderr: '', exitCode: 0 });
   const dir = path.join(state, 'claude-titles');
-  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
   const files = fs.readdirSync(dir); assert.equal(files.length, 1);
-  assert.equal(fs.statSync(path.join(dir, files[0])).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') { // Unix mode bits; the Windows privacy mechanism is a DACL (registered gap HU-062: title cache has no helper-backed twin yet)
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(dir, files[0])).mode & 0o777, 0o600);
+  }
   const p = answerer(rcv, 'o0');
   await handleClaudeHook({ event: 'permission-request', input: perm(), env, argv: [] }); await p;
   assert.equal(rcv.frames.find(f => f.type === 'question').projectName, 'Migrar la base');
