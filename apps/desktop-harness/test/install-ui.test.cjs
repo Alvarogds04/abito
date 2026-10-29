@@ -282,7 +282,7 @@ test('lock: releaseLock removes the lock only while the owner token still matche
   const b = ui.acquireLock(target, 100); assert.ok(b); ui.releaseLock(b); assert.equal(fs.existsSync(b.dir), false);
 });
 test('lock: unwritable settings directory => not_writable (65), not busy', async t => {
-  if (process.getuid() === 0) return t.skip('root ignores permission bits');
+  if (process.getuid?.() === 0) return t.skip('root ignores permission bits');
   const w = world(t); const hash = (await preview('claude', w.p)).plan_hash;
   fs.chmodSync(w.d, 0o500);
   let r; try { r = await applyVia('claude', w.p, w.audit, hash, { lockWaitMs: 200 }); } finally { fs.chmodSync(w.d, 0o700); }

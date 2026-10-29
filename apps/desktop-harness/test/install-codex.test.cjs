@@ -24,7 +24,7 @@ const FIX = '{\n  "description": "third \\u00e9 party",\n  "big": 12345678901234
 function fixture(d, text = FIX) { const p = path.join(d, 'hooks.json'); fs.writeFileSync(p, text, { mode: 0o600 }); return p; }
 function io(extra = {}) {
   const r = { out: '', err: '', prompts: [] };
-  r.opts = { out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid(), prompt: async q => { r.prompts.push(q); return 'install'; }, now: () => new Date('2026-01-02T03:04:05.678Z'), ...extra };
+  r.opts = { out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid?.(), prompt: async q => { r.prompts.push(q); return 'install'; }, now: () => new Date('2026-01-02T03:04:05.678Z'), ...extra };
   return r;
 }
 const ls = d => fs.readdirSync(d).sort();

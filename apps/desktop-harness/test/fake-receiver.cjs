@@ -5,13 +5,26 @@ const path = require('node:path');
 const net = require('node:net');
 const { EventEmitter } = require('node:events');
 
-// A real AF_UNIX socket, strictly below this worktree; not the installed app.
+// The platform's real transport, strictly below this worktree; not the installed app.
+// Linux/macOS: an AF_UNIX socket at `<runtime>/p-XXXXXX/s`. Windows: a local named pipe (AF_UNIX listen is
+// refused there) plus the `<runtime>\endpoint.json` metadata file; the receiver then carries `platform: 'win32'`
+// and an `open` seam that connects straight to the pipe. Tests that build an IslandClient spread `transport(receiver)`.
+// Child-process tests (bin/abito-hook.cjs) go through the native relay, which the hosted runner does not have.
 async function fakeReceiver(t, { questions = false, busyReason = false, structured = false } = {}) {
   const runtime = fs.mkdtempSync(path.join(path.resolve(__dirname, '..'), '.test-'));
-  fs.chmodSync(runtime, 0o700);
-  const directory = fs.mkdtempSync(path.join(runtime, 'p-'));
-  fs.chmodSync(directory, 0o700);
-  const endpoint = path.join(directory, 's');
+  const windows = process.platform === 'win32';
+  let endpoint, listenOn, transport = {};
+  if (windows) {
+    listenOn = `\\\\.\\pipe\\abito-test-${process.pid}-${require('node:crypto').randomBytes(6).toString('hex')}`;
+    endpoint = path.win32.join(runtime, 'endpoint.json');
+    fs.writeFileSync(endpoint, JSON.stringify({ v: 1, pipe: listenOn }));
+    transport = { pipe: listenOn, platform: 'win32', open: () => net.createConnection(listenOn) };
+  } else {
+    fs.chmodSync(runtime, 0o700);
+    const directory = fs.mkdtempSync(path.join(runtime, 'p-'));
+    fs.chmodSync(directory, 0o700);
+    endpoint = listenOn = path.join(directory, 's');
+  }
   const capabilities = new Map();
   const clients = new Set(), frames = [], rawFrames = [], events = new EventEmitter();
   const server = net.createServer(socket => {
@@ -39,12 +52,12 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
       }
     });
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve); });
-  fs.chmodSync(endpoint, 0o600);
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(listenOn, resolve); });
+  if (!windows) fs.chmodSync(endpoint, 0o600);
   t.after(async () => {
     for (const client of clients) client.destroy();
     await new Promise(resolve => server.close(resolve));
-    fs.rmSync(runtime, { recursive: true });
+    fs.rmSync(runtime, { recursive: true, force: true });
   });
   function next(type) {
     return new Promise((resolve, reject) => {
@@ -62,7 +75,7 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
     const existing = frames.find(f => f.type === type);
     return existing ? Promise.resolve(existing) : next(type);
   }
-  return { runtime, endpoint, frames, rawFrames, clients, next, seen,
+  return { ...transport, runtime, endpoint, frames, rawFrames, clients, next, seen,
     send: value => { for (const c of clients) c.write(JSON.stringify(value) + '\n'); },
     replyBusy: (q, code) => {
       const replies = [];
@@ -75,4 +88,6 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
       return replies;
     } };
 }
-module.exports = { fakeReceiver };
+// The IslandClient options that make a client talk to this receiver on the platform's real transport ({} on Unix).
+const transportOf = receiver => ({ ...(receiver.platform ? { platform: receiver.platform } : {}), ...(receiver.open ? { open: receiver.open } : {}) });
+module.exports = { fakeReceiver, transportOf };

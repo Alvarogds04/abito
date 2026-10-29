@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { handleClaudeHook, parseArgs, watchdogMs, startWatchdog, ALLOW, DENY } = require('../src/claude.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, transportOf } = require('./fake-receiver.cjs');
 
 const cwd = path.resolve(__dirname, '..');
 const permission = (over = {}) => JSON.stringify({ session_id: 'sess-1', transcript_path: '/home/x/SECRETPATH/t.jsonl', cwd,
@@ -76,7 +76,7 @@ test('no endpoint / old receiver / unavailable transport => empty with generic s
   assertOut(r); assert.equal(r.stdout, '');
   const old = await fakeReceiver(t, { questions: false });
   r = await handleClaudeHook({ event: 'permission-request', input: permission(), env: envOf(old), argv: [],
-    clientFactory: o => new (require('../src/client.cjs').IslandClient)({ ...o, handshakeTimeoutMs: 100 }) });
+    clientFactory: o => new (require('../src/client.cjs').IslandClient)({ ...o, ...transportOf(old), handshakeTimeoutMs: 100 }) });
   assertOut(r); assert.equal(r.stdout, '');
   const un = await handleClaudeHook({ event: 'permission-request', input: permission(), env: envOf(old), argv: [], clientFactory: stub('unavailable') });
   assert.match(un.stderr, /^Abito island unavailable\. Answer in the terminal\.\n$/);

@@ -1,4 +1,6 @@
 'use strict';
+// macOS: os.tmpdir() is /var/folders/... and /var is a symlink to /private/var; the installers refuse a settings path that contains a
+// symlink (correct for a real home), so the fixture home is canonicalized (as the other install tests already do).
 // Installer for Copilot CLI: a hooks file Abito OWNS (~/.copilot/hooks/abito-island.json). Never settings.json, never someone else's file.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,7 +12,7 @@ const core = require('../src/install-claude.cjs');
 const ui = require('../src/install-ui.cjs');
 
 const BIN = '/opt/abito/bin/abito-hook.cjs', NODE = '/usr/bin/node';
-const tmp = t => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-cop-')); fs.chmodSync(d, 0o700); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
+const tmp = t => { const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-cop-'))); fs.chmodSync(d, 0o700); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
 const plan = (p, o = {}) => planCopilotHooks({ settingsPath: p, binPath: BIN, execPath: NODE, ...o });
 
 test('a new file: version 1, permissionRequest + sessionEnd entries that run node + bin directly (exec/args, no shell) with the hook deadlines', t => {

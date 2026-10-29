@@ -44,3 +44,28 @@ test('rejects entries owned by someone else (simulated uid mismatch)', async t =
   t.after(() => { process.getuid = real; });
   assert.throws(() => verifyEndpoint(r.endpoint, r.runtime));
 });
+
+// HU-062 (found on macOS CI): the Claude Code / Codex hooks refused EVERY endpoint on macOS because the check hard-coded
+// `process.platform !== 'linux'`, so a hook could never reach the island there (desktop-pi already allowed darwin). The platform is
+// now a seam like on win32; a private Unix socket is accepted on linux and darwin, and any other platform stays refused.
+test('macOS (darwin) accepts a private Unix socket exactly like Linux; unknown platforms stay refused', async t => {
+  const r = await fakeReceiver(t);
+  const linux = verifyEndpoint(r.endpoint, r.runtime, { platform: 'linux' });
+  // darwin's sun_path is 103 bytes: a checkout path long enough to exceed it is refused there, which is the rule under test.
+  if (Buffer.byteLength(r.endpoint) <= 103) assert.deepEqual(verifyEndpoint(r.endpoint, r.runtime, { platform: 'darwin' }), linux);
+  else assert.throws(() => verifyEndpoint(r.endpoint, r.runtime, { platform: 'darwin' }), /Unexpected endpoint/);
+  for (const platform of ['freebsd', 'sunos', 'aix']) assert.throws(() => verifyEndpoint(r.endpoint, r.runtime, { platform }), /Unexpected endpoint/);
+});
+test('the endpoint path limit follows the platform: 103 bytes on macOS, 107 on Linux', () => {
+  const { endpointShape } = require('../src/config.cjs');
+  const runtime = '/r' + 'x'.repeat(80);
+  const endpoint = `${runtime}/p-abcdef/s`;
+  const length = Buffer.byteLength(endpoint);
+  assert.ok(length > 90);
+  const pad = n => '/r' + 'x'.repeat(80 + n);
+  const at = (limit) => { const rt = pad(limit - length); return endpointShape(`${rt}/p-abcdef/s`, rt, { platform: limit === 103 ? 'darwin' : 'linux' }); };
+  assert.equal(at(103), true, 'exactly 103 bytes fits on macOS');
+  assert.equal(endpointShape(`${pad(104 - length)}/p-abcdef/s`, pad(104 - length), { platform: 'darwin' }), false, '104 bytes does not fit on macOS');
+  assert.equal(at(107), true, 'exactly 107 bytes fits on Linux');
+  assert.equal(endpointShape(`${pad(108 - length)}/p-abcdef/s`, pad(108 - length), { platform: 'linux' }), false);
+});

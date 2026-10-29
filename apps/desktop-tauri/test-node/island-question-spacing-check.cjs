@@ -75,9 +75,10 @@ if (!H.findPlaywright()) { console.log('SKIPPED island-question-spacing-check: n
   for (const question of ['approvalPi', 'form']) {
     const a = await H.open({ question, quick: true, windowCap: 340 });
     try {
-      await test(question === 'form' ? 'question nav targets are at least 36px' : 'approval targets are non-overlapping, at least 44x96px with 36px visible fill', async () => {
+      await test(question === 'form' ? 'question nav targets are at least 44px (touch target)' : 'approval targets are non-overlapping, at least 44x96px with 36px visible fill', async () => {
         const s = await a.page.$eval(question === 'form' ? '#question-nav button' : '.q-approval-btn', el => { const s = getComputedStyle(el); return { h: s.minHeight, w: s.minWidth, margin: s.margin, inset: getComputedStyle(el, '::after').inset }; });
-        assert.equal(s.h, question === 'form' ? '36px' : '44px');
+        // Touch target: 44px since 0d2784ff (T4/S5 «a touch target like every other control on the question card»); it was 36px in the vendored island.css.
+        assert.equal(s.h, '44px');
         if (question !== 'form') { assert.equal(s.w, '96px'); assert.equal(s.margin, '0px'); assert.equal(s.inset, '4px 0px'); }
       });
       if (question !== 'form') await test('legacy permission command also wraps without ellipsis', async () => {

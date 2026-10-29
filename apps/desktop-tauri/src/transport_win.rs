@@ -28,9 +28,10 @@
 //!   `FILE_FLAG_OVERLAPPED`; reads are Peek-gated overlapped `ReadFile`s with
 //!   deadlines, writes are overlapped with a 500 ms bound, and shutdown
 //!   cancels pending I/O before closing — no join can hang.
-//! * Terminal origin: Windows has no `/proc`; the peer origin is `None` (never
-//!   invented), so «Ver» falls back like an unknown origin (S6 keeps the
-//!   receiver fully user-only).
+//! * Terminal origin (HU-065): the verified pipe client's pid is resolved through
+//!   the Windows process table (`sessionterm_win`); an origin exists only when a
+//!   terminal host is among its ancestors (the hook's chain when the relay is the
+//!   client), otherwise `None` — never invented — and «Ver» says it does not know.
 
 use crate::protocol::{self, Message};
 use crate::question::{self, Admission, HumanAnswer, Inbound, QuestionSlot, ResolutionStatus};
@@ -679,6 +680,7 @@ fn accept_loop(inner: Arc<Inner>, event: OwnedHandle) {
             Ok(pipe) => Arc::new(pipe),
             Err(_) => { unsafe { DisconnectNamedPipe(raw) }; continue; }
         };
+        let client_pid = proof.pid;
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
         let prepared = {
             let mut clients = inner.clients.lock().expect("clients lock");
@@ -701,9 +703,9 @@ fn accept_loop(inner: Arc<Inner>, event: OwnedHandle) {
             continue;
         };
         let thread_inner = inner.clone();
-        // Windows has no /proc peer snapshot; the origin stays None (S6:
-        // never invented). The resolver seam exists for host tests only.
-        let peer: Option<crate::sessionterm::ProcInfo> = None;
+        // HU-065: the kernel's pipe-client pid (verified above) and its birth identity from the Windows process
+        // table. When the relay is the client, its ancestor chain contains the hook's (never the page's).
+        let peer: Option<crate::sessionterm::ProcInfo> = crate::sessionterm::read_peer(client_pid);
         let spawned = std::thread::Builder::new()
             .name(format!("abito-client-{id}"))
             .spawn(move || handle_connection(thread_inner, id, pipe, peer));

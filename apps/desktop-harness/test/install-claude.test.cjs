@@ -25,7 +25,7 @@ const other = { matcher: 'Bash', hooks: [{ type: 'command', command: '/opt/other
 function io(extra = {}) {
   const r = { out: '', err: '', prompts: [] };
   r.opts = {
-    out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid(),
+    out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid?.(),
     prompt: async q => { r.prompts.push(q); return 'install'; }, now: () => new Date('2026-01-02T03:04:05.678Z'), ...extra,
   };
   return r;
@@ -200,7 +200,7 @@ test('planner: refuses symlink, non-regular, foreign owner, wrong shapes', t => 
   assert.throws(() => plan(link), e => e.exitCode === 65 && /symlink|regular/.test(e.message));
   const dir = path.join(d, 'adir.json'); fs.mkdirSync(dir);
   assert.throws(() => plan(dir), e => e.exitCode === 65);
-  assert.throws(() => plan(real, { uid: process.getuid() + 1 }), e => e.exitCode === 65 && /not owned/.test(e.message));
+  assert.throws(() => plan(real, { uid: (process.getuid?.() ?? 0) + 1 }), e => e.exitCode === 65 && /not owned/.test(e.message));
   for (const bad of [{ hooks: [] }, { hooks: null }, { hooks: 'x' }, { hooks: { Stop: {} } }, { hooks: { PermissionRequest: 'x' } }, { hooks: { Stop: null } }]) {
     fs.writeFileSync(real, JSON.stringify(bad));
     assert.throws(() => plan(real), e => e.exitCode === 65 && /unexpected/.test(e.message), JSON.stringify(bad));
@@ -488,7 +488,7 @@ test('preview wording: settings directory must exist and is never created; --use
 });
 
 test('apply: failed verification + failed restore does not claim success (exit 70, backup path named)', async t => {
-  if (process.getuid() === 0) return;
+  if (process.getuid?.() === 0) return;
   const d = tmp(t); const p = write(d, { a: 1 });
   const r = io({ verify: () => { fs.chmodSync(d, 0o500); return false; } });
   try {

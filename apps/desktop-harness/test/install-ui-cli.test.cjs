@@ -218,7 +218,7 @@ refusal('symlinked settings', {
 refusal('bad UTF-8 settings', { code: 65, jcode: 'refused', content: '{}\n', setup: w => { fs.writeFileSync(w.settings, Buffer.from([0x7b, 0x22, 0xe9, 0x22, 0x3a, 0x31, 0x7d])); } });
 
 const auditCase = (name, prep) => test('audit unavailable => 73 and settings untouched: ' + name, t => {
-  if (process.getuid() === 0) return t.skip('root ignores permission bits');
+  if (process.getuid?.() === 0) return t.skip('root ignores permission bits');
   const w = world(t);
   const p = previewOf(w, 'claude').json;
   prep(w);
@@ -234,7 +234,7 @@ auditCase('world-writable dir', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); f
 auditCase('audit file is a symlink', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); fs.symlinkSync(path.join(w.d, 'target'), path.join(w.audit, 'hook-installs.jsonl')); });
 auditCase('audit file wrong mode', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); const f = path.join(w.audit, 'hook-installs.jsonl'); fs.writeFileSync(f, ''); fs.chmodSync(f, 0o666); });
 test('audit unavailable: foreign-owner directory (/usr) => 73', t => {
-  if (process.getuid() === 0) return t.skip('root owns /usr');
+  if (process.getuid?.() === 0) return t.skip('root owns /usr');
   const w = world(t);
   const p = previewOf(w, 'claude').json; const before = snap(w);
   const r = cli([...base(w, 'claude'), '--apply-plan', p.plan_hash, '--audit-dir', '/usr', '--json'], w.env);

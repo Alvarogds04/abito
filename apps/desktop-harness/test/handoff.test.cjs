@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const { resolveConfig } = require('../src/config.cjs');
 const { fakeReceiver } = require('./fake-receiver.cjs');
 
-const owner = process.getuid();
+const owner = process.getuid?.();
 const bin = path.resolve(__dirname, '../bin/abito-hook.cjs');
 const cwd = path.resolve(__dirname, '..');
 const handoff = (rcv, over = {}) => JSON.stringify({ v: 1, endpoint: rcv.endpoint, pid: process.pid, ...over });
@@ -18,10 +18,13 @@ function put(rcv, text, mode = 0o600) {
 }
 const resolve = (rcv, o, uid = owner) => resolveConfig({ ABITO_SOCKET_DIR: rcv.runtime }, uid, o);
 
+// Linux: $XDG_RUNTIME_DIR, else /run/user/<uid>. macOS has neither: the canonical per-user temp dir (src/config.cjs defaultRuntime).
+const mac = process.platform === 'darwin';
+const macBase = () => fs.realpathSync(require('node:os').tmpdir());
 test('default runtime matrix', () => {
   assert.equal(resolveConfig({ ABITO_SOCKET_DIR: '/x/r', XDG_RUNTIME_DIR: '/run/user/9' }, 1, { procExists: () => false }).runtime, '/x/r');
-  assert.equal(resolveConfig({ XDG_RUNTIME_DIR: '/tmp/xdg-none' }, 1).runtime, '/tmp/xdg-none/abito-island');
-  const fallback = '/run/user/1234/abito-island';
+  assert.equal(resolveConfig({ XDG_RUNTIME_DIR: '/tmp/xdg-none' }, 1).runtime, mac ? `${macBase()}/abito-island` : '/tmp/xdg-none/abito-island');
+  const fallback = mac ? `${macBase()}/abito-island` : '/run/user/1234/abito-island';
   for (const xdg of [undefined, '', 'rel', '/', '/a/', '/a/../b', '/a\0b'])
     assert.equal(resolveConfig({ XDG_RUNTIME_DIR: xdg }, 1234, { procExists: () => false }).runtime, fallback, String(xdg));
   assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: 'rel' }, 1), /Invalid ABITO_SOCKET_DIR/);
@@ -154,8 +157,9 @@ test('a real zombie pid is not a live handoff process', async t => {
     if (child.exitCode === null && child.signalCode === null) await new Promise(resolve => child.once('close', resolve));
     if (zombiePid !== undefined) {
       const until = Date.now() + 2000;
-      while (fs.existsSync(`/proc/${zombiePid}`) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
-      assert.equal(fs.existsSync(`/proc/${zombiePid}`), false, 'zombie helper must reap its child before exit');
+      const exists = () => process.platform === 'darwin' ? require('../src/config.cjs').darwinProc.exists(zombiePid) : fs.existsSync(`/proc/${zombiePid}`);
+      while (exists() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(exists(), false, 'zombie helper must reap its child before exit');
     }
   });
   const pid = await new Promise((resolve, reject) => {
@@ -165,7 +169,9 @@ test('a real zombie pid is not a live handoff process', async t => {
   });
   if (pid === null) { t.skip('python3 is unavailable for constructing an unreaped child'); return; }
   zombiePid = pid;
+  // Linux reads /proc/<pid>/stat; macOS has no /proc, so the same fact comes from the production `ps` probe (config.cjs darwinProc).
   const state = () => {
+    if (process.platform === 'darwin') return require('../src/config.cjs').darwinProc.state(pid);
     try {
       const raw = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
       return raw.slice(raw.lastIndexOf(')') + 1).trimStart()[0];
@@ -285,6 +291,8 @@ test('e2e: no handoff => unavailable, nothing sent', async t => {
 // ---- optional `procStart` identity (the island writes it once WRITE_PROC_START is on; absence stays valid) ----
 function ownStart() {
   // field 22 of /proc/<pid>/stat, parsed after the LAST ')' (comm may contain spaces and parentheses)
+  // macOS has no /proc: the same identity comes from the production `ps` probe (config.cjs darwinProc, an exact copy of the daemon's).
+  if (process.platform === 'darwin') return require('../src/config.cjs').darwinProc.start(process.pid);
   const stat = fs.readFileSync('/proc/self/stat', 'utf8');
   return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[22 - 3];
 }
@@ -329,6 +337,9 @@ test('procStart: unreadable start time of a claimed pid fails closed, injectable
 });
 test('procStart: a parent pid that is a different live process is refused (pid reuse)', async t => {
   const rcv = await fakeReceiver(t, {});
+  // macOS reads start times with `ps -o lstart=` (1-second resolution): a child started in the same second as this process is
+  // indistinguishable. Documented residual (HU-054); the test crosses the second boundary first so it checks the mechanism, not luck.
+  if (process.platform === 'darwin') await new Promise(r => setTimeout(r, Math.max(0, 1100 - process.uptime() * 1000)));
   const { spawn } = require('node:child_process');
   const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 20000)'], { stdio: 'ignore' });
   t.after(() => child.kill('SIGKILL'));

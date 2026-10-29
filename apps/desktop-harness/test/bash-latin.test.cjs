@@ -7,7 +7,7 @@ const { ALLOW } = require('../src/hook-common.cjs');
 const { handleClaudeHook } = require('../src/claude.cjs');
 const { handleCodexHook } = require('../src/codex.cjs');
 const { IslandClient } = require('../src/client.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, transportOf } = require('./fake-receiver.cjs');
 const cwd = path.resolve(__dirname, '..');
 const bash = command => describeToolDetailed('Bash', { command });
 const screenshot = 'echo "una linea larga para ver cómo se acomoda el texto en la tarjeta de permiso" > ./prueba-isla/tres.txt';
@@ -120,7 +120,7 @@ for (const [agent, handle] of agents) test(`R22 UTF-8 boundaries reach the wire:
     });
     const out = await handle({ event: 'permission-request', input: input(command),
       env: { ABITO_SOCKET_DIR: rcv.runtime, ABITO_DESKTOP_SOCKET: rcv.endpoint },
-      clientFactory: o => new IslandClient(o) });
+      clientFactory: o => new IslandClient({ ...o, ...transportOf(rcv) }) });
     await answer;
     assert.equal(JSON.parse(out.stdout).hookSpecificOutput.decision.behavior, 'deny');
   }
@@ -132,7 +132,7 @@ for (const [agent, handle] of agents) test(`R22 UTF-8 boundaries reach the wire:
 async function codexNotice(t, command) {
   const rcv = await fakeReceiver(t, { questions: true });
   const out = await handleCodexHook({ event: 'permission-request', input: input(command),
-    env: { ABITO_SOCKET_DIR: rcv.runtime, ABITO_DESKTOP_SOCKET: rcv.endpoint }, clientFactory: o => new IslandClient(o) });
+    env: { ABITO_SOCKET_DIR: rcv.runtime, ABITO_DESKTOP_SOCKET: rcv.endpoint }, clientFactory: o => new IslandClient({ ...o, ...transportOf(rcv) }) });
   const notice = await rcv.seen('attention');
   assert.equal(out.stdout, ''); assert.equal(out.exitCode, 0);
   assert.equal(rcv.frames.filter(f => f.type === 'questions_hello' || f.type === 'question').length, 0);
