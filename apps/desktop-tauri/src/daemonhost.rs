@@ -308,7 +308,13 @@ mod gui_launch_tests {
         let cli = crate::piinstall::npm_cli(&found).expect("npm sits next to the managed Node");
         let vars: Vec<(String, String)> = ["SystemRoot", "TEMP", "TMP", "TMPDIR", "PATH"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
         let env = crate::piinstall::env(&found, &vars);
-        assert_eq!(crate::piinstall::run(&found, &cli, &env, Some(&home), std::time::Duration::from_secs(30)), Ok(()));
+        let outcome = crate::piinstall::run(&found, &cli, &env, Some(&home), std::time::Duration::from_secs(30));
+        if outcome.is_err() {
+            // npm's own output is never shown to users; in CI the reason must be visible.
+            let direct = std::process::Command::new(&found).arg(&cli).args(["install", "-g", "x"]).current_dir(&home).output();
+            eprintln!("DIAG node={found:?} cli={cli:?} direct={direct:?}");
+        }
+        assert_eq!(outcome, Ok(()));
         let seen: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
         assert_eq!(seen, serde_json::json!(["install", "-g", "@earendil-works/pi-coding-agent"]));
         // the daemon would be started with that absolute Node first on its PATH

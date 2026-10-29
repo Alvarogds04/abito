@@ -97,6 +97,16 @@ pub fn npm_cli(node: &Path) -> Option<PathBuf> {
     let tail = Path::new("node_modules").join("npm").join("bin").join("npm-cli.js");
     [dir.join(&tail), dir.parent()?.join("lib").join(&tail)].into_iter()
         .find(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()))
+        .map(plain_path)
+}
+/// Windows `canonicalize` yields the `\\?\C:\...` verbatim form; Node and npm scripts handle the plain drive path best, so drop the prefix
+/// for ordinary drive paths (UNC and anything else is returned as is).
+fn plain_path(p: PathBuf) -> PathBuf {
+    let text = p.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.len() > 2 && rest.as_bytes()[1] == b':' => PathBuf::from(rest),
+        _ => p,
+    }
 }
 
 /// Exactly the arguments handed to Node. Fixed: nothing here comes from outside.
@@ -206,6 +216,13 @@ mod tests {
         // a directory named npm-cli.js is not a script
         let odd = root.join("odd"); fs::create_dir_all(odd.join("node_modules/npm/bin/npm-cli.js")).unwrap(); fs::write(odd.join("node"), "").unwrap();
         assert_eq!(npm_cli(&odd.join("node")), None);
+    }
+
+    #[test]
+    fn the_verbatim_windows_prefix_is_dropped_only_for_drive_paths() {
+        assert_eq!(plain_path(PathBuf::from(r"\\?\C:\node\npm-cli.js")), PathBuf::from(r"C:\node\npm-cli.js"));
+        assert_eq!(plain_path(PathBuf::from(r"\\?\UNC\srv\share\x")), PathBuf::from(r"\\?\UNC\srv\share\x"));
+        assert_eq!(plain_path(PathBuf::from("/usr/lib/npm-cli.js")), PathBuf::from("/usr/lib/npm-cli.js"));
     }
 
     #[test]
