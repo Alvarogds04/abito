@@ -61,7 +61,7 @@ async function load(t, fakeBody, timeoutSec = 2) {
   fs.writeFileSync(bin, `let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{process.env.ECHO_IN&&0;${fakeBody}});`);
   const file = path.join(d, 'plugin.mjs');
   fs.writeFileSync(file, renderPlugin({ execPath: process.execPath, binPath: bin, timeoutSec }));
-  const mod = await import(file);
+  const mod = await import(require('node:url').pathToFileURL(file).href); // a bare Windows path (C:\...) is not a valid ESM specifier
   return (await mod.AbitoIslandPlugin({ directory: cwd }))['permission.ask'];
 }
 const ask = async (hook, over = {}) => { const output = { status: 'ask' }; await hook({ id: 'p1', sessionID: 'ses_1', type: 'bash', title: 'Run: ls', pattern: 'ls', metadata: { command: 'ls' }, ...over }, output); return output.status; };
@@ -83,7 +83,7 @@ test('plugin: empty output, garbage, a forged status, a crash and a hang all lea
 test('plugin: a throwing environment (no such binary) never throws into OpenCode', async t => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-oc-')); t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   const file = path.join(d, 'p.mjs'); fs.writeFileSync(file, renderPlugin({ execPath: '/nonexistent/node', binPath: '/nonexistent/bin.cjs', timeoutSec: 2 }));
-  const hook = (await (await import(file)).AbitoIslandPlugin({ directory: cwd }))['permission.ask'];
+  const hook = (await (await import(require('node:url').pathToFileURL(file).href)).AbitoIslandPlugin({ directory: cwd }))['permission.ask'];
   assert.equal(await ask(hook), 'ask');
 });
 test('plugin: session.idle runs the stop hook (a settled notice) and never touches output; other events do nothing', async t => {
@@ -91,7 +91,7 @@ test('plugin: session.idle runs the stop hook (a settled notice) and never touch
   const log = path.join(d, 'calls.log'), bin = path.join(d, 'fake.cjs');
   fs.writeFileSync(bin, `let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{require('fs').appendFileSync(${JSON.stringify(log)},process.argv.slice(2,4).join(' ')+' '+s+'\\n')})`);
   const file = path.join(d, 'p.mjs'); fs.writeFileSync(file, renderPlugin({ execPath: process.execPath, binPath: bin, timeoutSec: 2 }));
-  const hooks = await (await import(file)).AbitoIslandPlugin({ directory: cwd });
+  const hooks = await (await import(require('node:url').pathToFileURL(file).href)).AbitoIslandPlugin({ directory: cwd });
   await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'ses_1' } } } });
   await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'ses_1' } } });
   await hooks.event({ event: null });

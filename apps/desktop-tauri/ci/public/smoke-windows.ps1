@@ -57,7 +57,36 @@ function Wait-For([scriptblock]$Condition, [string]$Description) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Timed out waiting for $Description"
 }
+# HU-060: the island resolves the canonical `%ProgramFiles%\nodejs\node.exe` from the ProgramFiles it inherits. The smoke sets
+# ProgramFiles to an empty directory, but the child process still reports the runner's real `C:\Program Files` (see the
+# no-node.environment.log of CI run 40742299960: the cmd.exe child printed ProgramFiles=C:\Program Files), and actions/setup-node
+# installs Node right there, so the island legitimately found a Node, passed the Node gate and failed on Pi (pi_missing) instead of
+# Node. The product is right; the smoke must make Node REALLY absent. For the no-node case the runner's canonical Node folder is moved
+# aside and always put back (Stop-Island runs in every case's finally and again at the end).
+$script:hiddenNode = $null
+function Hide-CanonicalNode {
+    $real = $originalEnv['ProgramFiles']
+    if ([string]::IsNullOrWhiteSpace($real)) { return }
+    $dir = Join-Path $real 'nodejs'
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    $aside = "$dir.abito-smoke-hidden"
+    if (Test-Path -LiteralPath $aside) { throw "Refusing to reuse $aside" }
+    Move-Item -LiteralPath $dir -Destination $aside
+    $script:hiddenNode = @{ Dir = $dir; Aside = $aside }
+    Write-Host "no-node: moved the runner's canonical Node folder aside ($dir)"
+}
+function Restore-CanonicalNode {
+    if ($null -eq $script:hiddenNode) { return }
+    $h = $script:hiddenNode; $script:hiddenNode = $null
+    Move-Item -LiteralPath $h.Aside -Destination $h.Dir
+    # Proven, not assumed: the next case (and the uninstall) must find the runner exactly as it was.
+    if (-not (Test-Path -LiteralPath (Join-Path $h.Dir 'node.exe') -PathType Leaf) -or (Test-Path -LiteralPath $h.Aside)) {
+        throw "no-node: the runner's canonical Node was NOT restored ($($h.Dir))"
+    }
+    Write-Host "no-node: restored the runner's canonical Node folder (node.exe is back, the aside folder is gone)"
+}
 function Stop-Island {
+    Restore-CanonicalNode
     if ($null -ne $script:process) {
         if (-not $script:process.HasExited) { $script:process.Kill($true) }
         if (-not $script:process.WaitForExit(10000)) { throw 'Owned island did not exit' }
@@ -79,6 +108,8 @@ function Show-NodeDiscovery {
     }
     $candidate = Join-Path $env:ProgramFiles 'nodejs/node.exe'
     Write-Host "discover_node candidate: $candidate exists=$(Test-Path -LiteralPath $candidate -PathType Leaf)"
+    $real = Join-Path $originalEnv['ProgramFiles'] 'nodejs/node.exe'
+    Write-Host "discover_node candidate (real ProgramFiles, as the child sees it): $real exists=$(Test-Path -LiteralPath $real -PathType Leaf)"
     if ($systemNode) {
         $env:PATH = $empty
         Write-Host 'Runner has Node in a Windows system directory; no-node PATH now contains only the empty smoke directory.'
@@ -114,7 +145,7 @@ function Start-Island([string]$Mode) {
     else { Remove-Item Env:ABITO_PROJECT_ROOT -ErrorAction SilentlyContinue }
     Remove-Item Env:ABITO_ISLAND_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:ABITO_DESKTOP_SOCKET -ErrorAction SilentlyContinue
-    if ($Mode -eq 'no-node') { Show-NodeDiscovery }
+    if ($Mode -eq 'no-node') { Hide-CanonicalNode; Show-NodeDiscovery }
     $script:process = Start-Process -FilePath (Join-Path $install 'abito-island.exe') -WorkingDirectory $workspace -PassThru `
         -RedirectStandardOutput (Join-Path $root "$Mode.stdout.log") -RedirectStandardError (Join-Path $root "$Mode.stderr.log")
     # A forced stop can leave the previous process's metadata. Wait for this

@@ -1,4 +1,6 @@
 'use strict';
+// macOS: os.tmpdir() is /var/folders/... and /var is a symlink to /private/var; the installers refuse a settings path that contains a
+// symlink (correct for a real home), so the fixture home is canonicalized (as the other install tests already do).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,7 +10,7 @@ const { runRecapInstall, RECAP_BIN } = require('../src/install-recap.cjs');
 
 let tick = 0;
 function home(settings) {
-  const h = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-irc-'));
+  const h = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-irc-')));
   fs.mkdirSync(path.join(h, '.claude'));
   const file = path.join(h, '.claude', 'settings.json');
   if (settings !== undefined) fs.writeFileSync(file, settings, { mode: 0o600 });

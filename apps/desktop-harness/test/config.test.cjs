@@ -5,7 +5,7 @@ const { resolveConfig } = require('../src/config.cjs');
 
 test('absent endpoint means unavailable; never scans, default root by uid', () => {
   // uid 4321 does not exist here: the default runtime is computed WITHOUT reading the live island's real endpoint.json
-  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false }), { runtime: '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
+  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false }), { runtime: process.platform === 'darwin' ? require('node:fs').realpathSync(require('node:os').tmpdir()) + '/abito-island' : '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
   assert.equal(resolveConfig({ ABITO_PROJECT_ROOT: '/x' }, 4321).endpoint, undefined);
   assert.equal(resolveConfig({ ABITO_SOCKET_DIR: '/home/u/r' }, 1000).runtime, '/home/u/r');
 });
