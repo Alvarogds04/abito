@@ -390,6 +390,8 @@ mod tests {
         ] { assert_eq!(ok(&bad), Err(Reason::UnsafeArchive), "{bad:?}"); }
     }
 
+    // The tarball path is Linux's mechanism (macOS/Windows use the .pkg/.msi path, tested below on every OS; bsdtar is refused by design).
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_one_click_verifies_the_hash_validates_extracts_and_swaps_atomically() {
         if !have_tools() { assert!(std::env::var_os("CI").is_none(), "CI must have tar and xz"); return }
@@ -414,6 +416,8 @@ mod tests {
         for url in env.asked.borrow().iter() { assert!(url.starts_with("https://nodejs.org/dist/latest-v22.x/"), "{url}"); }
     }
 
+    // The tarball path is Linux's mechanism (macOS/Windows use the .pkg/.msi path, tested below on every OS; bsdtar is refused by design).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_wrong_hash_stops_before_tar_runs_and_leaves_nothing_behind() {
         if !have_tools() { return }
@@ -427,6 +431,8 @@ mod tests {
         assert!(leftovers.iter().all(|n| !n.starts_with("node-tmp")), "{leftovers:?}");
     }
 
+    // The tarball path is Linux's mechanism (macOS/Windows use the .pkg/.msi path, tested below on every OS; bsdtar is refused by design).
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_archive_with_an_escaping_symlink_is_refused_even_with_a_valid_hash_and_nothing_is_extracted() {
         if !have_tools() { return }
