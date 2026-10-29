@@ -66,10 +66,10 @@ test('windows config: explicit ABITO_DESKTOP_SOCKET override keeps the relay met
     assert.throws(() => resolveConfig({ ABITO_DESKTOP_SOCKET: bad }, undefined, { platform: 'win32' }), bad);
   }
 });
-test('linux config behaviour is unchanged (same function, default platform)', () => {
-  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false }),
-    { runtime: '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
-  assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: '/nonexistent/abito-windows-test' }, undefined));
+test('linux config behaviour is unchanged (same function, default platform)', { skip: process.platform === 'win32' && 'Unix path rules use the host path module; the win32 rules are the tests above' }, () => {
+  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false, platform: process.platform === 'darwin' ? 'darwin' : 'linux' }),
+    { runtime: process.platform === 'darwin' ? require('node:fs').realpathSync(require('node:os').tmpdir()) + '/abito-island' : '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
+  assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: '/nonexistent/abito-windows-test' }, undefined, { platform: 'linux' }));
 });
 
 // --- security (Windows branch) ----------------------------------------------
@@ -83,7 +83,7 @@ test('windows verifyEndpoint: metadata shape + runtime binding, no unix socket c
   }
 });
 test('linux verifyEndpoint behaviour is unchanged (default platform)', () => {
-  assert.throws(() => verifyEndpoint('/run/user/1000/abito-island/p-abc123/s', '/run/user/1000/abito-island'));
+  assert.throws(() => verifyEndpoint('/run/user/1000/abito-island/p-abc123/s', '/run/user/1000/abito-island', { platform: 'linux' }));
 });
 
 // --- relay adapter (windows-transport) --------------------------------------

@@ -46,10 +46,12 @@ const CLAUDE_EVENTS = Object.freeze(["PermissionRequest", "SessionStart", "Stop"
 const MIGRATED_EVENTS = Object.freeze(["PreToolUse"]);
 // S4/T2: the Codex installer (notice-only) reports four entries, in this order.
 const CODEX_EVENTS = Object.freeze(["PermissionRequest", "PreToolUse", "PostToolUse", "Stop"]);
+const FOLDER_REASONS = new Set(["writable", "foreign_owner", "acl"]);
 const OPS = new Set(["add", "replace", "remove", "keep"]);
 /** Installer refusal codes we map; everything else is the generic install_failed. */
 const REFUSAL_DETAIL = Object.freeze({
 	not_writable: "not_writable",
+	unsafe_folder: "unsafe_folder", // HU-047: a folder another user/group can change (or that is not ours); carries folder + folder_reason
 	foreign_extension: "foreign_extension", // HU-052: a Pi extension folder Abito did not install
 	backup_failed: "backup_failed",
 	plan_changed: "plan_changed",
@@ -115,6 +117,18 @@ function killGroup(child) {
 	if (!child || !Number.isInteger(child.pid) || child.pid <= 1) return;
 	try {
 		process.kill(-child.pid, "SIGKILL");
+	} catch {}
+}
+
+/**
+ * HU-047 L4: on Windows the installer (node) starts the native helper, so killing only node leaves it running. `taskkill /T /F`
+ * on the still-live installer takes the whole tree. `run` is injectable for tests; never throws, never uses a shell.
+ */
+function killTree(child, platform = process.platform, run = require("node:child_process").spawnSync) {
+	if (platform !== "win32" || !child || !Number.isInteger(child.pid) || child.pid <= 4) return;
+	try {
+		const root = process.env.SystemRoot && /^[A-Za-z]:\\/.test(process.env.SystemRoot) ? process.env.SystemRoot : "C:\\Windows";
+		run(`${root}\\System32\\taskkill.exe`, ["/PID", String(child.pid), "/T", "/F"], { shell: false, windowsHide: true, stdio: "ignore", timeout: 5000 });
 	} catch {}
 }
 
@@ -247,7 +261,7 @@ class AgentsManager extends EventEmitter {
 			}
 		}
 		const result = await this.call(agent, applyArgs(this, agent, remove, preview.plan_hash));
-		if (!result.ok) return this.refusalEntry(agent, result.code);
+		if (!result.ok) return this.refusalEntry(agent, result.code, result);
 		const json = result.json;
 		if (json.mode !== "applied" || json.plan_hash !== preview.plan_hash || json.harness !== agent.harness || json.action !== (remove ? "remove" : "install")) fail();
 		if (typeof json.changed !== "boolean") fail();
@@ -314,10 +328,18 @@ class AgentsManager extends EventEmitter {
 	}
 
 	/** Maps an installer refusal code to a terminal entry. */
-	refusalEntry(agent, code) {
+	refusalEntry(agent, code, extra) {
 		if (code === "refused") {
 			// The CLI refuses every unreadable/invalid input with the same fixed text; a missing settings dir means "tool not installed".
 			return this.settingsDirExists(agent) ? this.failure(agent, "config_invalid") : this.plain(agent, "unavailable");
+		}
+		if (code === "unsafe_folder") {
+			const entry = this.failure(agent, "unsafe_folder");
+			if (typeof extra?.folder === "string" && FOLDER_REASONS.has(extra.folder_reason) && [...extra.folder].length <= 400) {
+				entry.folder = extra.folder;
+				entry.folder_reason = extra.folder_reason;
+			}
+			return entry;
 		}
 		return this.failure(agent, REFUSAL_DETAIL[code] ?? "install_failed");
 	}
@@ -325,7 +347,7 @@ class AgentsManager extends EventEmitter {
 	/** Preview call. Returns {entry} for a terminal outcome or {preview} (validated). Throws on garbage. */
 	async inspect(agent, remove) {
 		const result = await this.call(agent, previewArgs(this, agent, remove));
-		if (!result.ok) return { entry: this.refusalEntry(agent, result.code) };
+		if (!result.ok) return { entry: this.refusalEntry(agent, result.code, result) };
 		return { preview: readPreview(result.json, agent, remove, this.targetOf(agent)) };
 	}
 
@@ -415,7 +437,7 @@ class AgentsManager extends EventEmitter {
 			if (exit !== 0) fail();
 			return { ok: true, json };
 		}
-		if (json.ok === false && typeof json.code === "string" && exit !== 0 && Number.isInteger(exit)) return { ok: false, code: json.code };
+		if (json.ok === false && typeof json.code === "string" && exit !== 0 && Number.isInteger(exit)) return { ok: false, code: json.code, folder: json.folder, folder_reason: json.folder_reason };
 		return fail();
 	}
 
@@ -427,7 +449,10 @@ class AgentsManager extends EventEmitter {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
-				if (error) killGroup(child);
+				if (error) {
+					killGroup(child);
+					killTree(child, this.platform);
+				}
 				try {
 					child?.kill("SIGKILL");
 				} catch {}
@@ -523,4 +548,4 @@ const workingEntry = (agent) => ({ id: agent.id, name: agent.name, state: "worki
 const merge = (others, id, entry) => AGENTS.map((a) => (a.id === id ? entry : others.find((o) => o.id === a.id)));
 const clone = (entries) => entries.map((e) => ({ ...e }));
 
-module.exports = { AGENTS, AgentsError, AgentsManager, assertTrustedScript };
+module.exports = { AGENTS, AgentsError, AgentsManager, assertTrustedScript, killTree };

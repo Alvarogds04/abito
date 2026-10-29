@@ -2,6 +2,7 @@
 // S4/T2 e2e through the real CLI: the Codex hooks only ever send a NOTICE and return at once (empty stdout, exit 0).
 // Codex's approval prompt stays in the terminal; nothing here can answer for Codex.
 const { test } = require('node:test');
+const { hookNodeArgs, pipeEnv } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -16,7 +17,7 @@ const postTool = JSON.stringify({ session_id: 's1', cwd, hook_event_name: 'PostT
 
 function run(args, input, env, { closeStdin = true } = {}) {
   return new Promise(resolve => {
-    const child = spawn(process.execPath, [bin, ...args], { env: { PATH: process.env.PATH, ABITO_SOCKET_DIR: '/nonexistent-abito-test', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [...hookNodeArgs, bin, ...args], { env: { PATH: process.env.PATH, ABITO_SOCKET_DIR: '/nonexistent-abito-test', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', c => { stdout += c; }); child.stderr.on('data', c => { stderr += c; });
     child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
@@ -25,7 +26,7 @@ function run(args, input, env, { closeStdin = true } = {}) {
     if (closeStdin) child.stdin.end();
   });
 }
-const envOf = r => ({ ABITO_DESKTOP_SOCKET: r.endpoint, ABITO_SOCKET_DIR: r.runtime });
+const envOf = r => ({ ABITO_DESKTOP_SOCKET: r.endpoint, ABITO_SOCKET_DIR: r.runtime, ...pipeEnv(r) });
 const silent = r => { assert.equal(r.code, 0); assert.equal(r.stdout, ''); assert.equal(r.stderr, ''); };
 
 test('codex e2e: permission-request sends a notice and prints nothing', async t => {
