@@ -23,6 +23,8 @@ const { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } = 
 const path = require("node:path");
 const { validateCustomBaseUrl, validateLocalBaseUrl, validateLocalModelIds } = require("./protocol.cjs");
 const { CustomProviderError, discoverModels } = require("./custom-provider.cjs");
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+const winfs = require("./win-fs.cjs");
 const { ENV_ALLOWLIST, assertSecurePath, ensurePrivateDir, writePrivateFile } = require("./isolation.cjs");
 
 const STRICT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -69,6 +71,16 @@ function helperEnv(base, { home, tmp }) {
 }
 
 const fail = (message) => new Error(message);
+
+/** The human-facing refusal when the account's credential files are not private to this user (Windows, HU-061). Fixed text, no paths, no secrets. */
+const STORE_NOT_PRIVATE_MESSAGE = "Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.";
+class CredentialStoreError extends Error {
+	constructor() {
+		super(STORE_NOT_PRIVATE_MESSAGE);
+		this.name = "CredentialStoreError";
+		this.code = "store_not_private";
+	}
+}
 
 function accountDto(meta) {
 	return {
@@ -581,6 +593,9 @@ class AccountManager extends EventEmitter {
 	 * write. Symlinks and foreign owners are refused, never chmod-ed through.
 	 */
 	enforceCredentialPermissions(accountId) {
+		// HU-061: with the verified Windows helper the privacy is checked and repaired by the helper, never by chmod.
+		const w = winfs.active();
+		if (w) return this.enforceCredentialPermissionsWin(w, accountId);
 		const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 		const dir = assertSecurePath(this.accountDir(accountId));
 		const dirStat = lstatSync(dir);
@@ -599,6 +614,25 @@ class AccountManager extends EventEmitter {
 			if ((fileStat.mode & 0o777) !== 0o600) chmodSync(file, 0o600);
 		}
 		if ((dirStat.mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
+	}
+
+	/**
+	 * Windows twin of enforceCredentialPermissions (HU-061): the helper's facts decide. Reparse points (symlink/junction),
+	 * hard links, a non-file, a non-private account dir and a non-private auth.json are all refused (fail closed).
+	 */
+	enforceCredentialPermissionsWin(w, accountId) {
+		const dir = assertSecurePath(this.accountDir(accountId));
+		const dirFacts = w.checkPath(dir);
+		if (!dirFacts.exists || dirFacts.kind !== "dir" || dirFacts.reparse || !dirFacts.private || !dirFacts.parent_ok) {
+			throw new CredentialStoreError();
+		}
+		const file = path.join(dir, "auth.json");
+		const facts = w.checkPath(file);
+		if (!facts.exists) return;
+		if (facts.reparse || facts.kind !== "file" || facts.nlink !== 1) throw new CredentialStoreError();
+		// The helper has no operation that tightens an existing entry (delete/move/write all require a private source), so a
+		// credential file that is not private is REFUSED, never trusted and never loosely rewritten: sign in again after removing it.
+		if (!facts.private) throw new CredentialStoreError();
 	}
 
 	// ----- helper child client -------------------------------------------
@@ -658,6 +692,7 @@ class AccountManager extends EventEmitter {
 		if (typeof apiKey !== "string" || apiKey.trim() === "" || apiKey.length > 8192 || /[\r\n\u0000]/.test(apiKey)) {
 			throw fail("Invalid API key");
 		}
+		if (meta.kind === "custom" && CONTROL_CHARS.test(apiKey)) throw fail("Invalid API key");
 		this.assertIdle();
 		return this.mutate(async () => {
 			this.assertIdle();
@@ -781,8 +816,8 @@ class AccountManager extends EventEmitter {
 		if (flow.finished) return;
 		try {
 			this.enforceCredentialPermissions(flow.accountId);
-		} catch {
-			this.endFlow(flow, { ok: false, message: GENERIC_LOGIN_FAILURE });
+		} catch (error) {
+			this.endFlow(flow, { ok: false, message: error instanceof CredentialStoreError ? STORE_NOT_PRIVATE_MESSAGE : GENERIC_LOGIN_FAILURE });
 			return;
 		}
 		if (flow.cancelRequested || result.cancelled) {
@@ -816,6 +851,9 @@ class AccountManager extends EventEmitter {
 		if (!flow || flow.id !== flowId || flow.finished) throw fail("No such sign-in flow");
 		if (!flow.prompts.has(promptId)) throw fail("No such prompt");
 		if (typeof value !== "string" || value.length > 8192) throw fail("Invalid answer");
+		// A custom gateway key goes into an HTTP header: refuse control characters before any side effect
+		// (the prompt stays open so the user can try again).
+		if (this.requireMeta(flow.accountId).kind === "custom" && CONTROL_CHARS.test(value)) throw fail("Invalid API key");
 		flow.prompts.delete(promptId);
 		clearTimeout(flow.promptTimer);
 		flow.session.write({ cmd: "answer", flowId, promptId, value });
@@ -866,4 +904,4 @@ class AccountManager extends EventEmitter {
 	}
 }
 
-module.exports = { AccountManager, LOCAL_PLACEHOLDER, helperEnv, isStrictAccountId };
+module.exports = { AccountManager, CredentialStoreError, STORE_NOT_PRIVATE_MESSAGE, LOCAL_PLACEHOLDER, helperEnv, isStrictAccountId };
