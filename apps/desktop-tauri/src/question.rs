@@ -16,7 +16,7 @@
 //! data only, without inventing UI state. No socket, timer, default, permission
 //! grant or human attestation lives here.
 
-use crate::protocol::{session_token, token, Identity, FRESH_MS};
+use crate::protocol::{session_token, token, Identity, CLOCK_SKEW_MS, FRESH_MS};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -329,15 +329,15 @@ fn validate_base(base: &Base, identity: &Identity, now: u64) -> Result<(), Error
     if base.project != identity.project || base.session_id != identity.session_id {
         return Err(Error::ScopeMismatch);
     }
-    if !safe_epoch(base.at) || base.at > now || base.at < now.saturating_sub(FRESH_MS)
-        || base.at < identity.at as u64 {
+    if !safe_epoch(base.at) || base.at > now.saturating_add(CLOCK_SKEW_MS) || base.at < now.saturating_sub(FRESH_MS)
+        || base.at < (identity.at as u64).saturating_sub(CLOCK_SKEW_MS) {
         return Err(Error::InvalidTimestamp);
     }
     Ok(())
 }
 fn validate_now(identity: &Identity, now: u64) -> Result<(), Error> {
     validate_identity(identity)?;
-    if !safe_epoch(now) || now < identity.at as u64 { return Err(Error::InvalidTimestamp); }
+    if !safe_epoch(now) || now.saturating_add(CLOCK_SKEW_MS) < identity.at as u64 { return Err(Error::InvalidTimestamp); }
     Ok(())
 }
 fn validate_id(id: &str) -> Result<(), Error> {
@@ -602,7 +602,7 @@ impl QuestionSlot {
         let active = self.queue.first().filter(|a| a.connection_id == connection_id && a.question.id == id).ok_or(Error::NotLive)?;
         if &active.identity != identity { return Err(Error::ScopeMismatch); }
         validate_now(identity, now)?;
-        if now < active.question.base.at { return Err(Error::InvalidTimestamp); }
+        if now.saturating_add(CLOCK_SKEW_MS) < active.question.base.at { return Err(Error::InvalidTimestamp); }
         if now >= active.question.expires_at { return Err(Error::Expired); }
         Ok(active)
     }
@@ -676,7 +676,7 @@ impl QuestionSlot {
         let Some(index) = self.position(connection_id, &cancel.id) else { return Ok(None); };
         let active = &self.queue[index];
         if &active.identity != identity { return Err(Error::ScopeMismatch); }
-        if now < active.question.base.at { return Err(Error::InvalidTimestamp); }
+        if now.saturating_add(CLOCK_SKEW_MS) < active.question.base.at { return Err(Error::InvalidTimestamp); }
         let reason = match cancel.reason { CancelReason::Expired => CloseReason::Expired, CancelReason::Cancelled => CloseReason::Cancelled };
         let line = closed(identity, &cancel.id, reason, false, now)?;
         self.queue.remove(index);

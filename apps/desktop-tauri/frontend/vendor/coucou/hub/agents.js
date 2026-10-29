@@ -162,7 +162,7 @@ async function renderAgentSettings({ invoke, V, P, listen, timers }) {
       "div",
       { class: "agent-row", role: "row" },
       h("span", { class: "agent-name", role: "cell", text: name }),
-      unknown && !["node_missing", "failed"].includes(state?.agentsRuntime) ? stateCell("·", UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || "○", r.word),
+      !r || unknown && !["node_missing", "failed"].includes(state?.agentsRuntime) ? stateCell("·", UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || "○", r.word),
       islandSwitch(id, installed),
       actions
     );

@@ -94,7 +94,7 @@ mod tests {
             assert!(!click_through(Some((376.0, 16.0)), &rects, false, false, true), "{w}");
             assert!(click_through(Some((376.0, 40.0)), &rects, false, false, true), "{w}: below the pill is transparent");
         }
-        let expanded = input_rects(Report { w: 720, h: 184, settled: true }, WINDOW, false);
+        let expanded = input_rects(Report { w: 720, h: 150, settled: true }, WINDOW, false);
         assert!(!click_through(Some((376.0, 100.0)), &expanded, false, false, true), "an open island takes clicks on its body");
         assert!(click_through(Some((376.0, 250.0)), &expanded, false, false, true), "below an open island is transparent");
     }

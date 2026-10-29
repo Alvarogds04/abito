@@ -1,4 +1,5 @@
 'use strict';
+const { tmpBase } = require('./platform-env.cjs');
 // HU-047: the Windows install flow (audit, lock, settings, statusline side file, Pi) driven through a fake helper
 // backed by a POSIX temp dir. The fake enforces the same contract the native helper does (private parent, no
 // symlinks, expectation hashes) so a bypass in the Node flow shows up here without a Windows machine.
@@ -12,44 +13,9 @@ const winfs = require('../src/win-fs.cjs');
 const ui = require('../src/install-ui.cjs');
 
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
-function fakeBackend(log = []) {
-  const err = r => new winfs.WinFsError(r);
-  const parentOk = p => { try { const st = fs.lstatSync(path.dirname(p)); return st.isDirectory() && !st.isSymbolicLink() && (st.mode & 0o022) === 0; } catch { return false; } };
-  const facts = p => {
-    let st = null; try { st = fs.lstatSync(p); } catch { /* absent */ }
-    return { schema: 'abito-fs/1', ok: true, path: p, parent_ok: parentOk(p), exists: !!st, kind: !st ? 'none' : st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other',
-      reparse: !!st && st.isSymbolicLink(), private: !!st && !st.isSymbolicLink() && (st.mode & 0o077) === 0, nlink: st ? st.nlink : 0, size: st ? st.size : 0, mtime_ms: st ? Math.floor(st.mtimeMs) : 0, elevated: false };
-  };
-  const b = {
-    checkPath: p => { log.push(['check', p]); return facts(p); },
-    readPrivate(p, { readFile = fs.readFileSync } = {}) {
-      const f = facts(p);
-      if (!f.parent_ok) throw err('not_private');
-      if (!f.exists) return null;
-      if (f.reparse) throw err('reparse');
-      if (f.kind !== 'file' || !f.private || f.nlink !== 1) throw err('not_private');
-      const buf = readFile(p);
-      return { buf, sha256: sha(buf), size: buf.length, mtimeMs: f.mtime_ms };
-    },
-    writePrivate(p, data, expect) {
-      log.push(['write', p]);
-      const f = facts(p);
-      if (!f.parent_ok) throw err('not_private');
-      if (expect === null || expect === undefined) { if (f.exists) throw err('exists'); }
-      else { if (!f.exists) throw err('missing'); if (f.reparse || !f.private) throw err('not_private'); if (sha(fs.readFileSync(p)) !== expect) throw err('mismatch'); }
-      const tmp = path.join(path.dirname(p), `.t${process.pid}${Math.random()}`);
-      fs.writeFileSync(tmp, data, { mode: 0o600, flag: 'wx' });
-      fs.renameSync(tmp, p);
-      return { sha256: sha(Buffer.from(data)) };
-    },
-    makeDir(p) { if (!parentOk(p)) throw err('not_private'); if (fs.existsSync(p)) return { created: false }; fs.mkdirSync(p, { mode: 0o700 }); return { created: true }; },
-    move(a, c) { if (fs.existsSync(c)) throw err('exists'); fs.renameSync(a, c); return { ok: true }; },
-    remove(p) { const st = fs.lstatSync(p); if (st.isDirectory()) fs.rmdirSync(p); else fs.unlinkSync(p); return { ok: true }; },
-  };
-  return b;
-}
+const { fakeBackend } = require('./win-fake-backend.cjs');
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-winfake-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-winfake-')));
   fs.chmodSync(d, 0o700);
   t.after(() => { winfs.useForTests(null); fs.rmSync(d, { recursive: true, force: true }); });
   return d;
@@ -91,7 +57,8 @@ test('Windows flow: a symlinked settings file or a non-private parent writes not
   assert.equal(fs.readFileSync(real, 'utf8'), '{}\n');
   const open = path.join(d, 'open'); fs.mkdirSync(open); fs.chmodSync(open, 0o777);
   const r2 = await run(['claude', '--settings', path.join(open, 'settings.json'), '--json']);
-  assert.equal(r2.json.ok, false); assert.equal(r2.json.code, 'unsafe_target');
+  assert.equal(r2.json.ok, false); assert.equal(r2.json.code, 'unsafe_folder');
+  assert.equal(r2.json.message, `La carpeta ${open} tiene permisos de Windows (ACL) que dan acceso a otros usuarios o no es tuya; dejala accesible solo para tu usuario (Propiedades > Seguridad) y volvé a intentar.`);
   assert.deepEqual(fs.readdirSync(open), []);
 });
 
@@ -155,4 +122,20 @@ test('L7: mismatch/busy/io/exists/missing helper reasons get their own Ajustes d
     const r = await run(['claude', '--settings', settings, '--json']);
     assert.equal(r.json.code, code, reason);
   }
+});
+
+
+// HU-062 (found by the Windows run): the audit log past 1 MiB made appendAudit THROW on Windows (the helper caps one read at 1 MiB and the
+// size check ran after the read). It must rotate by size, looking at the size through the helper first, and never throw.
+test('audit: a log already past the helper 1 MiB cap is rotated before any read, and the append succeeds', t => {
+  const d = tmp(t); const dir = path.join(d, 'audit'); fs.mkdirSync(dir, { mode: 0o700 });
+  winfs.useForTests(fakeBackend());
+  const f = path.join(dir, 'hook-installs.jsonl');
+  fs.writeFileSync(f + '.1', 'old-generation\n', { mode: 0o600 });
+  fs.writeFileSync(f, '{"ts":0}\n'.repeat(Math.ceil((1024 * 1024 + 1) / 9)), { mode: 0o600 });
+  ui.appendAudit(dir, { ts: 7, event: 'intent' });
+  assert.ok(fs.statSync(f + '.1').size > 1024 * 1024, 'the big log became the previous generation');
+  assert.equal(fs.readFileSync(f, 'utf8'), '{"ts":7,"event":"intent"}\n');
+  ui.appendAudit(dir, { ts: 8 });
+  assert.equal(fs.readFileSync(f, 'utf8').trim().split('\n').length, 2, 'below the cap: no rotation');
 });

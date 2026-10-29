@@ -3,6 +3,11 @@ const { randomUUID } = require('node:crypto');
 const DEFAULT_TIMEOUT_MS = 300000;
 const MIN_TIMEOUT_MS = 30000, MAX_TIMEOUT_MS = 900000;
 const FRAME_BYTES = 4096;
+// Two processes never read the same clock: the island stamps `at`, this process compares it with its own. On Windows their
+// Date.now() differ by a few ms, so an honest answer could look "before the question" or "in the future" and be refused.
+// A skew this small is tolerated on those two bounds; staleness (15 s) and a far-future stamp stay rejected.
+// Mirrors CLOCK_SKEW_MS in desktop-harness/src/client.cjs and protocol.rs.
+const CLOCK_SKEW_MS = 1000;
 // A connection that negotiated `structured:1` (level 3) may carry multiSelect, questionnaires and larger limits.
 const STRUCTURED_FRAME_BYTES = 16384;
 const MAX_FORM_ITEMS = 4;
@@ -132,7 +137,7 @@ class QuestionBroker {
     }
     const base = ['v', 'type', 'questionVersion', 'project', 'sessionId', 'at', 'id', 'source'];
     if (message.v !== 1 || message.questionVersion !== 1 || !Number.isSafeInteger(message.at) ||
-        message.at < scope.at || message.at > this.clock.now() || message.at < this.clock.now() - 15000) {
+        message.at < scope.at - CLOCK_SKEW_MS || message.at > this.clock.now() + CLOCK_SKEW_MS || message.at < this.clock.now() - 15000) {
       this.reject(message, 'invalid_answer'); return;
     }
     if (message.type === 'question_closed') {
