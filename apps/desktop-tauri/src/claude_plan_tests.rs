@@ -44,6 +44,13 @@ fn data_older_than_ten_minutes_is_unknown() {
     // a timestamp from the future is not believed either
     put(&d, &good(NOW_MS + 60_000), 0o600);
     assert!(read_at(&d, NOW_MS).is_none());
+    // ...but the status-line process and the island may read clocks a few ms apart (HU-062 clock skew)
+    for ahead in [20, 200, crate::protocol::CLOCK_SKEW_MS as i64] {
+        put(&d, &good(NOW_MS + ahead), 0o600);
+        assert!(read_at(&d, NOW_MS).is_some(), "{ahead} ms ahead");
+    }
+    put(&d, &good(NOW_MS + crate::protocol::CLOCK_SKEW_MS as i64 + 1), 0o600);
+    assert!(read_at(&d, NOW_MS).is_none());
 }
 
 #[test]

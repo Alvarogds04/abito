@@ -214,6 +214,19 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   assert(text(unavailable).includes('README · https://github.com/Alvarogds04/abito#windows-limitations'));
   assert(!calls.some(([cmd]) => cmd === 'open_chat_url'), 'settings cannot invoke the main-window-only Linux opener');
   ui.dispose();
+  // Windows report (29-oct): with Node not found by the host (agentsRuntime node_missing/failed) the WHOLE table vanished — a row
+  // the host never reports (hermes) was read as undefined after the section had been cleared. Every row still renders.
+  for (const runtime of ['node_missing', 'failed']) {
+    state = { connection:'no_daemon', agentsRuntime: runtime, directAgents:[], directHooks:[] };
+    ui = await renderAgentSettings(opts); await ui.settled();
+    const list = all(ui).find(e => e.attrs.id === 'agent-hook-list');
+    assert(list, `${runtime}: the agents table is drawn`);
+    for (const id of ['pi','hermes','claude-code','codex','gemini-cli','copilot-cli','opencode']) assert(all(list).some(e => e.attrs.id === `agent-row-${id}`), `${runtime}: row ${id}`);
+    // a later push with the same runtime repaints, never empties the section
+    events['agent:state']({ payload: { agentsRuntime: runtime, directAgents: [] } });
+    assert(all(ui).find(e => e.attrs.id === 'agent-hook-list'), `${runtime}: still drawn after a push`);
+    ui.dispose();
+  }
   for(const name of ['agents.ts','chat.ts']) {const src=fs.readFileSync(path.join(base,name),'utf8');assert(!/innerHTML|setAttribute\(['"]style/.test(src));}
   console.log('PASS settings-agents: exact section order, closed hook review, four key payloads, trust, lifecycle and disabled missing backends');
 })().catch(e=>{console.error(e);process.exitCode=1;});

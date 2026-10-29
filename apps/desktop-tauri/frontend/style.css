@@ -1416,6 +1416,9 @@ body #capsule:not([data-notice-view="notices"]) #notice-open { padding-inline: 6
 .sseg-btn:focus-visible { outline: 2px solid var(--go); outline-offset: 2px; }
 html[data-motion="reduce"] .sseg-btn { transition: none; }
 
+/* HU-063 (decision A): the question wins over an open chat; the chat stays visible but dimmed and unclickable (inert is set by island-nusa-mount.js) */
+#capsule[data-view="chat"]:is([data-question="pending"],[data-question="expired"],[data-question="outcome"],[data-card]) #chat { opacity: .45; pointer-events: none; }
+
 /* ---- #410 r2: the compact Conexiones LIST. One row per provider: name + status chip, the two
    connect words (API / Auth) from the view-model, and the row's own flow (code/URL) wrapped below.
    All rules live in the #410 compact block below, so the rail keeps its cascade position. */

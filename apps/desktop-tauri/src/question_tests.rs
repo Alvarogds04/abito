@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::{Identity, FRESH_MS};
+use crate::protocol::{Identity, CLOCK_SKEW_MS, FRESH_MS};
 use serde_json::{json, Value};
 
 const NOW: u64 = 100_000;
@@ -84,7 +84,7 @@ fn question_schema_scope_and_integer_timestamps_fail_closed() {
     }
     for (key, value) in [
         ("v", json!(2)), ("questionVersion", json!(2)), ("at", json!(100000.0)),
-        ("at", json!(0)), ("at", json!(-1)), ("at", json!(NOW+1)),
+        ("at", json!(0)), ("at", json!(-1)), ("at", json!(NOW+CLOCK_SKEW_MS+1)),
         ("at", json!(NOW-FRESH_MS-1)), ("at", json!(9_007_199_254_740_992u64)),
         ("project", json!("b".repeat(64))), ("project", json!("A".repeat(64))),
         ("sessionId", json!("other")), ("sessionId", json!("../path")),
@@ -146,7 +146,7 @@ fn question_raw_malformed_duplicate_keys_and_body_limit() {
     let padded = format!("{raw}{}", " ".repeat(4096-raw.len()));
     assert!(decode(padded.as_bytes(), &identity(), NOW).is_ok());
     assert!(decode(format!("{padded} ").as_bytes(), &identity(), NOW).is_err());
-    let newer = Identity { at: NOW as i64+1, ..identity() };
+    let newer = Identity { at: (NOW + CLOCK_SKEW_MS) as i64 + 1, ..identity() };
     assert!(decode(raw.as_bytes(), &newer, NOW).is_err());
     let mut bad_identity = identity(); bad_identity.project = "g".repeat(64);
     let mut frame = base("questions_hello"); frame["project"] = json!(bad_identity.project);
@@ -368,7 +368,7 @@ fn question_resolved_accepts_only_producer_status_and_exact_scoped_schema() {
             ("source", json!("human")), ("answer", json!({"type":"option","value":"main"})),
             ("questionVersion", json!(2)), ("v", json!(2)),
             ("project", json!("b".repeat(64))), ("sessionId", json!("other")),
-            ("at", json!(NOW+1)), ("at", json!(NOW-FRESH_MS-1)),
+            ("at", json!(NOW+CLOCK_SKEW_MS+1)), ("at", json!(NOW-FRESH_MS-1)),
             ("at", json!(100000.0)), ("id", json!("invalid-uuid")),
         ] {
             let mut invalid = frame.clone(); invalid[key] = value;
@@ -423,8 +423,8 @@ fn question_text_matches_producer_controls_and_ecmascript_trim_without_rewriting
 #[test]
 fn question_human_output_timestamp_cannot_precede_emitted_question() {
     let slot = slot();
-    assert_eq!(slot.prepare_answer(7, &identity(), ID, HumanAnswer::Option { index:0 }, NOW-1).unwrap_err(), Error::InvalidTimestamp);
-    assert_eq!(slot.prepare_decline(7, &identity(), ID, NOW-1).unwrap_err(), Error::InvalidTimestamp);
+    assert_eq!(slot.prepare_answer(7, &identity(), ID, HumanAnswer::Option { index:0 }, NOW-CLOCK_SKEW_MS-1).unwrap_err(), Error::InvalidTimestamp);
+    assert_eq!(slot.prepare_decline(7, &identity(), ID, NOW-CLOCK_SKEW_MS-1).unwrap_err(), Error::InvalidTimestamp);
     assert!(slot.active().is_some());
 }
 
@@ -837,4 +837,21 @@ fn free_text_limit_is_2000_legacy_and_4000_structured_and_the_answer_frame_stays
     let entry = |n: usize| ItemAnswer::Text { text: "🙂".repeat(n) };
     assert!(answer_body(&slot, HumanAnswer::Form { answers: vec![entry(900), entry(900), entry(900), entry(900)] }).is_ok());
     assert_eq!(answer_body(&slot, HumanAnswer::Form { answers: vec![entry(1100), entry(1100), entry(1100), entry(1100)] }).err(), Some(Error::FrameTooLarge));
+}
+
+#[test]
+fn clocks_of_two_processes_may_differ_by_a_few_ms_but_not_by_more() {
+    for skew in [20u64, 200, CLOCK_SKEW_MS] {
+        let mut ahead = question_value(); ahead["at"] = json!(NOW + skew); ahead["expiresAt"] = json!(NOW + skew + 30_000);
+        assert!(parse(&ahead).is_ok(), "a question stamped {skew} ms ahead of the island clock");
+        let slot = slot();
+        assert!(slot.prepare_decline(7, &identity(), ID, NOW - skew).is_ok(), "island {skew} ms behind the hook");
+    }
+    let mut far = question_value(); far["at"] = json!(NOW + CLOCK_SKEW_MS + 1);
+    assert!(parse(&far).is_err());
+    // the hello stamp is the hook's clock too: a question stamped a few ms before it is not a replay
+    let mut early = identity(); early.at = (NOW + 200) as i64;
+    assert!(decode(&serde_json::to_vec(&question_value()).unwrap(), &early, NOW).is_ok());
+    early.at = (NOW + CLOCK_SKEW_MS + 1) as i64;
+    assert!(decode(&serde_json::to_vec(&question_value()).unwrap(), &early, NOW).is_err());
 }
