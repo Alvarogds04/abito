@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const winfs = require('./win-fs.cjs');
 
 const MAX_FILE_BYTES = 256, MAX_AGE_MS = 14 * 24 * 3600 * 1000;
 
@@ -22,11 +23,20 @@ function stateDir(env) {
   if (typeof own === 'string' && path.isAbsolute(own) && path.normalize(own) === own) return own;
   const xdg = env && env.XDG_STATE_HOME;
   if (typeof xdg === 'string' && path.isAbsolute(xdg) && path.normalize(xdg) === xdg) return path.join(xdg, 'abito-island');
+  // Windows: the per-user local app data folder (no `.local/state`); Unix keeps the XDG-style default.
+  if (process.platform === 'win32' && env && typeof env.LOCALAPPDATA === 'string' && path.win32.isAbsolute(env.LOCALAPPDATA)) return path.win32.join(env.LOCALAPPDATA, 'Abito', 'state');
   const home = (env && env.HOME) || os.homedir();
   return typeof home === 'string' && path.isAbsolute(home) ? path.join(home, '.local', 'state', 'abito-island') : null;
 }
 const dirOf = (env, kind) => { const base = stateDir(env); return base ? path.join(base, kind) : null; };
 
+// Directories to create under the Windows state root, outermost first (the helper creates one level at a time under a private parent).
+function dirChain(dir, env) {
+  const local = env && env.LOCALAPPDATA;
+  const root = typeof local === 'string' && path.win32.isAbsolute(local) && dir.toLowerCase().startsWith(local.toLowerCase() + '\\') ? local : path.dirname(path.dirname(dir)), out = [];
+  for (let d = dir; d !== root && d !== path.dirname(d); d = path.dirname(d)) out.unshift(d);
+  return out;
+}
 function ensurePrivateDir(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const st = fs.lstatSync(dir);
@@ -42,9 +52,18 @@ function saveTitle(env, kind, sessionToken, rawTitle, now = Date.now()) {
   try {
     const dir = dirOf(env, kind), name = titleName(rawTitle);
     if (!dir || !name) return false;
+    const w = winfs.active();
+    const file = path.join(dir, sessionToken);
+    if (w) { // Windows (HU-047): the native helper owns directory creation, the private DACL and the write; no uid/mode on this path
+      for (const d of dirChain(dir, env)) w.makeDir(d);
+      if (!w.checkPath(file).parent_ok) return false;
+      const cur = w.readPrivate(file);
+      w.writePrivate(file, Buffer.from(name), cur ? cur.sha256 : null);
+      return true;
+    }
     ensurePrivateDir(dir);
     prune(dir, now);
-    const file = path.join(dir, sessionToken), tmp = `${file}.tmp-${process.pid}`;
+    const tmp = `${file}.tmp-${process.pid}`;
     fs.writeFileSync(tmp, name, { mode: 0o600, flag: 'w' });
     fs.renameSync(tmp, file);
     return true;
@@ -54,7 +73,10 @@ function loadTitle(env, kind, sessionToken) {
   try {
     const dir = dirOf(env, kind);
     if (!dir) return null;
-    const file = path.join(dir, sessionToken), st = fs.lstatSync(file);
+    const file = path.join(dir, sessionToken);
+    const w = winfs.active();
+    if (w) { const got = w.readPrivate(file); return got && got.size <= MAX_FILE_BYTES ? titleName(got.buf.toString('utf8')) : null; }
+    const st = fs.lstatSync(file);
     if (!st.isFile() || st.isSymbolicLink() || st.uid !== process.getuid() || (st.mode & 0o077) !== 0 || st.size > MAX_FILE_BYTES) return null;
     return titleName(fs.readFileSync(file, 'utf8'));
   } catch { return null; }

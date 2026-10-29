@@ -83,13 +83,15 @@ function readPrevious(home) {
 function previousShell({ platform = process.platform, env = process.env, exists } = {}) {
   if (platform !== 'win32') return { file: '/bin/sh', args: ['-c'] };
   const w = require('node:path').win32;
+  // Windows environment names are case-insensitive; a plain copy of process.env (spread, tests, a parent that rebuilds it) is not.
+  const get = name => { const k = Object.keys(env).find(x => x.toLowerCase() === name.toLowerCase()); return k === undefined ? undefined : env[k]; };
   const isFile = exists || (p => { try { return fs.statSync(p).isFile(); } catch { return false; } });
   const absolute = p => typeof p === 'string' && /^[A-Za-z]:\\/.test(p) && w.normalize(p) === p && !p.includes('\0');
   const candidates = [];
-  if (absolute(env.CLAUDE_CODE_GIT_BASH_PATH) && w.basename(env.CLAUDE_CODE_GIT_BASH_PATH).toLowerCase() === 'bash.exe') candidates.push(env.CLAUDE_CODE_GIT_BASH_PATH);
-  for (const root of [env.ProgramFiles, env['ProgramFiles(x86)']]) if (absolute(root)) candidates.push(w.join(root, 'Git', 'bin', 'bash.exe'));
+  if (absolute(get('CLAUDE_CODE_GIT_BASH_PATH')) && w.basename(get('CLAUDE_CODE_GIT_BASH_PATH')).toLowerCase() === 'bash.exe') candidates.push(get('CLAUDE_CODE_GIT_BASH_PATH'));
+  for (const root of [get('ProgramFiles'), get('ProgramFiles(x86)')]) if (absolute(root)) candidates.push(w.join(root, 'Git', 'bin', 'bash.exe'));
   for (const c of candidates) if (isFile(c)) return { file: c, args: ['-c'] };
-  const sysRoot = env.SystemRoot;
+  const sysRoot = get('SystemRoot');
   if (!absolute(sysRoot)) return null;
   const ps = w.join(sysRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   return isFile(ps) ? { file: ps, args: ['-NoProfile', '-NonInteractive', '-Command'] } : null;

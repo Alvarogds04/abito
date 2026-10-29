@@ -119,6 +119,8 @@ test('previousShell (Windows): Program Files then Program Files (x86), then Powe
 });
 test('Windows twin: the previous command really runs through Git Bash, and through PowerShell when no Git Bash is found', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
   assert.equal(runPrevious('cat', Buffer.from('hello'), 5000).toString(), 'hello');
-  const noGit = { ...process.env, CLAUDE_CODE_GIT_BASH_PATH: 'C:\\no\\such\\bash.exe', ProgramFiles: 'C:\\no-pf', 'ProgramFiles(x86)': 'C:\\no-pf86' };
+  const noGit = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(claude_code_git_bash_path|programfiles|programfiles\(x86\))$/i.test(k)));
+  Object.assign(noGit, { CLAUDE_CODE_GIT_BASH_PATH: 'C:\\no\\such\\bash.exe', ProgramFiles: 'C:\\no-pf', 'ProgramFiles(x86)': 'C:\\no-pf86' });
+  assert.match(previousShell({ platform: 'win32', env: noGit })?.file ?? '', /powershell\.exe$/i, 'PowerShell branch selected');
   assert.equal(runPrevious("Write-Output 'ps-ok'", Buffer.from(''), 15000, { env: noGit }).toString().trim(), 'ps-ok');
 });

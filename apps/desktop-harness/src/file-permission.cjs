@@ -37,10 +37,13 @@ function secret(s) {
   return r.redactions > 0 || /(?:^|\n)\s*(?:export\s+)?[A-Za-z_][\w]*\s*=/m.test(s) ||
     /(?:key|token|secret|password|credential|private|authorization)\s*["']?\s*[:=]/i.test(s) || /PRIVATE KEY/.test(s);
 }
-function sensitivePath(p) {
+// Dot-directories that hold credentials or control tooling. Windows: either separator and case-insensitive (NTFS is);
+// elsewhere the Unix rule is unchanged ('/' only, case-sensitive). `platform` is a test seam.
+const DOT_DIRS = { win32: /(?:^|[\\/])\.(?:ssh|claude|codex|config|git)(?:[\\/]|$)/i, posix: /(?:^|\/)\.(?:ssh|claude|codex|config|git)(?:\/|$)/ };
+function sensitivePath(p, platform = process.platform) {
   const home = os.homedir();
   return touchesCredentialPath(p) || inside('/etc', p) ||
-    /(?:^|[\\/])\.(?:ssh|claude|codex|config|git)(?:[\\/]|$)/.test(p) ||
+    (platform === 'win32' ? DOT_DIRS.win32 : DOT_DIRS.posix).test(p) ||
     (inside(home, p) && path.relative(home, p).startsWith('.'));
 }
 function describeFilePermission(name, input, cwd) {

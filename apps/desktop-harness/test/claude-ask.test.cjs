@@ -4,7 +4,7 @@
 // ONE PermissionRequest handler dispatches by tool_name (see claude.cjs); the old PreToolUse question path is gone.
 // Fake receiver + stub clients only; nothing here reads or writes the real ~/.claude or the live island.
 const { test } = require('node:test');
-const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
+const { offlineEnv, offlineDir, stubEndpoint, assertMode } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -133,10 +133,8 @@ test('SessionStart caches the title privately and prints nothing; the next quest
   assert.deepEqual(r, { stdout: '', stderr: '', exitCode: 0 });
   const dir = path.join(state, 'claude-titles');
   const files = fs.readdirSync(dir); assert.equal(files.length, 1);
-  if (process.platform !== 'win32') { // Unix mode bits; the Windows privacy mechanism is a DACL (registered gap HU-062: title cache has no helper-backed twin yet)
-    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
-    assert.equal(fs.statSync(path.join(dir, files[0])).mode & 0o777, 0o600);
-  }
+  assertMode(dir, 0o700); // Windows twin inside assertMode: the helper reports the directory/file as private to the user
+  assertMode(path.join(dir, files[0]), 0o600);
   const p = answerer(rcv, 'o0');
   await handleClaudeHook({ event: 'permission-request', input: perm(), env, argv: [] }); await p;
   assert.equal(rcv.frames.find(f => f.type === 'question').projectName, 'Migrar la base');

@@ -1,5 +1,5 @@
 'use strict';
-const { tmpBase } = require('./platform-env.cjs');
+const { tmpBase, assertMode, unixOnly } = require('./platform-env.cjs');
 // Unit tests for src/install-ui.cjs (plan hash, preview JSON, guards, audit log). Temp dirs only; the real ~/.claude and ~/.codex are never touched.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -142,7 +142,7 @@ test('refusals are one fixed JSON line with the right exit code and never echo t
   }
 });
 
-test('island guard: needs ABITO_ISLAND_EXE equal to the parent executable', () => {
+test('island guard: needs ABITO_ISLAND_EXE equal to the parent executable', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), () => {
   const exe = fs.realpathSync(process.execPath);
   const ok = ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => exe);
   assert.equal(ok, true);
@@ -170,9 +170,9 @@ test('audit log: creates dir 0700 and file 0600, appends lines, refuses unsafe d
   const dir = path.join(d, 'audit');
   ui.appendAudit(dir, { ts: 1, event: 'intent' });
   ui.appendAudit(dir, { ts: 2, event: 'result' });
-  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assertMode(dir, 0o700);
   const f = path.join(dir, 'hook-installs.jsonl');
-  assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+  assertMode(f, 0o600);
   assert.deepEqual(fs.readFileSync(f, 'utf8').trim().split('\n').map(l => JSON.parse(l).ts), [1, 2]);
   const link = path.join(d, 'link'); fs.symlinkSync(dir, link);
   assert.throws(() => ui.appendAudit(link, {}));
@@ -217,7 +217,7 @@ test('backup name collision: same-millisecond backup gets a -1..-9 suffix, 0600,
   const hash = (await preview('claude', w.p)).plan_hash;
   const r = await applyVia('claude', w.p, w.audit, hash, { now });
   assert.equal(r.code, 0, r.lines[0]); assert.equal(r.json.backup, base + '-2');
-  assert.equal(fs.statSync(r.json.backup).mode & 0o777, 0o600);
+  assertMode(r.json.backup, 0o600);
   assert.equal(fs.readFileSync(base, 'utf8'), 'squatter'); assert.equal(fs.existsSync(path.join(w.d, 'nowhere')), false);
   assert.equal(auditLines(w.audit)[1].backup, base + '-2');
 });
@@ -239,13 +239,13 @@ test('TTY backupPathFor keeps the historical name', () => {
 const aged = (p, secs = 60) => { const when = (Date.now() - secs * 1000) / 1000; fs.lutimesSync(p, when, when); };
 const lockPath = p => path.join(path.dirname(p), '.' + path.basename(p) + '.abito-lock');
 
-test('lock: planted regular file older than 30 s is unlinked and the lock taken', async t => {
+test('lock: planted regular file older than 30 s is unlinked and the lock taken', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
   const w = world(t); fs.writeFileSync(lockPath(w.p), 'junk'); aged(lockPath(w.p));
   const hash = (await preview('claude', w.p)).plan_hash;
   const r = await applyVia('claude', w.p, w.audit, hash, { lockWaitMs: 300 });
   assert.equal(r.code, 0, r.lines[0]); assert.equal(fs.existsSync(lockPath(w.p)), false);
 });
-test('lock: planted symlink older than 30 s is unlinked, never followed', async t => {
+test('lock: planted symlink older than 30 s is unlinked, never followed', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
   const w = world(t); const victim = path.join(w.d, 'victim'); fs.mkdirSync(victim); fs.writeFileSync(path.join(victim, 'keep'), 'k');
   fs.symlinkSync(victim, lockPath(w.p)); aged(lockPath(w.p));
   const hash = (await preview('claude', w.p)).plan_hash;
@@ -253,7 +253,7 @@ test('lock: planted symlink older than 30 s is unlinked, never followed', async 
   assert.equal(r.code, 0, r.lines[0]); assert.equal(fs.existsSync(lockPath(w.p)), false);
   assert.equal(fs.readFileSync(path.join(victim, 'keep'), 'utf8'), 'k');
 });
-test('lock: planted young file or symlink => busy, nothing written', async t => {
+test('lock: planted young file or symlink => busy, nothing written', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
   for (const kind of ['file', 'symlink']) {
     const w = world(t);
     if (kind === 'file') fs.writeFileSync(lockPath(w.p), 'junk'); else fs.symlinkSync(path.join(w.d, 'nowhere'), lockPath(w.p));
@@ -282,7 +282,7 @@ test('lock: releaseLock removes the lock only while the owner token still matche
   fs.rmSync(a.dir, { recursive: true });
   const b = ui.acquireLock(target, 100); assert.ok(b); ui.releaseLock(b); assert.equal(fs.existsSync(b.dir), false);
 });
-test('lock: unwritable settings directory => not_writable (65), not busy', async t => {
+test('lock: unwritable settings directory => not_writable (65), not busy', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
   if (process.getuid?.() === 0) return t.skip('root ignores permission bits');
   const w = world(t); const hash = (await preview('claude', w.p)).plan_hash;
   fs.chmodSync(w.d, 0o500);
@@ -305,7 +305,7 @@ test('refusals after argument validation append a refused audit line; exit codes
   r = await applyVia('claude', w.p, w.audit, good, { lockWaitMs: 100, env: { ABITO_ISLAND_EXE: EXE } });
   assert.equal(r.code, 0);
 });
-test('refused audit line is never written for usage errors or an invalid audit dir, and never changes the exit', async t => {
+test('refused audit line is never written for usage errors or an invalid audit dir, and never changes the exit', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
   const w = world(t); const hash = (await preview('claude', w.p)).plan_hash;
   let r = await run(['claude', '--settings', w.p, '--apply-plan', 'zz', '--audit-dir', w.audit, '--json'], applyOpts());
   assert.equal(r.code, 64); assert.equal(fs.existsSync(path.join(w.audit, 'hook-installs.jsonl')), false);
@@ -320,14 +320,14 @@ test('refused audit line is never written for usage errors or an invalid audit d
   assert.equal(r.code, 70); assert.equal(fs.existsSync(path.join(w.audit, 'hook-installs.jsonl')), false);
 });
 
-test('audit rotation: > 1 MiB rotates to hook-installs.jsonl.1 (replaced, 0600) before appending', t => {
+test('audit rotation: > 1 MiB rotates to hook-installs.jsonl.1 (replaced, 0600) before appending', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), t => {
   const d = tmp(t); const dir = path.join(d, 'audit'); fs.mkdirSync(dir, { mode: 0o700 });
   const f = path.join(dir, 'hook-installs.jsonl'); const f1 = f + '.1';
   fs.writeFileSync(f1, 'old-generation\n', { mode: 0o644 });
   fs.writeFileSync(f, '{"ts":0}\n'.repeat(Math.ceil((1024 * 1024 + 1) / 9)), { mode: 0o600 });
   ui.appendAudit(dir, { ts: 7, event: 'intent' });
-  assert.ok(fs.statSync(f1).size > 1024 * 1024); assert.equal(fs.statSync(f1).mode & 0o777, 0o600);
-  assert.equal(fs.readFileSync(f, 'utf8'), '{"ts":7,"event":"intent"}\n'); assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+  assert.ok(fs.statSync(f1).size > 1024 * 1024); assertMode(f1, 0o600);
+  assert.equal(fs.readFileSync(f, 'utf8'), '{"ts":7,"event":"intent"}\n'); assertMode(f, 0o600);
   ui.appendAudit(dir, { ts: 8 }); assert.equal(fs.readFileSync(f, 'utf8').trim().split('\n').length, 2); // below the cap: no rotation
 });
 
@@ -358,7 +358,7 @@ for (const harness of ['recap', 'statusline']) test(`${harness}: user preview, b
   assert.equal(fs.readFileSync(r.json.backup, 'utf8'), original);
   if (harness === 'statusline') {
     const saved = path.join(d, '.abito/statusline-previous.json');
-    assert.equal(fs.statSync(saved).mode & 0o777, 0o600);
+    assertMode(saved, 0o600);
     assert.equal(JSON.parse(fs.readFileSync(saved)).command, 'mine');
   }
   assert.equal((await call([])).json.changed, false);
@@ -374,5 +374,5 @@ for (const harness of ['recap', 'statusline']) test(`${harness}: user preview, b
 test('BIN path constant in preview is this package bin', async t => {
   const d = tmp(t); const p = path.join(d, 'settings.json');
   const r = await run(['claude', '--settings', p, '--json']);
-  assert.ok(r.lines[0].includes(JSON.stringify(BIN).slice(1, -1)) || r.json.diff.lines.some(l => l.includes(BIN)));
+  assert.ok(r.lines[0].includes(JSON.stringify(BIN).slice(1, -1)) || r.json.diff.lines.some(l => l.includes(BIN)) || r.lines[0].includes(JSON.stringify(JSON.stringify(BIN).slice(1, -1)).slice(1, -1)));
 });

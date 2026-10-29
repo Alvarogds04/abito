@@ -80,13 +80,20 @@ test('R13 permitted setMode, exact file and directory entries echo unchanged', a
   // A canonical directory: macOS `/tmp` is a symlink to `/private/tmp` and the product refuses non-canonical paths (fail closed).
   // Short on purpose: the product drops a suggestion whose description exceeds 160 characters, and macOS's per-user tmpdir
   // (/private/var/folders/xx/.../T) pushes the third entry over that limit (run 40751626543). realpath('/tmp') is /private/tmp there.
-  const dir = require('node:fs').realpathSync('/tmp');
-  const file = `${dir}/r13-example.txt`;
+  const win = process.platform === 'win32';
+  const dir = win ? require('./platform-env.cjs').tmpBase() : require('node:fs').realpathSync('/tmp');
+  const file = win ? `${dir}\\r13-example.txt` : `${dir}/r13-example.txt`;
   for (const entry of [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' },
     { type: 'addRules', rules: [{ toolName: 'Write', ruleContent: file }], behavior: 'allow', destination: 'session' },
-    { type: 'addRules', rules: [{ toolName: 'Write', ruleContent: '/' + file }], behavior: 'allow', destination: 'localSettings' }]) {
+    // Claude's `//absolute` rule form and the `cd /dir` directory entry are POSIX path syntaxes: not offered for Windows paths (fail closed).
+    ...(win ? [] : [{ type: 'addRules', rules: [{ toolName: 'Write', ruleContent: '/' + file }], behavior: 'allow', destination: 'localSettings' }])]) {
     const { question, result } = await run([entry], 'allow_suggestion_1', { cwd: dir, tool_name: 'Write', tool_input: { file_path: file, content: 'hello' } });
     assert.equal(question.options.length, 3); assert.deepEqual(decision(result).updatedPermissions, [entry]);
+  }
+  if (win) { // Windows twin: a `cd C:\\dir` command offers NO directory suggestion (only the main allow/deny pair)
+    const r = await run([{ type: 'addDirectories', directories: [dir], destination: 'session' }], 'allow', { tool_input: { command: `cd ${dir}` } });
+    assert.deepEqual(r.question.options.map(o => o.value), ['allow', 'deny']);
+    return;
   }
   const entry = { type: 'addDirectories', directories: [dir], destination: 'session' };
   const r = await run([entry], 'allow_suggestion_1', { tool_input: { command: `cd ${dir}` } });

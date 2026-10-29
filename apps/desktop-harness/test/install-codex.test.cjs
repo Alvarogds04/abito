@@ -1,5 +1,5 @@
 'use strict';
-const { tmpBase } = require('./platform-env.cjs');
+const { tmpBase, assertMode, unixOnly } = require('./platform-env.cjs');
 // Temp dirs only (mkdtemp under tmpBase()); the real ~/.codex is never touched.
 // S4/T2 (human L3, option A): the installed entries are NOTICE-ONLY — PermissionRequest (notice), PreToolUse with matcher
 // `request_user_input` (plan-mode questions, notice) and Stop (finished notice + the clearing frame). No entry asks the
@@ -139,7 +139,7 @@ test('identification works when the bin path contains quotes', t => {
   assert.equal(JSON.parse(plan(p, { binPath: bin, remove: true }).after).hooks, undefined);
 });
 
-test('shell quoting matrix through a real sh -c: each path is one intact argument, nothing else runs', t => {
+test('shell quoting matrix through a real sh -c: each path is one intact argument, nothing else runs', unixOnly('POSIX sh quoting of paths with glob/quote characters; Windows paths cannot contain them and are quoted by quoteWindowsCommandPath, covered by win-fs.test.cjs'), t => {
   const d = tmp(t);
   const names = ['a b', "it's", 'dollar$HOME', 'back`id`tick', 'semi;touch PWN', 'amp&touch PWN2', 'ünï©ode', "q'';'", '$(touch PWN3)', '*glob?'];
   for (const n of names) {
@@ -192,7 +192,7 @@ test('apply refused without TTY (77); wrong/empty word aborts; right word writes
   const names = ls(d); assert.equal(names.length, 2);
   const bk = path.join(d, names[1]);
   assert.ok(names[1].startsWith('hooks.json.abito-backup-'));
-  assert.equal(fs.statSync(bk).mode & 0o777, 0o600);
+  assertMode(bk, 0o600);
   assert.equal(fs.readFileSync(bk, 'utf8'), FIX);
   assert.match(r.out, /\/hooks/);
   assert.ok(!/dangerously/i.test(r.out));

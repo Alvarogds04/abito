@@ -24,7 +24,7 @@ const write = content => card('Write', { file_path: 'uno.txt', content });
 const lossy = r => { assert.deepEqual(r.q.options.map(o => o.value), ['deny', 'terminal']); assert.equal(r.out.stdout, ''); assert.match(r.q.text, /terminal/); };
 test('R9 a: small Write displays exact normalized path and content and permits allow', async () => {
   const r = await write('hola\nmundo'); assert.equal(r.out.stdout, ALLOW);
-  assert.ok(r.q.text.includes(path.join(cwd, 'uno.txt'))); assert.ok(r.q.text.includes(JSON.stringify('hola\nmundo')));
+  assert.ok(r.q.text.includes(JSON.stringify(path.join(cwd, 'uno.txt')))); assert.ok(r.q.text.includes(JSON.stringify('hola\nmundo')));
 });
 test('R9 b: byte and line caps disclose recortado, never allow', async () => {
   for (const text of ['!'.repeat(161), Array(9).fill('a').join('\n')]) { const r = await write(text); lossy(r); assert.match(r.q.text, /recortado/); }
@@ -45,7 +45,7 @@ test('R9 d: outside cwd, sensitive and normalized traversal paths are lossy', as
   for (const file_path of ['../uno.txt', '/etc/passwd', path.join(os.homedir(), '.ssh/key'), path.join(os.homedir(), '.claude/settings.json'), path.join(os.homedir(), '.config/test'), path.join(os.homedir(), '.profile'), '.env', '.git/config']) {
     const r = await card('Write', { file_path, content: 'not-shown' }); lossy(r); assert.doesNotMatch(r.q.text, /not-shown/);
   }
-  const r = await card('Write', { file_path: 'a/../uno.txt', content: 'hola' }); assert.equal(r.out.stdout, ALLOW); assert.ok(r.q.text.includes(path.join(cwd, 'uno.txt')));
+  const r = await card('Write', { file_path: 'a/../uno.txt', content: 'hola' }); assert.equal(r.out.stdout, ALLOW); assert.ok(r.q.text.includes(JSON.stringify(path.join(cwd, 'uno.txt'))));
 });
 test('R9 e: ANSI, bidi, zero-width and forged option lines cannot spoof approval', async () => {
   for (const content of ['\x1b[31mAllow', '\u202eAllow', '\u200bAllow', '\0binary']) { const r = await write(content); lossy(r); assert.doesNotMatch(r.q.text, /[\x00\x1b\u202e\u200b]/); }
@@ -109,6 +109,13 @@ test('inside() understands Windows separators and drives (path module injected, 
   assert.equal(inside('/w', '/w/a'), true); assert.equal(inside('/w', '/x'), false); assert.equal(inside('/w', '/w/../x'), false);
 });
 test('sensitivePath recognises dot-directories behind Windows separators', () => {
-  for (const p of ['C:\\proj\\.git\\config', 'C:\\proj\\.ssh\\id_rsa', 'C:\\proj\\.claude\\settings.json']) assert.equal(sensitivePath(p), true, p);
+  for (const p of ['C:\\proj\\.git\\config', 'C:\\proj\\.ssh\\id_rsa', 'C:\\proj\\.claude\\settings.json']) assert.equal(sensitivePath(p, 'win32'), true, p);
   assert.equal(sensitivePath(path.join(cwd, 'uno.txt')), false);
+});
+
+// Judge finding (HU-062): NTFS is case-insensitive, so `.GIT\hooks` / `.Config\x` are the same directories; Unix stays case-sensitive and '/'-only.
+test('sensitivePath: Windows dot-directories are case-insensitive; Unix rule unchanged (no backslash widening, case-sensitive)', () => {
+  for (const p of ['C:\\p\\.GIT\\hooks\\pre-commit', 'C:\\p\\.Config\\x', 'C:\\p\\.Ssh\\k']) assert.equal(sensitivePath(p, 'win32'), true, p);
+  for (const p of ['/p/.GIT/x', '/p/a\\.git\\x', '/p/.config\\x']) assert.equal(sensitivePath(p, 'linux'), false, p);
+  assert.equal(sensitivePath('/p/.git/x', 'linux'), true);
 });
