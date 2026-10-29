@@ -1,10 +1,13 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { handleClaudeHook, ALLOW, DENY } = require('../src/claude.cjs');
+const { viaPipe } = require('./fake-receiver.cjs');
+const { handleClaudeHook: raw_handleClaudeHook, ALLOW, DENY } = require('../src/claude.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
 const cwd = path.resolve(__dirname, '..');
-const TEST_ENV = { ABITO_SOCKET_DIR: '/nonexistent-r13', ABITO_DESKTOP_SOCKET: '/nonexistent-r13/p-abcdef/s' };
+const TEST_ENV = offlineEnv('nonexistent-r13');
 const rule = (destination = 'session', ruleContent = 'ls') => ({ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent }], behavior: 'allow', destination });
 async function run(suggestions, value = 'deny', over = {}, mutate) {
   let question;
@@ -74,15 +77,26 @@ test('R13 g: ordinary allow/deny remain byte-identical even with suggestions', a
   for (const [v, out] of [['allow', ALLOW], ['deny', DENY], ['terminal', '']]) assert.equal((await run([rule()], v)).result.stdout, out);
 });
 test('R13 permitted setMode, exact file and directory entries echo unchanged', async () => {
-  const file = '/tmp/r13-example.txt';
+  // A canonical directory: macOS `/tmp` is a symlink to `/private/tmp` and the product refuses non-canonical paths (fail closed).
+  // Short on purpose: the product drops a suggestion whose description exceeds 160 characters, and macOS's per-user tmpdir
+  // (/private/var/folders/xx/.../T) pushes the third entry over that limit (run 40751626543). realpath('/tmp') is /private/tmp there.
+  const win = process.platform === 'win32';
+  const dir = win ? require('./platform-env.cjs').tmpBase() : require('node:fs').realpathSync('/tmp');
+  const file = win ? `${dir}\\r13-example.txt` : `${dir}/r13-example.txt`;
   for (const entry of [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' },
     { type: 'addRules', rules: [{ toolName: 'Write', ruleContent: file }], behavior: 'allow', destination: 'session' },
-    { type: 'addRules', rules: [{ toolName: 'Write', ruleContent: '/' + file }], behavior: 'allow', destination: 'localSettings' }]) {
-    const { question, result } = await run([entry], 'allow_suggestion_1', { cwd: '/tmp', tool_name: 'Write', tool_input: { file_path: file, content: 'hello' } });
+    // Claude's `//absolute` rule form and the `cd /dir` directory entry are POSIX path syntaxes: not offered for Windows paths (fail closed).
+    ...(win ? [] : [{ type: 'addRules', rules: [{ toolName: 'Write', ruleContent: '/' + file }], behavior: 'allow', destination: 'localSettings' }])]) {
+    const { question, result } = await run([entry], 'allow_suggestion_1', { cwd: dir, tool_name: 'Write', tool_input: { file_path: file, content: 'hello' } });
     assert.equal(question.options.length, 3); assert.deepEqual(decision(result).updatedPermissions, [entry]);
   }
-  const entry = { type: 'addDirectories', directories: ['/tmp'], destination: 'session' };
-  const r = await run([entry], 'allow_suggestion_1', { tool_input: { command: 'cd /tmp' } });
+  if (win) { // Windows twin: a `cd C:\\dir` command offers NO directory suggestion (only the main allow/deny pair)
+    const r = await run([{ type: 'addDirectories', directories: [dir], destination: 'session' }], 'allow', { tool_input: { command: `cd ${dir}` } });
+    assert.deepEqual(r.question.options.map(o => o.value), ['allow', 'deny']);
+    return;
+  }
+  const entry = { type: 'addDirectories', directories: [dir], destination: 'session' };
+  const r = await run([entry], 'allow_suggestion_1', { tool_input: { command: `cd ${dir}` } });
   assert.deepEqual(decision(r.result).updatedPermissions, [entry]);
 });
 test('R13 wire exposes only derived options, fixed tokens; real QP/1 selection echoes original', async t => {
