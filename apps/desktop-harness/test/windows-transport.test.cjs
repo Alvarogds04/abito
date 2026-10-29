@@ -68,7 +68,7 @@ test('windows config: explicit ABITO_DESKTOP_SOCKET override keeps the relay met
 });
 test('linux config behaviour is unchanged (same function, default platform)', () => {
   assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false }),
-    { runtime: '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
+    { runtime: process.platform === 'darwin' ? require('node:fs').realpathSync(require('node:os').tmpdir()) + '/abito-island' : '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
   assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: '/nonexistent/abito-windows-test' }, undefined));
 });
 

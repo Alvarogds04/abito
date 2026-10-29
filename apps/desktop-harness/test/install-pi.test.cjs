@@ -84,6 +84,26 @@ test('Pi refuses foreign targets and symlinks without touching their bytes', t =
 
 // HU-052: a hand-copied extension (no manifest) is refused with its OWN code and sentence, never adopted and never touched.
 const FOREIGN_SENTENCE = 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.';
+// HU-047: a folder another user or group can change is refused with its own code, naming THAT folder and the exact chmod.
+test('Pi names the exact group-writable folder and the chmod that fixes it (preview and apply)', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); fs.mkdirSync(path.dirname(f.target), { recursive: true, mode: 0o700 });
+  const dir = path.dirname(f.target); fs.chmodSync(dir, 0o775);
+  const before = snapshot(f.home);
+  for (const args of [[], ['--remove']]) {
+    const r = f.run(...args);
+    assert.equal(r.code, 65); assert.equal(r.value.ok, false);
+    assert.equal(r.value.code, 'unsafe_folder');
+    assert.equal(r.value.message, `La carpeta ${dir} la puede modificar otro usuario o grupo; quitale el permiso de escritura (chmod g-w,o-w ${dir}) y volvé a intentar.`);
+  }
+  assert.deepEqual(snapshot(f.home), before);
+  fs.chmodSync(dir, 0o700);
+  assert.equal(f.run().code, 0, 'after the fix the install plans normally');
+});
+test('Pi keeps the generic refusal for a symlinked folder (not a permission problem)', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); fs.mkdirSync(path.join(f.home, 'real'), { mode: 0o700 }); fs.symlinkSync(path.join(f.home, 'real'), path.join(f.home, '.pi'));
+  const r = f.run(); assert.equal(r.code, 65); assert.equal(r.value.code, 'refused');
+});
+
 test('Pi names a hand-copied extension folder (no manifest) as foreign_extension, preview and apply, and never touches it', t => {
   const f = fixture(t); fs.mkdirSync(f.target, { recursive: true, mode: 0o700 });
   // the layout of the real pre-release hand copy: other file names, a SOURCE_COMMIT, no manifest
@@ -99,7 +119,7 @@ test('Pi names a hand-copied extension folder (no manifest) as foreign_extension
 });
 
 test('Pi keeps the generic refusal for a symlink target and for a modified Abito copy (only a folder WITHOUT a manifest is foreign_extension)', t => {
-  const f = fixture(t); fs.mkdirSync(path.dirname(f.target), { recursive: true });
+  const f = fixture(t); for (const d of ['.pi', '.pi/agent', '.pi/agent/extensions']) fs.mkdirSync(path.join(f.home, d), { mode: 0o700 }); // private folders: only the link is the problem
   const other = path.join(f.home, 'other'); fs.mkdirSync(other); fs.symlinkSync(other, f.target);
   assert.equal(f.run().value.code, 'refused');
   const g = fixture(t); assert.equal(g.apply(g.run().value.plan_hash).code, 0);
@@ -245,4 +265,29 @@ test('Pi upgrades an older owned payload with backup and refuses modified or unl
   fs.appendFileSync(file, '\n// user-modified');
   const changed = snapshot(f.target), refused = f.run('--remove');
   assert.equal(refused.code, 65); assert.deepEqual(snapshot(f.target), changed);
+});
+
+test('a folder owned by someone else gets its own sentence, naming the folder and NOT suggesting a chmod that cannot fix it', () => {
+  const { unsafeFolderMessage } = require('../src/install-ui.cjs');
+  const m = unsafeFolderMessage({ dir: '/home/a b/.pi', reason: 'foreign_owner' });
+  assert.match(m, /^La carpeta \/home\/a b\/\.pi pertenece a otro usuario/); assert.doesNotMatch(m, /chmod/);
+  assert.match(unsafeFolderMessage({ dir: '/home/a b/.pi', reason: 'writable' }), /chmod g-w,o-w '\/home\/a b\/\.pi'/);
+});
+
+// HU-047 L2: a failure after the installer created folders leaves none of them behind (only ones THIS run made, only if empty).
+test('Pi apply that fails after creating ~/.pi/agent/... removes the empty folders it made and nothing else', { skip: process.platform === 'win32' }, async t => {
+  const run = async (f, existing) => {
+    const home = f.home, pi = require(path.join(f.bundle, 'desktop-harness/src/install-pi.cjs'));
+    for (const d of existing) fs.mkdirSync(path.join(home, d), { mode: 0o700 });
+    const plan = pi.planPi({ home, uid: process.getuid(), remove: false, execPath: process.execPath, binPath: '/x' });
+    const real = fs.chmodSync; let n = 0;
+    fs.chmodSync = (...a) => { if (n++ === 0) throw new Error('boom'); return real(...a); }; // the staging step fails, after every folder exists
+    try { return await pi.applyPi(plan, { backupPath: plan.backupRoot + '/b', out() {}, err() {} }); } finally { fs.chmodSync = real; }
+  };
+  const a = fixture(t); assert.equal(await run(a, []), 70);
+  assert.equal(fs.existsSync(path.join(a.home, '.pi')), false, 'no empty .pi left');
+  const b = fixture(t); assert.equal(await run(b, ['.pi', '.pi/agent']), 70);
+  assert.equal(fs.existsSync(path.join(b.home, '.pi/agent')), true, 'a folder that already existed stays');
+  assert.equal(fs.existsSync(path.join(b.home, '.pi/agent/extensions')), false, 'the one this run made goes');
+  assert.equal(fs.existsSync(path.join(b.home, '.pi/agent/abito-backups')), false);
 });

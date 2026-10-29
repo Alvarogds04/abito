@@ -24,7 +24,7 @@ const SECRET = "sk-fake-SECRET-2468-DO-NOT-LEAK";
 const SECRET_MARKERS = [SECRET, "sk-fake-SECRET", "FAKE-INTERNAL-DETAIL"];
 
 function tempRoot() {
-	return mkdtempSync(path.join(os.tmpdir(), "abito-auth-test-"));
+	return mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-auth-test-"));
 }
 
 function fixtureHelper(accountsRoot, extraEnv = {}) {
