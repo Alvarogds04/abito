@@ -1,11 +1,12 @@
 'use strict';
 const { test } = require('node:test');
+const { unixOnly } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { extractPlan, writeChannel, readPrevious, channelPath, previousPath, runPrevious } = require('../src/statusline.cjs');
+const { extractPlan, writeChannel, readPrevious, channelPath, previousPath, runPrevious, previousShell } = require('../src/statusline.cjs');
 
 const NOW = 1_800_000_000_000;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'abito-sl-'));
@@ -29,7 +30,7 @@ test('no limits, bad numbers or ms-in-disguise epochs give null', () => {
   }
 });
 
-test('the channel is written 0600 atomically and holds the plan only', () => {
+test('the channel is written 0600 atomically and holds the plan only', unixOnly('registered gap HU-062 (0600 channel privacy is the island runtime DACL on Windows)'), () => {
   const rt = tmp();
   const plan = extractPlan({ rate_limits: { five_hour: { used_percentage: 1, resets_at: 1_800_003_600 } } }, NOW);
   assert.equal(writeChannel(rt, plan), true);
@@ -91,4 +92,35 @@ test('garbage input or no runtime never fails the status line', () => {
   const r = spawnSync(process.execPath, [BIN], { input: 'not json', env: { PATH: process.env.PATH, HOME: tmp(), ABITO_SOCKET_DIR: '/nonexistent-abito-dir/x' }, encoding: 'utf8' });
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '');
+});
+
+// HU-062: the previous status line runs the way Claude Code runs it on each OS (docs: https://code.claude.com/docs/en/statusline,
+// «Windows configuration»: Git Bash when installed, PowerShell otherwise). Pure resolver, platform + environment injected.
+const W = { SystemRoot: 'C:\\Windows', ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' };
+const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const only = (...files) => p => files.includes(p);
+test('previousShell: Unix keeps /bin/sh -c', () => {
+  for (const platform of ['linux', 'darwin']) assert.deepEqual(previousShell({ platform, env: {} }), { file: '/bin/sh', args: ['-c'] });
+});
+test('previousShell (Windows): CLAUDE_CODE_GIT_BASH_PATH first, only if absolute and an existing bash.exe', () => {
+  const custom = 'D:\\tools\\git\\bin\\bash.exe';
+  const exists = only(custom, 'C:\\Program Files\\Git\\bin\\bash.exe');
+  assert.deepEqual(previousShell({ platform: 'win32', env: { ...W, CLAUDE_CODE_GIT_BASH_PATH: custom }, exists }), { file: custom, args: ['-c'] });
+  for (const bad of ['bash.exe', '..\\bash.exe', 'D:\\tools\\git\\bin\\evil.exe', 'D:\\missing\\bash.exe', '\\\\srv\\s\\bash.exe', '']) {
+    assert.deepEqual(previousShell({ platform: 'win32', env: { ...W, CLAUDE_CODE_GIT_BASH_PATH: bad }, exists }), { file: 'C:\\Program Files\\Git\\bin\\bash.exe', args: ['-c'] }, bad);
+  }
+});
+test('previousShell (Windows): Program Files then Program Files (x86), then PowerShell by absolute path; never PATH', () => {
+  const x86 = 'C:\\Program Files (x86)\\Git\\bin\\bash.exe';
+  assert.deepEqual(previousShell({ platform: 'win32', env: W, exists: only(x86) }), { file: x86, args: ['-c'] });
+  assert.deepEqual(previousShell({ platform: 'win32', env: { ...W, PATH: 'C:\\evil' }, exists: only(PS) }), { file: PS, args: ['-NoProfile', '-NonInteractive', '-Command'] });
+  assert.equal(previousShell({ platform: 'win32', env: { ...W, SystemRoot: 'relative' }, exists: () => false }), null, 'no absolute SystemRoot => nothing runs');
+  assert.equal(previousShell({ platform: 'win32', env: W, exists: () => false }), null, 'nothing found => nothing runs');
+});
+test('Windows twin: the previous command really runs through Git Bash, and through PowerShell when no Git Bash is found', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
+  assert.equal(runPrevious('cat', Buffer.from('hello'), 5000).toString(), 'hello');
+  const noGit = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(claude_code_git_bash_path|programfiles|programfiles\(x86\))$/i.test(k)));
+  Object.assign(noGit, { CLAUDE_CODE_GIT_BASH_PATH: 'C:\\no\\such\\bash.exe', ProgramFiles: 'C:\\no-pf', 'ProgramFiles(x86)': 'C:\\no-pf86' });
+  assert.match(previousShell({ platform: 'win32', env: noGit })?.file ?? '', /powershell\.exe$/i, 'PowerShell branch selected');
+  assert.equal(runPrevious("Write-Output 'ps-ok'", Buffer.from(''), 15000, { env: noGit }).toString().trim(), 'ps-ok');
 });

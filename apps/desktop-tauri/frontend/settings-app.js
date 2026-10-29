@@ -49,8 +49,8 @@ const invoke = (command, args) => {
   // Dormant until Product/Pestañas-activas is re-enabled; never alter the stored main pill from Settings.
   if (command === 'prefs_action' && args?.payload?.action === 'set_main_pill') return Promise.reject(new Error('No disponible'));
   if (command === 'daemon_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || args.payload.action !== 'restart')) return Promise.reject(new Error('No disponible'));
-  // HU-046: exactly {action:'run'|'status'|'open_node'}: no package, path or URL from the page
-  if (command === 'pi_install_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['run', 'status', 'open_node'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
+  // HU-046: exactly {action:'run'|'status'|'open_node'|'install_node'|'check_node'}: no package, path or URL from the page
+  if (command === 'pi_install_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['run', 'status', 'open_node', 'install_node', 'check_node'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
   if (command === 'plan_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['claude', 'codex'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
   if (command === 'recap_action') {
     const p = args?.payload;
