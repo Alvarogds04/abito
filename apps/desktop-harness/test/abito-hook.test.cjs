@@ -106,7 +106,8 @@ test('e2e AskUserQuestion: the island answer travels in decision.allow + updated
   const p = answer(rcv, 'o1');
   const r = await run(['claude', 'permission-request'], askInput, envOf(rcv));
   await p;
-  assert.equal(r.code, 0); oneLineOrEmpty(r.stdout);
+  assert.equal(r.code, 0, r.stderr); oneLineOrEmpty(r.stdout);
+  assert.notEqual(r.stdout, '', `empty stdout; stderr=${r.stderr}; frames=${rcv.frames.map(f => f.type)}`); // CI diagnostics for the Windows pipe path
   const out = JSON.parse(r.stdout).hookSpecificOutput;
   assert.equal(out.hookEventName, 'PermissionRequest'); assert.equal(out.decision.behavior, 'allow');
   assert.deepEqual(out.decision.updatedInput.answers, { 'Which one?': 'Beta' });

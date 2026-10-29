@@ -135,9 +135,11 @@ for (const harness of ['claude', 'codex']) {
     assert.ok(Number.isInteger(lines[0].ts));
     assert.ok(!raw.includes(JSON.stringify(BIN).slice(1, -1)) && !raw.includes('command') && !raw.includes('keep'));
     // rollback string restores the original
-    const sh = spawnSync('sh', ['-c', j.rollback], { encoding: 'utf8' });
-    assert.equal(sh.status, 0);
-    assert.ok(fs.readFileSync(w.settings).equals(orig));
+    if (process.platform !== 'win32') { // the rollback hint is a POSIX command line (cp/mv/rm); the Windows hint is covered by win-install-fake.test.cjs
+      const sh = spawnSync('sh', ['-c', j.rollback], { encoding: 'utf8' });
+      assert.equal(sh.status, 0);
+      assert.ok(fs.readFileSync(w.settings).equals(orig));
+    }
   });
 
   test(`${harness}: new file => backup null, rollback deletes the file`, t => {
@@ -202,7 +204,7 @@ function refusal(name, { harness = 'claude', code, jcode, setup, env, content, a
   });
 }
 refusal('no ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: undefined }) });
-refusal('wrong ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: fs.realpathSync('/bin/sh') }) });
+refusal('wrong ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: fs.realpathSync(process.platform === 'win32' ? process.env.ComSpec : '/bin/sh') }) });
 refusal('relative ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: 'node' }) });
 for (const m of [...MARKERS, 'OPENCODE', 'OPENCODE_FOO']) {
   refusal('agent marker ' + m, { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { [m]: '1' }) });

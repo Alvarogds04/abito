@@ -122,13 +122,14 @@ function rotateAudit(file) {
 function winAppendAudit(w, file, record) {
   const line = Buffer.from(JSON.stringify(record) + '\n', 'utf8');
   for (let attempt = 0; attempt < 5; attempt++) {
-    let cur = w.readPrivate(file);
-    // The helper caps one write at 1 MiB: rotate (replacing the previous generation) well before that.
-    if (cur && cur.size + line.length > AUDIT_MAX_BYTES / 2) {
-      try { w.remove(file + '.1'); } catch (e) { if (e.reason !== 'missing') throw e; }
+    // The helper caps one read/write at 1 MiB, so the size is taken from the helper's facts BEFORE any read: a log that is already
+    // past half the cap is rotated (replacing the previous generation) and never read.
+    const facts = w.checkPath(file);
+    if (facts.exists && facts.size + line.length > AUDIT_MAX_BYTES / 2) {
+      try { w.remove(file + '.1'); } catch (e) { if (e.reason !== 'missing' && e.reason !== 'helper_failed') throw e; }
       w.move(file, file + '.1');
-      cur = null;
     }
+    const cur = w.readPrivate(file);
     try { w.writePrivate(file, cur ? Buffer.concat([cur.buf, line]) : line, cur ? cur.sha256 : null); return; }
     catch (e) { if (e.reason !== 'mismatch' && e.reason !== 'exists') throw e; }
   }

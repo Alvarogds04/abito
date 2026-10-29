@@ -85,7 +85,7 @@ test('planner: preserves other tools, other events and SessionStart; idempotent;
   assert.equal(o3.hooks.PermissionRequest.length, 2);
   assert.equal(o3.hooks.PermissionRequest[1].hooks[0].timeout, 60);
   assert.ok(three.actions.some(a => a.action === 'replace'));
-  assert.equal(JSON.stringify(o3).split(BIN).length - 1, 3, 'PermissionRequest, SessionStart, Stop');
+  assert.equal(JSON.stringify(o3).split(JSON.stringify(BIN).slice(1, -1)).length - 1, 3, 'PermissionRequest, SessionStart, Stop');
 });
 
 // ---- S2 migration: the Abito-owned PreToolUse/AskUserQuestion entry is removed, nothing else is touched ----
@@ -280,7 +280,7 @@ test('apply with the correct word: backup 0600 identical, atomic write, mode kep
   assert.deepEqual(ls(d), ['settings.json', 'settings.json.abito-backup-20260102T030405678Z']);
   assert.deepEqual(fs.readFileSync(backup), before);
   assertMode(backup, 0o600);
-  assert.match(r.out, new RegExp('cp -p .*' + 'abito-backup-20260102T030405678Z'));
+  if (process.platform !== 'win32') assert.match(r.out, new RegExp('cp -p .*' + 'abito-backup-20260102T030405678Z')); // the restore hint is a POSIX cp line
   assert.deepEqual(r.prompts.length, 1);
   // a second install is a no-op without write or backup
   const r2 = io({ now: () => new Date('2026-01-02T03:04:06Z') });

@@ -21,6 +21,7 @@ function fakeBackend(log = []) {
       if (!f.exists) return null;
       if (f.reparse) throw err('reparse');
       if (f.kind !== 'file' || !f.private || f.nlink !== 1) throw err('not_private');
+      if (f.size > winfs.MAX_FILE) throw err('too_large'); // the real helper caps one read/write at 1 MiB
       const buf = readFile(p);
       return { buf, sha256: sha(buf), size: buf.length, mtimeMs: f.mtime_ms };
     },
@@ -28,6 +29,7 @@ function fakeBackend(log = []) {
       log.push(['write', p]);
       const f = facts(p);
       if (!f.parent_ok) throw err('not_private');
+      if (Buffer.byteLength(data) > winfs.MAX_FILE) throw err('too_large');
       if (expect === null || expect === undefined) { if (f.exists) throw err('exists'); }
       else { if (!f.exists) throw err('missing'); if (f.reparse || !f.private) throw err('not_private'); if (sha(fs.readFileSync(p)) !== expect) throw err('mismatch'); }
       const tmp = path.join(path.dirname(p), `.t${process.pid}${Math.random()}`);

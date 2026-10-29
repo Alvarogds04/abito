@@ -124,3 +124,18 @@ test('L7: mismatch/busy/io/exists/missing helper reasons get their own Ajustes d
   }
 });
 
+
+// HU-062 (found by the Windows run): the audit log past 1 MiB made appendAudit THROW on Windows (the helper caps one read at 1 MiB and the
+// size check ran after the read). It must rotate by size, looking at the size through the helper first, and never throw.
+test('audit: a log already past the helper 1 MiB cap is rotated before any read, and the append succeeds', t => {
+  const d = tmp(t); const dir = path.join(d, 'audit'); fs.mkdirSync(dir, { mode: 0o700 });
+  winfs.useForTests(fakeBackend());
+  const f = path.join(dir, 'hook-installs.jsonl');
+  fs.writeFileSync(f + '.1', 'old-generation\n', { mode: 0o600 });
+  fs.writeFileSync(f, '{"ts":0}\n'.repeat(Math.ceil((1024 * 1024 + 1) / 9)), { mode: 0o600 });
+  ui.appendAudit(dir, { ts: 7, event: 'intent' });
+  assert.ok(fs.statSync(f + '.1').size > 1024 * 1024, 'the big log became the previous generation');
+  assert.equal(fs.readFileSync(f, 'utf8'), '{"ts":7,"event":"intent"}\n');
+  ui.appendAudit(dir, { ts: 8 });
+  assert.equal(fs.readFileSync(f, 'utf8').trim().split('\n').length, 2, 'below the cap: no rotation');
+});

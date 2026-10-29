@@ -2,8 +2,12 @@ use super::*;
 use serde_json::json;
 
 // ---- session.json (the host handoff) -----------------------------------------------------
+/// A valid daemon endpoint for THIS platform: a Unix socket path, or on Windows the named pipe `server.cjs` generates (HU-062).
+fn endpoint() -> &'static str {
+    if cfg!(windows) { r"\\.\pipe\abito-0123456789abcdef0123456789abcdef" } else { "/run/x/p-AbCdEf/s" }
+}
 fn session(over: serde_json::Value) -> String {
-    let mut v = json!({"protocol":"island-agent/1","endpoint":"/run/x/p-AbCdEf/s","token":"t0k3n","pid":4242,"procStart":"98765","startedAt":1700000000000u64});
+    let mut v = json!({"protocol":"island-agent/1","endpoint":endpoint(),"token":"t0k3n","pid":4242,"procStart":"98765","startedAt":1700000000000u64});
     for (k, val) in over.as_object().unwrap() { v[k] = val.clone(); }
     v.to_string()
 }
@@ -11,17 +15,29 @@ fn session(over: serde_json::Value) -> String {
 #[test]
 fn session_file_is_parsed_strictly_and_fails_closed() {
     let ok = Session::parse(&session(json!({}))).unwrap();
-    assert_eq!(ok.endpoint, "/run/x/p-AbCdEf/s");
+    assert_eq!(ok.endpoint, endpoint());
     assert_eq!(ok.pid, 4242);
     for bad in [session(json!({"protocol":"island-agent/2"})), session(json!({"protocol":null})), session(json!({"token":""})),
                 session(json!({"token":7})), session(json!({"endpoint":""})), session(json!({"endpoint":"relative/s"})),
                 session(json!({"endpoint":"/run/x/../../etc/s"})), session(json!({"endpoint":"/run/x/p-AbCdEf/other"})),
-                session(json!({"endpoint":"/run/x/p-AbCdEf/s\u{0}"})), session(json!({"pid":0})), session(json!({"pid":-3})),
+                session(json!({"endpoint":format!("{}\u{0}", endpoint())})), session(json!({"pid":0})), session(json!({"pid":-3})),
                 session(json!({"pid":"x"})), "".into(), "not json".into(), "[]".into(), "{}".into(), "null".into()] {
         assert!(Session::parse(&bad).is_err(), "must refuse {bad}");
     }
     // an oversized file is never parsed
     assert!(Session::parse(&"x".repeat(MAX_SESSION_BYTES + 1)).is_err());
+}
+
+#[test]
+fn the_endpoint_shape_follows_the_platform() {
+    let unix = "/run/x/p-AbCdEf/s";
+    let pipe = r"\\.\pipe\abito-0123456789abcdef0123456789abcdef";
+    assert_eq!(endpoint_ok(unix), !cfg!(windows), "a Unix socket path is valid only off Windows");
+    assert_eq!(endpoint_ok(pipe), cfg!(windows), "the daemon pipe is valid only on Windows");
+    // refused everywhere: a near-miss of each shape
+    for bad in [r"\\.\pipe\abito-0123456789ABCDEF0123456789abcdef", r"\\.\pipe\abito-0123", r"\\.\pipe\other-0123456789abcdef0123456789abcdef", "/run/x/p-AbCdEf/other"] {
+        assert!(!endpoint_ok(bad), "must refuse {bad}");
+    }
 }
 
 #[test]

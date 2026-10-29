@@ -67,6 +67,19 @@ jobs:
         run: |
           npm install -g @earendil-works/pi-coding-agent@1.4.0
           exit $LASTEXITCODE
+      - name: Diagnostics - where pi is installed (HU-062, Windows package discovery)
+        if: ${{ !cancelled() }}
+        run: |
+          $root = (npm root -g).Trim()
+          Write-Host "npm root -g = $root"
+          Write-Host "npm prefix -g = $((npm prefix -g).Trim())"
+          Get-ChildItem -Force $root | Select-Object Name | Format-Table | Out-String | Write-Host
+          $pkg = Join-Path $root '@earendil-works/pi-coding-agent'
+          Write-Host "pkg exists: $(Test-Path $pkg)"
+          if (Test-Path $pkg) { Get-ChildItem -Force $pkg | Select-Object Name | Format-Table | Out-String | Write-Host; Get-Content (Join-Path $pkg 'package.json') -TotalCount 12 }
+          Get-Command pi -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host
+          Get-ChildItem -Force (Split-Path (Get-Command pi).Source) -ErrorAction SilentlyContinue | Select-Object Name | Format-Table | Out-String | Write-Host
+          node -e "console.log(process.platform, process.version, process.env.APPDATA, process.env.npm_config_prefix)"
       - name: Daemon suite (custom provider, profiles, protocol)
         if: ${{ !cancelled() }}
         working-directory: apps/desktop-daemon

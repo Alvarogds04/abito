@@ -142,7 +142,7 @@ test('refusals are one fixed JSON line with the right exit code and never echo t
   }
 });
 
-test('island guard: needs ABITO_ISLAND_EXE equal to the parent executable', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), () => {
+test('island guard: needs ABITO_ISLAND_EXE equal to the parent executable', () => {
   const exe = fs.realpathSync(process.execPath);
   const ok = ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => exe);
   assert.equal(ok, true);
@@ -151,6 +151,10 @@ test('island guard: needs ABITO_ISLAND_EXE equal to the parent executable', unix
   const w = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: w }, 42, () => w.toLowerCase(), 'win32', p => p), true);
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: w }, 42, () => 'C:\\Other\\pwsh.exe', 'win32', p => p), false);
+  if (process.platform === 'win32') { // the product compares case-insensitively here (asserted above with the injected win32 platform); the rest is POSIX path syntax
+    assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => exe.toUpperCase()), true, 'Windows comparison is case-insensitive by default');
+    return;
+  }
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: exe }, 42, () => exe.toUpperCase()), false, 'Linux comparison stays case-sensitive');
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: 'relative/node' }, 42, () => exe), false);
   assert.equal(ui.checkIslandGuards({ ABITO_ISLAND_EXE: '/bin/sh' }, 42, () => exe), false);
@@ -174,6 +178,7 @@ test('audit log: creates dir 0700 and file 0600, appends lines, refuses unsafe d
   const f = path.join(dir, 'hook-installs.jsonl');
   assertMode(f, 0o600);
   assert.deepEqual(fs.readFileSync(f, 'utf8').trim().split('\n').map(l => JSON.parse(l).ts), [1, 2]);
+  if (process.platform === 'win32') return; // unsafe-dir refusals (symlink, world-writable) are the helper's DACL/reparse checks: win-install-fake.test.cjs
   const link = path.join(d, 'link'); fs.symlinkSync(dir, link);
   assert.throws(() => ui.appendAudit(link, {}));
   const ww = path.join(d, 'ww'); fs.mkdirSync(ww, { mode: 0o700 }); fs.chmodSync(ww, 0o777);
@@ -320,13 +325,13 @@ test('refused audit line is never written for usage errors or an invalid audit d
   assert.equal(r.code, 70); assert.equal(fs.existsSync(path.join(w.audit, 'hook-installs.jsonl')), false);
 });
 
-test('audit rotation: > 1 MiB rotates to hook-installs.jsonl.1 (replaced, 0600) before appending', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), t => {
+test('audit rotation: > 1 MiB rotates to hook-installs.jsonl.1 (replaced, 0600) before appending', t => {
   const d = tmp(t); const dir = path.join(d, 'audit'); fs.mkdirSync(dir, { mode: 0o700 });
   const f = path.join(dir, 'hook-installs.jsonl'); const f1 = f + '.1';
   fs.writeFileSync(f1, 'old-generation\n', { mode: 0o644 });
   fs.writeFileSync(f, '{"ts":0}\n'.repeat(Math.ceil((1024 * 1024 + 1) / 9)), { mode: 0o600 });
   ui.appendAudit(dir, { ts: 7, event: 'intent' });
-  assert.ok(fs.statSync(f1).size > 1024 * 1024); assertMode(f1, 0o600);
+  assert.ok(fs.statSync(f1).size > 1024 * 1024); if (process.platform !== 'win32') assertMode(f1, 0o600); // Windows: the fixture is a Node-written file (the helper cannot write >1 MiB); the rotation logic is win-install-fake.test.cjs
   assert.equal(fs.readFileSync(f, 'utf8'), '{"ts":7,"event":"intent"}\n'); assertMode(f, 0o600);
   ui.appendAudit(dir, { ts: 8 }); assert.equal(fs.readFileSync(f, 'utf8').trim().split('\n').length, 2); // below the cap: no rotation
 });

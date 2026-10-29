@@ -123,7 +123,7 @@ test('bad input never produces output: wrong event name, bad JSON, bad cwd, over
 });
 
 // ---- SessionStart: cache the session title so the island can name the session ----
-const tmp = t => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-title-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
+const tmp = t => { const d = fs.mkdtempSync(path.join(require('./platform-env.cjs').tmpBase(), 'abito-title-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
 const start = (over = {}) => JSON.stringify({ session_id: 'sess-1', cwd, hook_event_name: 'SessionStart', source: 'startup', session_title: 'Migrar la base', ...over });
 
 test('SessionStart caches the title privately and prints nothing; the next question is labelled with it', async t => {

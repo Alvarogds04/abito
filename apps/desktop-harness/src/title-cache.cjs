@@ -31,10 +31,11 @@ function stateDir(env) {
 const dirOf = (env, kind) => { const base = stateDir(env); return base ? path.join(base, kind) : null; };
 
 // Directories to create under the Windows state root, outermost first (the helper creates one level at a time under a private parent).
-function dirChain(dir, env) {
+function dirChain(dir, env, pathMod = path.win32) {
   const local = env && env.LOCALAPPDATA;
-  const root = typeof local === 'string' && path.win32.isAbsolute(local) && dir.toLowerCase().startsWith(local.toLowerCase() + '\\') ? local : path.dirname(path.dirname(dir)), out = [];
-  for (let d = dir; d !== root && d !== path.dirname(d); d = path.dirname(d)) out.unshift(d);
+  const norm = typeof local === 'string' && pathMod.isAbsolute(local) ? pathMod.normalize(local).replace(/[\\/]+$/, '') : null;
+  const root = norm && dir.toLowerCase().startsWith(norm.toLowerCase() + '\\') ? norm : pathMod.dirname(dir), out = []; // outside LOCALAPPDATA (ABITO_STATE_DIR / XDG) the base must already exist: only the kind folder is created
+  for (let d = dir; d !== root && d !== pathMod.dirname(d); d = pathMod.dirname(d)) out.unshift(d);
   return out;
 }
 function ensurePrivateDir(dir) {
@@ -42,6 +43,9 @@ function ensurePrivateDir(dir) {
   const st = fs.lstatSync(dir);
   if (st.isSymbolicLink() || !st.isDirectory() || st.uid !== process.getuid()) throw new Error('not a private directory');
   if (st.mode & 0o077) fs.chmodSync(dir, 0o700);
+}
+function pruneWin(w, dir, now) {
+  try { for (const f of fs.readdirSync(dir)) { const p = path.join(dir, f); try { if (now - fs.lstatSync(p).mtimeMs > MAX_AGE_MS) w.remove(p); } catch { /* best effort */ } } } catch { /* best effort */ }
 }
 function prune(dir, now) {
   try { for (const f of fs.readdirSync(dir)) { const p = path.join(dir, f); try { if (now - fs.lstatSync(p).mtimeMs > MAX_AGE_MS) fs.unlinkSync(p); } catch { /* best effort */ } } } catch { /* best effort */ }
@@ -55,7 +59,8 @@ function saveTitle(env, kind, sessionToken, rawTitle, now = Date.now()) {
     const w = winfs.active();
     const file = path.join(dir, sessionToken);
     if (w) { // Windows (HU-047): the native helper owns directory creation, the private DACL and the write; no uid/mode on this path
-      for (const d of dirChain(dir, env)) w.makeDir(d);
+      for (const d of dirChain(dir, env, process.platform === 'win32' ? path.win32 : path)) w.makeDir(d);
+      pruneWin(w, dir, now);
       if (!w.checkPath(file).parent_ok) return false;
       const cur = w.readPrivate(file);
       w.writePrivate(file, Buffer.from(name), cur ? cur.sha256 : null);
@@ -81,4 +86,4 @@ function loadTitle(env, kind, sessionToken) {
     return titleName(fs.readFileSync(file, 'utf8'));
   } catch { return null; }
 }
-module.exports = { titleName, stateDir, saveTitle, loadTitle };
+module.exports = { dirChain, titleName, stateDir, saveTitle, loadTitle };
