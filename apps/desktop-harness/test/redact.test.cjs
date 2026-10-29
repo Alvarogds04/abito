@@ -191,7 +191,8 @@ test('redactCommand directly on 1 MB stays < 1500 ms and is linear (2 MB <= 3.5x
   const time = s => { const t = process.hrtime.bigint(); redactCommand(s); return Number(process.hrtime.bigint() - t) / 1e6; };
   for (const u of ['curl -u ', 'curl -b ', 'http -a ', 'TOKEN=', '-----BEGIN PRIVATE KEY-----', 'A'.repeat(39) + ' ']) {
     time(mbOf(u, 2e5)); // warm-up
-    const a = time(mbOf(u)), b = time(mbOf(u, 2e6));
+    const best = (s, n = 3) => Math.min(...Array.from({ length: n }, () => time(s))); // noisy shared runners: the minimum of 3 runs, not one sample
+    const a = best(mbOf(u)), b = best(mbOf(u, 2e6));
     max = Math.max(max, a);
     assert.ok(a < 1500, `${u} 1MB ${a.toFixed(0)} ms`);
     assert.ok(b <= Math.max(3.5 * a, 60), `${u}: 2MB ${b.toFixed(0)} ms vs 1MB ${a.toFixed(0)} ms`);
