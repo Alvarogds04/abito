@@ -169,8 +169,9 @@ fn fetch_to_file(env: &dyn Env, url: &str, max: u64, path: &Path) -> Result<(), 
 pub fn private_dir(parent: &Path, prefix: &str) -> Result<PathBuf, Reason> {
     std::fs::create_dir_all(parent).map_err(|_| Reason::DownloadFailed)?;
     set_private(parent);
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let dir = parent.join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    let dir = parent.join(format!("{prefix}-{}-{nanos}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     std::fs::create_dir(&dir).map_err(|_| Reason::DownloadFailed)?;
     set_private(&dir);
     Ok(dir)
@@ -301,7 +302,8 @@ mod tests {
     const ROOT: &str = "node-v22.30.1-linux-x64";
 
     fn scratch(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("abito-nodeinstall-{tag}-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!("abito-nodeinstall-{tag}-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         std::fs::create_dir_all(&d).unwrap();
         d
     }

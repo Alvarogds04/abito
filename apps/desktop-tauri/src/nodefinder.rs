@@ -146,7 +146,8 @@ mod tests {
     struct Home(PathBuf);
     impl Home {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("abito-nodefinder-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let path = std::env::temp_dir().join(format!("abito-nodefinder-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }

@@ -201,7 +201,7 @@ mod tests {
         // Linux/macOS layout: <prefix>/bin/node and <prefix>/lib/node_modules/npm/bin/npm-cli.js
         let unix = root.join("unix"); fs::create_dir_all(unix.join("bin")).unwrap(); fs::create_dir_all(unix.join("lib/node_modules/npm/bin")).unwrap();
         fs::write(unix.join("bin/node"), "").unwrap(); fs::write(unix.join("lib/node_modules/npm/bin/npm-cli.js"), "").unwrap();
-        assert_eq!(npm_cli(&unix.join("bin/node")).map(|p| p.strip_prefix(fs::canonicalize(&unix).unwrap()).unwrap().to_path_buf()),
+        assert_eq!(npm_cli(&unix.join("bin/node")).map(|p| p.strip_prefix(plain_path(fs::canonicalize(&unix).unwrap())).unwrap().to_path_buf()),
             Some(PathBuf::from("lib/node_modules/npm/bin/npm-cli.js")));
         // Windows layout: <dir>/node.exe and <dir>/node_modules/npm/bin/npm-cli.js
         let win = root.join("win"); fs::create_dir_all(win.join("node_modules/npm/bin")).unwrap();
