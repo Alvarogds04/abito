@@ -247,7 +247,8 @@ test("max clients is enforced", async (t) => {
 	await waitFor(() => second.closed);
 });
 
-test("socket is 0600 inside a 0700 private directory; path guard", async (t) => {
+const WIN = process.platform === "win32";
+test("socket is 0600 inside a 0700 private directory; path guard", { skip: WIN && "Unix socket mechanism; Windows twin: «Windows: the endpoint is a named pipe…» below" }, async (t) => {
 	const { endpoint, runtimeDir } = await setup(t);
 	assert.equal(fs.lstatSync(endpoint).mode & 0o7777, 0o600);
 	assert.ok(fs.lstatSync(endpoint).isSocket());
@@ -256,15 +257,26 @@ test("socket is 0600 inside a 0700 private directory; path guard", async (t) => 
 	const long = new IslandServer({ runtimeDir: path.join(tmpRuntime(t), "x".repeat(120)), token: TOKEN, engine: new FakeEngine() });
 	await assert.rejects(long.start());
 });
+// Windows twins (W1): no socket file, no private directory, no leftovers: the endpoint is a named pipe whose exact shape the Rust client checks
+// (winpolicy::pipe_endpoint_ok), the token gate is the access control, and a pipe vanishes with its server.
+test("Windows: the endpoint is a named pipe abito-<32 hex>, nothing is created on disk, and it disappears with the server", { skip: !WIN && "Windows only; Unix twin: «socket is 0600 inside a 0700 private directory»" }, async (t) => {
+	const { server, endpoint, runtimeDir } = await setup(t);
+	assert.match(endpoint, /^\\\\\.\\pipe\\abito-[0-9a-f]{32}$/);
+	assert.equal(fs.existsSync(runtimeDir), false, "no runtime directory or socket file on Windows");
+	const c = await login(t, endpoint);
+	assert.ok(c);
+	await server.close();
+	await assert.rejects(new Promise((resolve, reject) => { const s = require("node:net").connect(endpoint); s.once("connect", () => { s.destroy(); resolve(); }); s.once("error", reject); }));
+});
 
-test("a non-private runtime directory is refused", async (t) => {
+test("a non-private runtime directory is refused", { skip: WIN && "no runtime directory on Windows (named pipe); twin: «Windows: the endpoint is a named pipe…»" }, async (t) => {
 	const dir = tmpRuntime(t);
 	fs.mkdirSync(dir, { mode: 0o755 });
 	fs.chmodSync(dir, 0o755);
 	await assert.rejects(new IslandServer({ runtimeDir: dir, token: TOKEN, engine: new FakeEngine() }).start());
 });
 
-test("stale socket of a dead server is cleaned; a live one is kept", async (t) => {
+test("stale socket of a dead server is cleaned; a live one is kept", { skip: WIN && "pipes vanish with their server: no stale endpoint exists; twin: «Windows: the endpoint is a named pipe…»" }, async (t) => {
 	const runtimeDir = tmpRuntime(t);
 	fs.mkdirSync(runtimeDir, { mode: 0o700 });
 	const stale = path.join(runtimeDir, "p-abc123");

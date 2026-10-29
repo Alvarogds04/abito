@@ -46,7 +46,7 @@ test('apply adds only the statusLine member, makes a dated backup and keeps ever
   assert.deepEqual(parsed.hooks, { Stop: [] });
   assert.equal(parsed.statusLine.type, 'command');
   assert.ok(isOurs(parsed.statusLine));
-  assert.ok(parsed.statusLine.command.includes(STATUSLINE_BIN));
+  assert.ok(parsed.statusLine.command.includes(process.platform === 'win32' ? STATUSLINE_BIN.replace(/\\/g, '/') : STATUSLINE_BIN)); // Windows: Git Bash form uses forward slashes (statusline-command.test.cjs covers both shells)
   const backups = fs.readdirSync(path.dirname(t.file)).filter(n => n.includes('.abito-backup-'));
   assert.equal(backups.length, 1);
   assert.equal(fs.readFileSync(path.join(path.dirname(t.file), backups[0]), 'utf8'), original);

@@ -30,7 +30,7 @@ function plan(file, shell) { return planStatusLine({ settingsPath: file, execPat
 test('a command installed for the other shell is `replace` (the UI row says Desactualizado and offers reinstall); the same shell is unchanged', t => {
   const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-slc-'))); fs.chmodSync(d, 0o700);
   t.after(() => { winfs.useForTests(null); fs.rmSync(d, { recursive: true, force: true }); });
-  winfs.useForTests(fakeBackend());
+  if (process.platform !== 'win32') winfs.useForTests(fakeBackend()); // Windows: the REAL helper (the fake judges POSIX modes)
   const file = path.join(d, 'settings.json');
   const first = plan(file, BASH);
   assert.equal(first.action, 'add');

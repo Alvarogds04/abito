@@ -686,7 +686,7 @@ test("sdk-helper resolves the SDK through the managed pi launcher layout (bin/pi
 		const accountsRoot = path.join(root, "island", "accounts");
 		mkdirSync(accountsRoot, { recursive: true });
 		const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "sdk-helper.mjs"), "--accounts-root", accountsRoot], {
-			env: { PATH: `${path.join(agent, "bin")}:/usr/bin:/bin`, HOME: root, PI_OFFLINE: "1" },
+			env: { PATH: [path.join(agent, "bin"), ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].join(path.delimiter), HOME: root, USERPROFILE: root, PI_OFFLINE: "1" },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let out = "", err = "";
@@ -698,6 +698,41 @@ test("sdk-helper resolves the SDK through the managed pi launcher layout (bin/pi
 		child.kill();
 		assert.equal(result.ok, true, `${JSON.stringify(result)} ${err}`);
 		assert.deepEqual(result.providers.map((p) => p.id), ["managed-layout-sdk"], "the SDK of install/current-version was loaded");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+// HU-062 (found on Windows CI, custom-provider 58-63): the helper looked for `pi` on PATH splitting by ":" and only for a file named `pi`, so on
+// Windows (PATH uses ";", the npm shims are pi.cmd/pi.ps1, and the package sits at <prefix>\node_modules\@earendil-works\pi-coding-agent next to them)
+// it never found the globally installed SDK and every account command failed with «Request failed». npm's global layout (shim next to node_modules) is
+// resolved on every OS.
+test("sdk-helper resolves the SDK from an npm global layout (shim next to node_modules) found through the platform PATH separator", async () => {
+	const root = tempRoot();
+	try {
+		const prefix = path.join(root, "prefix");
+		const pkg = path.join(prefix, "node_modules", "@earendil-works", "pi-coding-agent");
+		mkdirSync(pkg, { recursive: true });
+		writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module", main: "index.js" }));
+		writeFileSync(path.join(pkg, "index.js"), `export class ModelRuntime { static async create() { return new ModelRuntime(); }
+  getProviders() { return [{ id: "npm-global-sdk", name: "Global", auth: { apiKey: { login() {} } } }]; }
+  getProviderAuthStatus() { return { configured: false }; } }`);
+		writeFileSync(path.join(prefix, process.platform === "win32" ? "pi.cmd" : "pi"), "@echo off\r\n", { mode: 0o755 });
+		const accountsRoot = path.join(root, "island", "accounts");
+		mkdirSync(accountsRoot, { recursive: true });
+		const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "sdk-helper.mjs"), "--accounts-root", accountsRoot], {
+			env: { PATH: [prefix, ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].join(path.delimiter), HOME: root, USERPROFILE: root, PI_OFFLINE: "1" },
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		let out = "", err = "";
+		child.stderr.on("data", (d) => { err += d; });
+		const first = new Promise((resolve) => child.stdout.on("data", (d) => { out += d; if (out.includes("\n")) resolve(JSON.parse(out.split("\n")[0])); }));
+		child.stdin.write(`${JSON.stringify({ id: 1, cmd: "providers" })}\n`);
+		const timer = setTimeout(() => child.kill(), 15_000); timer.unref();
+		const result = await first;
+		child.kill();
+		assert.equal(result.ok, true, `${JSON.stringify(result)} ${err}`);
+		assert.deepEqual(result.providers.map((p) => p.id), ["npm-global-sdk"]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
