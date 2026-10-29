@@ -1,5 +1,6 @@
 'use strict';
-// Every test uses a private mkdtemp (0700) directory under os.tmpdir(); the real ~/.claude is never touched.
+const { tmpBase, assertMode, unixOnly } = require('./platform-env.cjs');
+// Every test uses a private mkdtemp (0700) directory under tmpBase(); the real ~/.claude is never touched.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,7 +15,7 @@ const EXEC = process.execPath;
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instclaude-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instclaude-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
@@ -25,7 +26,7 @@ const other = { matcher: 'Bash', hooks: [{ type: 'command', command: '/opt/other
 function io(extra = {}) {
   const r = { out: '', err: '', prompts: [] };
   r.opts = {
-    out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid(),
+    out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid?.(),
     prompt: async q => { r.prompts.push(q); return 'install'; }, now: () => new Date('2026-01-02T03:04:05.678Z'), ...extra,
   };
   return r;
@@ -37,7 +38,7 @@ function write(d, obj, indent = 2, nl = true, mode = 0o640) {
   fs.chmodSync(p, mode);
   return p;
 }
-const ours = obj => JSON.stringify(obj).includes(BIN);
+const ours = obj => JSON.stringify(obj).includes(JSON.stringify(BIN).slice(1, -1)); // JSON escapes Windows backslashes
 
 test('planner: absent file => {} plus our two events, nothing written', t => {
   const d = tmp(t); const p = path.join(d, 'settings.json');
@@ -84,7 +85,7 @@ test('planner: preserves other tools, other events and SessionStart; idempotent;
   assert.equal(o3.hooks.PermissionRequest.length, 2);
   assert.equal(o3.hooks.PermissionRequest[1].hooks[0].timeout, 60);
   assert.ok(three.actions.some(a => a.action === 'replace'));
-  assert.equal(JSON.stringify(o3).split(BIN).length - 1, 3, 'PermissionRequest, SessionStart, Stop');
+  assert.equal(JSON.stringify(o3).split(JSON.stringify(BIN).slice(1, -1)).length - 1, 3, 'PermissionRequest, SessionStart, Stop');
 });
 
 // ---- S2 migration: the Abito-owned PreToolUse/AskUserQuestion entry is removed, nothing else is touched ----
@@ -193,21 +194,21 @@ test('planner: refuses non-strict JSON, non-objects, empty and huge files (65)',
   assert.throws(() => plan(p), e => e.exitCode === 65 && /too large/.test(e.message));
 });
 
-test('planner: refuses symlink, non-regular, foreign owner, wrong shapes', t => {
+test('planner: refuses symlink, non-regular, foreign owner, wrong shapes', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), t => {
   const d = tmp(t);
   const real = write(d, {});
   const link = path.join(d, 'link.json'); fs.symlinkSync(real, link);
   assert.throws(() => plan(link), e => e.exitCode === 65 && /symlink|regular/.test(e.message));
   const dir = path.join(d, 'adir.json'); fs.mkdirSync(dir);
   assert.throws(() => plan(dir), e => e.exitCode === 65);
-  assert.throws(() => plan(real, { uid: process.getuid() + 1 }), e => e.exitCode === 65 && /not owned/.test(e.message));
+  assert.throws(() => plan(real, { uid: (process.getuid?.() ?? 0) + 1 }), e => e.exitCode === 65 && /not owned/.test(e.message));
   for (const bad of [{ hooks: [] }, { hooks: null }, { hooks: 'x' }, { hooks: { Stop: {} } }, { hooks: { PermissionRequest: 'x' } }, { hooks: { Stop: null } }]) {
     fs.writeFileSync(real, JSON.stringify(bad));
     assert.throws(() => plan(real), e => e.exitCode === 65 && /unexpected/.test(e.message), JSON.stringify(bad));
   }
 });
 
-test('path safety: absolute, normalized, not /proc /sys, dir not world-writable, no symlink parent', t => {
+test('path safety: absolute, normalized, not /proc /sys, dir not world-writable, no symlink parent', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), t => {
   const d = tmp(t);
   for (const bad of ['rel/settings.json', 'settings.json', d + '/../' + path.basename(d) + '/settings.json', d + '//settings.json', '/proc/self/settings.json', '/sys/x/settings.json', d + '/', '']) {
     assert.throws(() => plan(bad), e => e.exitCode === 65 || e.exitCode === 64, bad);
@@ -220,7 +221,7 @@ test('path safety: absolute, normalized, not /proc /sys, dir not world-writable,
   assert.throws(() => plan(path.join(d, 'missing', 's.json')), e => e.exitCode === 65);
 });
 
-test('--user resolves only from an absolute HOME and a temp HOME in tests', t => {
+test('--user resolves only from an absolute HOME and a temp HOME in tests', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), t => {
   const d = tmp(t);
   assert.equal(ic.resolveUserSettings({ HOME: d }, () => d), path.join(d, '.claude', 'settings.json'));
   for (const env of [{}, { HOME: '' }, { HOME: 'relative/home' }, { HOME: d + '/../x' }]) assert.throws(() => ic.resolveUserSettings(env, () => d), e => e.exitCode === 64);
@@ -274,12 +275,12 @@ test('apply with the correct word: backup 0600 identical, atomic write, mode kep
   const expected = plan(p).after;
   assert.equal(await ic.runInstall(['claude', '--settings', p, '--apply'], r.opts), 0);
   assert.equal(fs.readFileSync(p, 'utf8'), expected);
-  assert.equal(fs.statSync(p).mode & 0o777, 0o640);
+  assertMode(p, 0o640);
   const backup = p + '.abito-backup-20260102T030405678Z';
   assert.deepEqual(ls(d), ['settings.json', 'settings.json.abito-backup-20260102T030405678Z']);
   assert.deepEqual(fs.readFileSync(backup), before);
-  assert.equal(fs.statSync(backup).mode & 0o777, 0o600);
-  assert.match(r.out, new RegExp('cp -p .*' + 'abito-backup-20260102T030405678Z'));
+  assertMode(backup, 0o600);
+  if (process.platform !== 'win32') assert.match(r.out, new RegExp('cp -p .*' + 'abito-backup-20260102T030405678Z')); // the restore hint is a POSIX cp line
   assert.deepEqual(r.prompts.length, 1);
   // a second install is a no-op without write or backup
   const r2 = io({ now: () => new Date('2026-01-02T03:04:06Z') });
@@ -296,7 +297,7 @@ test('apply with the correct word: backup 0600 identical, atomic write, mode kep
 test('apply to a new file: mode 0600, no backup', async t => {
   const d = tmp(t); const p = path.join(d, 'settings.json'); const r = io();
   assert.equal(await ic.runInstall(['claude', '--settings', p, '--apply'], r.opts), 0);
-  assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+  assertMode(p, 0o600);
   assert.deepEqual(ls(d), ['settings.json']);
 });
 
@@ -476,7 +477,7 @@ test('preview: diff cap reports hidden lines and always lists changed lines outs
   assert.match(small, /^Lines changed outside hooks: 0$/m);
 });
 
-test('preview wording: settings directory must exist and is never created; --user refuses with 65', async t => {
+test('preview wording: settings directory must exist and is never created; --user refuses with 65', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
   const d = tmp(t);
   const out = ic.renderPreview(plan(path.join(d, 'settings.json')), { backupPath: 'x', apply: false });
   assert.match(out, /directory: must already exist/);
@@ -487,8 +488,8 @@ test('preview wording: settings directory must exist and is never created; --use
   assert.match(r.err, /settings directory does not exist/);
 });
 
-test('apply: failed verification + failed restore does not claim success (exit 70, backup path named)', async t => {
-  if (process.getuid() === 0) return;
+test('apply: failed verification + failed restore does not claim success (exit 70, backup path named)', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), async t => {
+  if (process.getuid?.() === 0) return;
   const d = tmp(t); const p = write(d, { a: 1 });
   const r = io({ verify: () => { fs.chmodSync(d, 0o500); return false; } });
   try {
