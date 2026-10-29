@@ -26,7 +26,7 @@ test('no test passes an empty or unpinned env to a hook handler or resolveConfig
       if (emptyHandlerEnv || emptyResolve) offenders.push(`${f}:${i + 1} empty env`);
       // default-runtime lookups must use a uid that cannot be the real one
       const m = line.match(/resolveConfig\([^)]*?,\s*(\d+)\b/);
-      if (m && Number(m[1]) === process.getuid() && !/ABITO_SOCKET_DIR|ABITO_DESKTOP_SOCKET/.test(line)) offenders.push(`${f}:${i + 1} real uid with default runtime`);
+      if (m && Number(m[1]) === process.getuid?.() && !/ABITO_SOCKET_DIR|ABITO_DESKTOP_SOCKET/.test(line)) offenders.push(`${f}:${i + 1} real uid with default runtime`);
     });
   }
   assert.deepEqual(offenders, []);

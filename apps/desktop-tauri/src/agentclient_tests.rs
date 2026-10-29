@@ -2,8 +2,12 @@ use super::*;
 use serde_json::json;
 
 // ---- session.json (the host handoff) -----------------------------------------------------
+/// A valid daemon endpoint for THIS platform: a Unix socket path, or on Windows the named pipe `server.cjs` generates (HU-062).
+fn endpoint() -> &'static str {
+    if cfg!(windows) { r"\\.\pipe\abito-0123456789abcdef0123456789abcdef" } else { "/run/x/p-AbCdEf/s" }
+}
 fn session(over: serde_json::Value) -> String {
-    let mut v = json!({"protocol":"island-agent/1","endpoint":"/run/x/p-AbCdEf/s","token":"t0k3n","pid":4242,"procStart":"98765","startedAt":1700000000000u64});
+    let mut v = json!({"protocol":"island-agent/1","endpoint":endpoint(),"token":"t0k3n","pid":4242,"procStart":"98765","startedAt":1700000000000u64});
     for (k, val) in over.as_object().unwrap() { v[k] = val.clone(); }
     v.to_string()
 }
@@ -11,17 +15,29 @@ fn session(over: serde_json::Value) -> String {
 #[test]
 fn session_file_is_parsed_strictly_and_fails_closed() {
     let ok = Session::parse(&session(json!({}))).unwrap();
-    assert_eq!(ok.endpoint, "/run/x/p-AbCdEf/s");
+    assert_eq!(ok.endpoint, endpoint());
     assert_eq!(ok.pid, 4242);
     for bad in [session(json!({"protocol":"island-agent/2"})), session(json!({"protocol":null})), session(json!({"token":""})),
                 session(json!({"token":7})), session(json!({"endpoint":""})), session(json!({"endpoint":"relative/s"})),
                 session(json!({"endpoint":"/run/x/../../etc/s"})), session(json!({"endpoint":"/run/x/p-AbCdEf/other"})),
-                session(json!({"endpoint":"/run/x/p-AbCdEf/s\u{0}"})), session(json!({"pid":0})), session(json!({"pid":-3})),
+                session(json!({"endpoint":format!("{}\u{0}", endpoint())})), session(json!({"pid":0})), session(json!({"pid":-3})),
                 session(json!({"pid":"x"})), "".into(), "not json".into(), "[]".into(), "{}".into(), "null".into()] {
         assert!(Session::parse(&bad).is_err(), "must refuse {bad}");
     }
     // an oversized file is never parsed
     assert!(Session::parse(&"x".repeat(MAX_SESSION_BYTES + 1)).is_err());
+}
+
+#[test]
+fn the_endpoint_shape_follows_the_platform() {
+    let unix = "/run/x/p-AbCdEf/s";
+    let pipe = r"\\.\pipe\abito-0123456789abcdef0123456789abcdef";
+    assert_eq!(endpoint_ok(unix), !cfg!(windows), "a Unix socket path is valid only off Windows");
+    assert_eq!(endpoint_ok(pipe), cfg!(windows), "the daemon pipe is valid only on Windows");
+    // refused everywhere: a near-miss of each shape
+    for bad in [r"\\.\pipe\abito-0123456789ABCDEF0123456789abcdef", r"\\.\pipe\abito-0123", r"\\.\pipe\other-0123456789abcdef0123456789abcdef", "/run/x/p-AbCdEf/other"] {
+        assert!(!endpoint_ok(bad), "must refuse {bad}");
+    }
 }
 
 #[test]
@@ -78,6 +94,11 @@ fn ui_commands_are_a_closed_exact_set() {
         (json!({"action":"profile_deactivate"}), r#"{"type":"profile_deactivate"}"#),
         (json!({"action":"connectors_list"}), r#"{"type":"connectors_list"}"#),
         (json!({"action":"settings_get"}), r#"{"type":"settings_get"}"#),
+        // HU-041: the reviewed custom gateway frames (no secret ever rides them)
+        (json!({"action":"custom_account_create","label":"Mi servidor","baseUrl":"https://gateway.example/v1"}), r#"{"type":"custom_account_create","label":"Mi servidor","baseUrl":"https://gateway.example/v1"}"#),
+        (json!({"action":"custom_account_create","label":"Local","baseUrl":"http://127.0.0.1:4000/v1"}), r#"{"type":"custom_account_create","label":"Local","baseUrl":"http://127.0.0.1:4000/v1"}"#),
+        (json!({"action":"custom_endpoint_set","accountId":"gw","baseUrl":"http://[::1]:4000"}), r#"{"type":"custom_endpoint_set","accountId":"gw","baseUrl":"http://[::1]:4000"}"#),
+        (json!({"action":"custom_models_refresh","accountId":"gw"}), r#"{"type":"custom_models_refresh","accountId":"gw"}"#),
     ] {
         assert_eq!(ok(payload.clone()).unwrap(), wire, "{payload}");
     }
@@ -400,12 +421,31 @@ fn a_plan_that_does_not_look_like_ours_never_reaches_the_page() {
 #[test]
 fn the_three_new_details_are_part_of_the_closed_set() {
     let mut st = ClientState::connected();
-    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified", "foreign_extension"] {
+    for d in ["config_invalid", "not_writable", "backup_failed", "plan_changed", "audit_unavailable", "install_failed", "unsupported_platform", "unsafe_target", "install_unverified", "foreign_extension", "unsafe_folder"] {
         st.apply(&json!({"type":"agents","agents":[{"id":"codex","state":"error","detail":d}]})).unwrap();
         assert_eq!(serde_json::to_value(&st).unwrap()["agents"][0]["detail"], json!(d), "{d}");
     }
     st.apply(&json!({"type":"agents","agents":[{"id":"codex","state":"error","detail":"stderr: /home/a/secret"}]})).unwrap();
     assert_eq!(serde_json::to_value(&st).unwrap()["agents"][0]["detail"], json!(null));
+}
+
+#[test]
+fn an_unsafe_folder_is_forwarded_only_with_a_closed_reason_and_for_that_detail() {
+    let mut st = ClientState::connected();
+    let get = |st: &ClientState, k: &str| serde_json::to_value(st).unwrap()["agents"][0].get(k).cloned().unwrap_or(json!(null));
+    st.apply(&json!({"type":"agents","agents":[{"id":"pi","state":"error","detail":"unsafe_folder","folder":"/home/u/.pi","folder_reason":"writable"}]})).unwrap();
+    assert_eq!((get(&st, "folder"), get(&st, "folder_reason")), (json!("/home/u/.pi"), json!("writable")));
+    for bad in [
+        json!({"detail":"unsafe_folder","folder":"/home/u/.pi","folder_reason":"nope"}),
+        json!({"detail":"unsafe_folder","folder":"/a\nb","folder_reason":"acl"}),
+        json!({"detail":"unsafe_folder","folder":"","folder_reason":"acl"}),
+        json!({"detail":"install_failed","folder":"/home/u/.pi","folder_reason":"acl"}),
+    ] {
+        let mut a = json!({"id":"pi","state":"error"});
+        a.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        st.apply(&json!({"type":"agents","agents":[a]})).unwrap();
+        assert_eq!((get(&st, "folder"), get(&st, "folder_reason")), (json!(null), json!(null)), "{bad}");
+    }
 }
 
 // ---- #414: the connected providers' catalogue (Ajustes → Modelos) -----------------------------------------
@@ -632,4 +672,40 @@ mod direct {
             assert!(fold_direct(&bad).is_none(), "{bad}");
         }
     }
+}
+
+#[test]
+fn custom_gateway_frames_are_validated_like_the_daemon() {
+    let urls_bad = ["http://gateway.example/v1", "http://localhost:4000/v1", "http://192.168.1.2/v1", "http://127.1/v1", "http://2130706433/v1",
+        "http://0x7f000001/v1", "ftp://gateway.example/v1", "javascript:alert(1)", "file:///tmp/a", "https://user:pw@gateway.example/v1",
+        "https://gateway.example/v1?key=x", "https://gateway.example/v1#x", "https://gateway.example/%2e%2e/v1", "https://gateway.example/a/../v1",
+        "https://gateway.example/./v1", "https://exam ple.com/v1", "https://gateway.example\\@evil.com/v1", "https://éxample.com/v1",
+        "https://gateway.example:0/v1", "https://gateway.example:65536/v1", "https:///v1", "", "https://gateway.example/v1/ x", "http://127.0.0.1:99999/v1"];
+    for url in urls_bad {
+        assert!(parse_ui_command(&json!({"action":"custom_account_create","label":"x","baseUrl":url})).is_err(), "create {url}");
+        assert!(parse_ui_command(&json!({"action":"custom_endpoint_set","accountId":"gw","baseUrl":url})).is_err(), "endpoint {url}");
+    }
+    // Accepted by the daemon's validateCustomBaseUrl as well (checked with node while writing this test).
+    for url in ["https://gateway.example/v1", "http://127.0.0.1:4000/v1", "http://[::1]:4000", "https://gateway.example/", "https://Gateway.Example:443/v1/", "http://127.0.0.1", "https://1.2.3.4/v1", "https://[2001:db8::1]/v1"] {
+        assert!(parse_ui_command(&json!({"action":"custom_account_create","label":"x","baseUrl":url})).is_ok(), "{url}");
+    }
+    for bad in [json!({"action":"custom_account_create","label":"","baseUrl":"https://g.example/v1"}), json!({"action":"custom_account_create","label":"x\ny","baseUrl":"https://g.example/v1"}),
+        json!({"action":"custom_account_create","label":"x","baseUrl":"https://g.example/v1","apiKey":"sk-secret"}),
+        json!({"action":"custom_account_create","label":"x","baseUrl":"https://g.example/v1","accountId":"gw"}),
+        json!({"action":"custom_account_create","label":"x"}), json!({"action":"custom_endpoint_set","accountId":"../x","baseUrl":"https://g.example/v1"}),
+        json!({"action":"custom_endpoint_set","baseUrl":"https://g.example/v1"}), json!({"action":"custom_models_refresh","accountId":"A B"}),
+        json!({"action":"custom_models_refresh"}), json!({"action":"custom_models_refresh","accountId":"gw","extra":1})] {
+        assert!(parse_ui_command(&bad).is_err(), "must refuse {bad}");
+    }
+}
+
+#[test]
+fn labels_are_measured_in_utf16_units_like_the_daemon() {
+    // The daemon counts JS string length (UTF-16 units): 40 emoji = 80 units (ok), 41 = 82 (refused).
+    let frame = |label: String| json!({"action":"custom_account_create","label":label,"baseUrl":"https://g.example/v1"});
+    assert!(parse_ui_command(&frame("\u{1F600}".repeat(40))).is_ok());
+    assert!(parse_ui_command(&frame("\u{1F600}".repeat(41))).is_err());
+    assert!(parse_ui_command(&json!({"action":"account_create","provider":"p","label":"\u{1F600}".repeat(41)})).is_err());
+    assert!(parse_ui_command(&frame("a".repeat(80))).is_ok());
+    assert!(parse_ui_command(&frame("a".repeat(81))).is_err());
 }

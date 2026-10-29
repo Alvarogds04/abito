@@ -1,4 +1,7 @@
 'use strict';
+const { tmpBase, assertMode } = require('./platform-env.cjs');
+// macOS: tmpBase() is /var/folders/... and /var is a symlink to /private/var; the installers refuse a settings path that contains a
+// symlink (correct for a real home), so the fixture home is canonicalized (as the other install tests already do).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -6,9 +9,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { planStatusLine, runStatusLineInstall, STATUSLINE_BIN, isOurs } = require('../src/install-statusline.cjs');
 
-const uid = process.getuid();
+const uid = process.getuid?.();
 function home(settings) {
-  const h = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-isl-'));
+  const h = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-isl-')));
   fs.mkdirSync(path.join(h, '.claude'));
   const file = path.join(h, '.claude', 'settings.json');
   if (settings !== undefined) fs.writeFileSync(file, settings, { mode: 0o600 });
@@ -18,7 +21,7 @@ let tick = 0;
 const run = async (argv, t, extra = {}) => {
   let out = '', err = '';
   const code = await runStatusLineInstall(argv, { out: s => { out += s; }, err: s => { err += s; }, env: { HOME: t.h }, homedir: () => t.h, isTTY: () => true,
-    prompt: async () => (argv.includes('--remove') ? 'remove' : 'install'), now: () => new Date(Date.UTC(2026, 9, 18, 12, 0, 0, tick++)), execPath: '/usr/bin/node', ...extra });
+    prompt: async () => (argv.includes('--remove') ? 'remove' : 'install'), now: () => new Date(Date.UTC(2026, 9, 18, 12, 0, 0, tick++)), execPath: process.platform === 'win32' ? process.execPath : '/usr/bin/node', ...extra });
   return { code, out, err };
 };
 
@@ -58,7 +61,7 @@ test('the user\'s own status line is saved, keeps its other keys, and comes back
   assert.equal(installed.statusLine.padding, 2);
   assert.ok(isOurs(installed.statusLine));
   assert.equal(JSON.parse(fs.readFileSync(t.prev, 'utf8')).command, '~/bin/mine.sh');
-  assert.equal(fs.statSync(t.prev).mode & 0o777, 0o600);
+  assertMode(t.prev, 0o600);
   assert.equal((await run(['--user', '--remove', '--apply'], t)).code, 0);
   assert.equal(fs.readFileSync(t.file, 'utf8'), original);
   assert.equal(fs.existsSync(t.prev), false);
@@ -114,8 +117,8 @@ test('apply needs a terminal and the typed word; anything else aborts with nothi
 test('a missing file is created 0600 and removed again without leaving an empty junk file behind in the saved copy', async () => {
   const t = home(undefined);
   assert.equal((await run(['--user', '--apply'], t)).code, 0);
-  assert.equal(fs.statSync(t.file).mode & 0o777, 0o600);
-  assert.equal(planStatusLine({ settingsPath: t.file, remove: false, uid, execPath: '/usr/bin/node' }).changed, false);
+  assertMode(t.file, 0o600);
+  assert.equal(planStatusLine({ settingsPath: t.file, remove: false, uid, execPath: process.platform === 'win32' ? process.execPath : '/usr/bin/node' }).changed, false);
 });
 
 test('bad arguments are a usage error', async () => {

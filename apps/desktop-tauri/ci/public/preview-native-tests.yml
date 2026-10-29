@@ -76,13 +76,12 @@ jobs:
         run: |
           node test-node/pi-install-check.cjs
           exit $LASTEXITCODE
-      - name: Pi companion tests (desktop-pi, HU-052 ask routing) on Windows Node
+      - name: Pi companion tests (desktop-pi, full suite, HU-054) on Windows Node
         if: ${{ !cancelled() }}
         working-directory: apps/desktop-pi
         run: |
-          # Only the files that cover the ask / confirm routing (HU-052). The rest of apps/desktop-pi/test was never run on
-          # Windows or macOS and fails there for Linux reasons (unix-socket listen, /run/user paths): a parity gap, not run here.
-          node --test test/native-ask.test.cjs test/native-confirm.test.cjs
+          # The WHOLE suite (HU-054): each OS exercises its real transport (named pipe on Windows, Unix socket elsewhere).
+          npm test
           exit $LASTEXITCODE
 
   macos:
@@ -123,8 +122,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           node test-node/pi-install-check.cjs
-      - name: Pi companion tests (desktop-pi, HU-052 ask routing) on macOS Node
+      - name: Pi companion tests (desktop-pi, full suite, HU-054) on macOS Node
         if: ${{ !cancelled() }}
         working-directory: apps/desktop-pi
         run: |
-          node --test test/native-ask.test.cjs test/native-confirm.test.cjs
+          npm test
