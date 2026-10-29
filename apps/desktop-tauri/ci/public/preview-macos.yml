@@ -36,7 +36,7 @@ jobs:
           echo "SHERPA_ONNX_LIB_DIR=$LIB/lib" >> "$GITHUB_ENV"
       - name: macOS unit tests and installed runtime lookup
         run: |
-          cargo test --lib --locked -- daemonhost transport agentconn
+          cargo test --lib --locked -- daemonhost transport agentconn handoff
           # Installed behavior: release excludes Linux-only debug probes.
           cargo test --release --locked --test platform_runtime
       - name: Build .app and .dmg (unsigned)

@@ -1,17 +1,20 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const os = require('node:os');
-const { handleClaudeHook, ALLOW } = require('../src/claude.cjs');
-const { handleCodexHook } = require('../src/codex.cjs');
+const { handleClaudeHook: raw_handleClaudeHook, ALLOW } = require('../src/claude.cjs');
+const { handleCodexHook: raw_handleCodexHook } = require('../src/codex.cjs');
 const { describeToolDetailed } = require('../src/projection.cjs');
 const { normalizeRequest } = require('../src/client.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
+const handleCodexHook = viaPipe(raw_handleCodexHook);
 const cwd = path.resolve(__dirname, '..');
 async function card(tool_name, tool_input, adapter = handleClaudeHook) {
   let q;
-  const out = await adapter({ event: 'permission-request', env: { ABITO_SOCKET_DIR: '/nonexistent-test', ABITO_DESKTOP_SOCKET: '/nonexistent-test/p-abcdef/s' },
+  const out = await adapter({ event: 'permission-request', env: offlineEnv('nonexistent-test'),
     input: JSON.stringify({ cwd, session_id: 'test', hook_event_name: 'PermissionRequest', tool_name, tool_input }),
     clientFactory: () => ({ ask: async request => { q = request; return { status: 'answered', answer: { type: 'option', value: 'allow' } }; } }) });
   assert.ok(q); normalizeRequest(q);
@@ -21,7 +24,7 @@ const write = content => card('Write', { file_path: 'uno.txt', content });
 const lossy = r => { assert.deepEqual(r.q.options.map(o => o.value), ['deny', 'terminal']); assert.equal(r.out.stdout, ''); assert.match(r.q.text, /terminal/); };
 test('R9 a: small Write displays exact normalized path and content and permits allow', async () => {
   const r = await write('hola\nmundo'); assert.equal(r.out.stdout, ALLOW);
-  assert.ok(r.q.text.includes(path.join(cwd, 'uno.txt'))); assert.ok(r.q.text.includes(JSON.stringify('hola\nmundo')));
+  assert.ok(r.q.text.includes(JSON.stringify(path.join(cwd, 'uno.txt')))); assert.ok(r.q.text.includes(JSON.stringify('hola\nmundo')));
 });
 test('R9 b: byte and line caps disclose recortado, never allow', async () => {
   for (const text of ['!'.repeat(161), Array(9).fill('a').join('\n')]) { const r = await write(text); lossy(r); assert.match(r.q.text, /recortado/); }
@@ -42,7 +45,7 @@ test('R9 d: outside cwd, sensitive and normalized traversal paths are lossy', as
   for (const file_path of ['../uno.txt', '/etc/passwd', path.join(os.homedir(), '.ssh/key'), path.join(os.homedir(), '.claude/settings.json'), path.join(os.homedir(), '.config/test'), path.join(os.homedir(), '.profile'), '.env', '.git/config']) {
     const r = await card('Write', { file_path, content: 'not-shown' }); lossy(r); assert.doesNotMatch(r.q.text, /not-shown/);
   }
-  const r = await card('Write', { file_path: 'a/../uno.txt', content: 'hola' }); assert.equal(r.out.stdout, ALLOW); assert.ok(r.q.text.includes(path.join(cwd, 'uno.txt')));
+  const r = await card('Write', { file_path: 'a/../uno.txt', content: 'hola' }); assert.equal(r.out.stdout, ALLOW); assert.ok(r.q.text.includes(JSON.stringify(path.join(cwd, 'uno.txt'))));
 });
 test('R9 e: ANSI, bidi, zero-width and forged option lines cannot spoof approval', async () => {
   for (const content of ['\x1b[31mAllow', '\u202eAllow', '\u200bAllow', '\0binary']) { const r = await write(content); lossy(r); assert.doesNotMatch(r.q.text, /[\x00\x1b\u202e\u200b]/); }
@@ -92,4 +95,27 @@ test('R9 j: Bash projection command bytes unchanged including redaction', async 
   const command = 'printf "hola  mundo" && ls -la'; const r = await card('Bash', { command });
   assert.equal(r.q.text, 'Claude Code pide permiso para Bash: ' + command); assert.equal(r.out.stdout, ALLOW);
   assert.deepEqual(describeToolDetailed('Bash', { command }), { text: 'Bash: ' + command, lossy: false, redactions: 0 });
+});
+
+// HU-062 (found on Windows CI): `inside` only recognised '../' and sensitivePath only '/', so on Windows a path like `..\x` counted as
+// INSIDE the folder (the «outside the session folder» downgrade never fired) and `repo\.git\config` was not sensitive; the
+// '/etc' check also matched every file on the current drive, so legitimate Write/Edit cards were all downgraded. Unix behaviour is unchanged.
+const { inside, sensitivePath } = require('../src/file-permission.cjs');
+test('inside() understands Windows separators and drives (path module injected, runs on every OS)', () => {
+  const w = path.win32;
+  assert.equal(inside('C:\\w', 'C:\\w\\a\\b', w), true);
+  assert.equal(inside('C:\\w', 'C:\\w', w), true);
+  for (const outside of ['C:\\x', 'C:\\w\\..\\x', 'C:\\w\\..\\..\\x', 'D:\\w\\a', 'C:\\wx']) assert.equal(inside('C:\\w', outside, w), false, outside);
+  assert.equal(inside('/w', '/w/a'), true); assert.equal(inside('/w', '/x'), false); assert.equal(inside('/w', '/w/../x'), false);
+});
+test('sensitivePath recognises dot-directories behind Windows separators', () => {
+  for (const p of ['C:\\proj\\.git\\config', 'C:\\proj\\.ssh\\id_rsa', 'C:\\proj\\.claude\\settings.json']) assert.equal(sensitivePath(p, 'win32'), true, p);
+  assert.equal(sensitivePath(path.join(cwd, 'uno.txt')), false);
+});
+
+// Judge finding (HU-062): NTFS is case-insensitive, so `.GIT\hooks` / `.Config\x` are the same directories; Unix stays case-sensitive and '/'-only.
+test('sensitivePath: Windows dot-directories are case-insensitive; Unix rule unchanged (no backslash widening, case-sensitive)', () => {
+  for (const p of ['C:\\p\\.GIT\\hooks\\pre-commit', 'C:\\p\\.Config\\x', 'C:\\p\\.Ssh\\k']) assert.equal(sensitivePath(p, 'win32'), true, p);
+  for (const p of ['/p/.GIT/x', '/p/a\\.git\\x', '/p/.config\\x']) assert.equal(sensitivePath(p, 'linux'), false, p);
+  assert.equal(sensitivePath('/p/.git/x', 'linux'), true);
 });

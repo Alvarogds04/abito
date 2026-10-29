@@ -12,7 +12,7 @@ fn fresh_root() -> PathBuf {
         for entry in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let Some(pid) = name.strip_prefix("abito-ho-").and_then(|p| p.parse::<u32>().ok()) else { continue };
-            if pid != std::process::id() && !Path::new(&format!("/proc/{pid}")).exists() {
+            if pid != std::process::id() && !super::pid_alive(pid) {
                 let _ = std::fs::remove_dir_all(entry.path());
             }
         }
@@ -165,7 +165,7 @@ fn a_file_left_by_a_killed_island_is_not_believed_even_if_the_socket_inode_linge
 
 // ---- #313 (engine suggestion): a PID alone is not an identity — a recycled pid would be believed ---------------
 #[test]
-fn the_start_time_of_a_process_is_read_from_proc_and_is_a_decimal_string() {
+fn the_start_time_of_a_process_is_read_from_the_kernel_and_is_a_decimal_string() {
     let mine = proc_start(std::process::id()).expect("our own start time");
     assert!(!mine.is_empty() && mine.bytes().all(|b| b.is_ascii_digit()), "{mine}");
     assert_eq!(proc_start(std::process::id()), Some(mine.clone()), "stable for the life of the process");
@@ -262,4 +262,28 @@ fn the_real_node_reader_finds_the_endpoint_in_the_file_publish_writes() {
     std::fs::write(path(&root), forged).unwrap();
     let out = std::process::Command::new("node").arg("-e").arg(format!("const {{resolveConfig}}=require({:?}); const r=resolveConfig({{ABITO_SOCKET_DIR:{:?}}}, process.getuid()); process.stdout.write(r.endpoint||'none');", reader, root)).output().expect("node");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "none");
+}
+
+// ---- HU-068: macOS has a receiver, so it publishes the handoff too (it used to compile the «no receiver» stub) ----
+#[test]
+fn liveness_uses_the_kernel_on_every_unix() {
+    assert!(super::pid_alive(std::process::id()), "we are alive");
+    assert!(!super::pid_alive(4_194_999), "a pid that does not exist is not alive");
+    assert!(!super::pid_alive(0));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_start_time_is_whole_epoch_seconds_like_the_engine_reader() {
+    let mine: u64 = proc_start(std::process::id()).expect("our start time").parse().unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    assert!(mine <= now && now - mine < 24 * 3600, "seconds since the epoch, not ticks: {mine} vs {now}");
+}
+
+#[test]
+fn the_socket_path_limit_matches_this_kernel() {
+    #[cfg(target_os = "linux")]
+    assert_eq!(super::SUN_PATH_MAX, 107);
+    #[cfg(target_os = "macos")]
+    assert_eq!(super::SUN_PATH_MAX, 103);
 }

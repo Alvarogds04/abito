@@ -27,7 +27,7 @@ async function handleOpencodeHook({ event, input, env = {}, argv = [], now, clie
     if (!isObject(data) || !validCwd(data.directory) || typeof data.sessionID !== 'string' || (event === 'permission-request' && typeof data.type !== 'string')) return none();
     if (event === 'stop') { // session.idle: one settled notice, never any output
       let cfg;
-      try { cfg = resolveConfig(env, process.getuid()); } catch { return none(); }
+      try { cfg = resolveConfig(env, process.getuid?.()); } catch { return none(); }
       if (!cfg.endpoint) return none();
       await clientFactory({ endpoint: cfg.endpoint, runtime: cfg.runtime, cwd: data.directory, sessionId: sessionToken(data.sessionID), agent: 'opencode', onDiagnostic: () => {} }).notify();
       return none();
@@ -35,7 +35,7 @@ async function handleOpencodeHook({ event, input, env = {}, argv = [], now, clie
     const deadline = computeDeadline({ cliTimeoutMs: args.timeoutSec * 1000, maxMs: MAX_ISLAND_WAIT_MS });
     if (deadline.mode !== 'ask') return none('Abito island: hook timeout too short for a question. Answer in the terminal.\n');
     let config;
-    try { config = resolveConfig(env, process.getuid()); } catch { return none('Abito island: invalid configuration.\n'); }
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Abito island: invalid configuration.\n'); }
     if (!config.endpoint) return none('Abito island unavailable. Answer in the terminal.\n');
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd: data.directory, sessionId: sessionToken(data.sessionID), agent: 'opencode', onDiagnostic: () => {} };
     if (typeof now === 'function') options.clock = { now, setTimer: setTimeout, clearTimer: clearTimeout };

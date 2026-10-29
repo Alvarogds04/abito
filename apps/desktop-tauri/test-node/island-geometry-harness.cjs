@@ -16,12 +16,22 @@ function findPlaywright() {
   return null;
 }
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
-function serve() {
+// abito-pausa (human, 0.1.2: integrations are paused in this version, frontend/paused.js): the GitHub / service cards these checks
+// measure are switched off by the real product. A scenario that exercises them (`github`, `declared`) serves paused.js with
+// `integrations` removed from PAUSED, so the layout is still verified for the version that turns them back on. Nothing else changes.
+const needsIntegrations = scenario => Boolean(scenario.github || scenario.declared || scenario.focusGithub);
+function serve(scenario = {}) {
   const server = http.createServer((req, res) => {
     const f = path.join(frontend, decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html');
     if (!f.startsWith(frontend) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' });
-    res.end(fs.readFileSync(f));
+    let body = fs.readFileSync(f);
+    if (path.basename(f) === 'paused.js' && needsIntegrations(scenario)) {
+      const text = body.toString('utf8'), live = text.replace("'integrations', ", '');
+      if (live === text) throw new Error('paused.js no longer lists integrations: update the harness unpause rule');
+      body = Buffer.from(live);
+    }
+    res.end(body);
   });
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
@@ -39,7 +49,7 @@ const UUID = '0b3a5c9e-8f27-4d11-9a0e-1c2d3e4f5a6b';
 async function open(scenario = {}) {
   const pw = findPlaywright();
   if (!pw) return null;
-  const server = await serve();
+  const server = await serve(scenario);
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await pw.chromium.launch({ args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 752, height: 340 } });
@@ -49,6 +59,7 @@ async function open(scenario = {}) {
     const notices = scenario.noticeRows || Array.from({ length: scenario.notices || 0 }, (_, i) => ({ id: `n${i + 1}`, title: scenario.noticeTitle || 'Pi terminó su turno', detail: `Resultado número ${i + 1}`, severity: 'info', kind: 'settled', expiresAt: Date.now() + 600000, agent: 'pi', projectName: 'workspace' }));
     if (scenario.finishedCard) notices.push({ id: UUID, title: 'Pi terminó su turno', detail: scenario.finishedText || 'Migración aplicada, 14 tests pasan.', severity: 'info', kind: 'settled', expiresAt: Date.now() + 600000, agent: scenario.finishedCard, projectName: 'api' });
     const snap = { state: 'expanded', notices, card: null, request: null, revision: 1, motionOverride: false, unavailable: scenario.unavailable === true, connections: scenario.engine === 'down' ? 0 : 1 };
+    if (scenario.bridgeCard) snap.card = { operation: 'bash: npm run build', reason: null, state: 'pending', expires_at: new Date(Date.now() + 600000).toISOString() };
     const accounts = scenario.engine === 'account' ? [] : [{ configured: true, local: false }];
     const connection = scenario.engine === 'down' ? 'no_daemon' : 'connected';
     const OPT = (i, label, description = '') => ({ index: i, label, description });

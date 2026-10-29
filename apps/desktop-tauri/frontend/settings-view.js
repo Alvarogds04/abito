@@ -283,6 +283,14 @@
     return segments;
   }
 
+  // HU-057 S9: «Tamaño de la isla» — closed set S/M/L/Auto on the prefs wire (island_size); a foreign stored value reads as Auto.
+  const ISLAND_SIZES = Object.freeze([{ id: 's', label: 'S' }, { id: 'm', label: 'M' }, { id: 'l', label: 'L' }, { id: 'auto', label: 'Auto' }]);
+  function islandSizeSegments(size) {
+    const valid = ISLAND_SIZES.some(x => x.id === size) ? size : 'auto';
+    return ISLAND_SIZES.map(x => ({ id: x.id, label: x.label, selected: x.id === valid }));
+  }
+  function islandSizeProblem(size) { return ISLAND_SIZES.some(x => x.id === size) ? '' : 'Elegí S, M, L o Auto.'; }
+
   // ---- hotkey capture (a pressed combination -> canonical text) -------------------------------------------------------
   const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta', 'AltGraph', 'OS', 'Super']);
   function captureCombo(event) {
@@ -574,6 +582,15 @@
     install_unverified: 'No se pudieron verificar los archivos instalados de Abito; no se tocó nada. Reinstalá Abito.',
     foreign_extension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.',
   });
+  // HU-047: the refused folder is named exactly (the daemon forwards it with a closed reason); chmod only where chmod can fix it.
+  const FOLDER_OK = (f, r) => typeof f === 'string' && f !== '' && f.length <= 400 && !/[\u0000-\u001f\u007f]/.test(f) && (r === 'writable' || r === 'foreign_owner' || r === 'acl');
+  const shellArg = d => /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(d) ? d : `'${d.replace(/'/g, `'\\''`)}'`;
+  function unsafeFolderNote(folder, reason) {
+    if (!FOLDER_OK(folder, reason)) return AGENT_ERRORS.unsafe_target;
+    if (reason === 'writable') return `La carpeta ${folder} la puede modificar otro usuario o grupo; quitale el permiso de escritura (chmod g-w,o-w ${shellArg(folder)}) y volvé a intentar.`;
+    if (reason === 'foreign_owner') return `La carpeta ${folder} pertenece a otro usuario y Abito solo escribe en carpetas tuyas; cambiale el dueño a tu usuario (con permisos de administrador) y volvé a intentar.`;
+    return `La carpeta ${folder} tiene permisos de Windows (ACL) que dan acceso a otros usuarios o no es tuya; dejala accesible solo para tu usuario (Propiedades > Seguridad) y volvé a intentar.`;
+  }
   const PLAN_FALLBACK = 'Se van a agregar los hooks de Abito. Antes se hace un respaldo.';
   const PLAN_HASH = /^[0-9a-f]{64}$/;
   // The engine prints a CLOSED English template for the plan. The page never shows engine text: it recognises
@@ -674,7 +691,8 @@
       if (st === 'unavailable') note = platformUnavailable ? 'La instalación automática todavía no está disponible en Windows.' : 'No está instalado en esta computadora.';
       if (st === 'error') {
         primary = { label: 'Reintentar', command: hash ? connectCmd() : cmd('agent_connect') };
-        note = Object.prototype.hasOwnProperty.call(AGENT_ERRORS, a.detail) ? AGENT_ERRORS[a.detail] : 'No se pudo completar; no se tocó nada.';
+        note = a.detail === 'unsafe_folder' ? unsafeFolderNote(a.folder, a.folder_reason)
+          : Object.prototype.hasOwnProperty.call(AGENT_ERRORS, a.detail) ? AGENT_ERRORS[a.detail] : 'No se pudo completar; no se tocó nada.';
       }
       if (a.id === 'pi' && !platformUnavailable) note += `${note ? ' ' : ''}Solo ~/.pi/agent. Si usás otro PI_CODING_AGENT_DIR, esa sesión no carga esta instalación. Reiniciá Pi después de cambiar los hooks.`;
       const trust = a.trust_review === true;
@@ -708,11 +726,12 @@
   const ENGINE_ERRORS = Object.freeze({
     failed: ['No se pudo', 'triangle', 'red'], busy: ['Motor ocupado', 'lock', 'sun'],
     bad_request: ['Pedido no válido', 'triangle', 'red'], rate_limited: ['Demasiados pedidos', 'clock', 'sun'],
+    store_not_private: ['Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.', 'lock', 'red'],
     unavailable: ['No disponible', 'plug-off', 'faint'], not_busy: ['Nada en curso', 'info', 'faint'], unknown_ask: ['Pedido desconocido', 'info', 'faint'],
   });
   const errorSeq = st => (st && st.last_error && Number.isInteger(st.last_error.n) ? st.last_error.n : 0);
   function commandOutcome(before, after, okSay) {
-    const failure = (word, icon, tone) => ({ ok: false, word, icon, tone, say: `${word}.` });
+    const failure = (word, icon, tone) => ({ ok: false, word, icon, tone, say: /[.!?]$/.test(word) ? word : `${word}.` });
     if (!after || typeof after !== 'object') return failure('No se pudo', 'triangle', 'red');
     if (after.connection && after.connection !== 'connected') {
       const cv = connectionView(after);
@@ -854,7 +873,7 @@
     return '';
   }
 
-  return { PI_SECTIONS, KEY_IDS, keyRows, keyPayload, keyError, ownedAccounts, colorRows, soundGainProblem, gainPercent, autoCloseSegments, isSettingsWindow, settingsWindowView, quickPanelView, displayNameProblem, islandInteractionView, autoCloseProblem, commandOutcome, hotkeySetOutcome, makeDrafts, providerRows, cancelPlan, TABS, tabById, tabAlias, servicesGroupVisible, tabKeyTarget, METHOD_CARDS, providerList, loginPlan, pendingLogin, pendingLoginReady, connectedAccounts, AGENT_IDS, agentsView, directOutcome, agentActionFailure, planSummary, AGENTS_WAIT_MS, CONNECT_WAIT_MS, LOGOUT_WORD, SOUND_DEFAULT: false, connectionView, accountRows, loginMethods, createValidity,
+  return { PI_SECTIONS, KEY_IDS, keyRows, keyPayload, keyError, ownedAccounts, colorRows, soundGainProblem, gainPercent, autoCloseSegments, islandSizeSegments, islandSizeProblem, isSettingsWindow, settingsWindowView, quickPanelView, displayNameProblem, islandInteractionView, autoCloseProblem, commandOutcome, hotkeySetOutcome, makeDrafts, providerRows, cancelPlan, TABS, tabById, tabAlias, servicesGroupVisible, tabKeyTarget, METHOD_CARDS, providerList, loginPlan, pendingLogin, pendingLoginReady, connectedAccounts, AGENT_IDS, agentsView, directOutcome, agentActionFailure, planSummary, AGENTS_WAIT_MS, CONNECT_WAIT_MS, LOGOUT_WORD, SOUND_DEFAULT: false, connectionView, accountRows, loginMethods, createValidity,
     modelsTabView, chosenToggle, chosenModelsPayload,
     maskInput, promptView, replyValid, eventView, safeWebUrl, flowOutcome, connectorsView, soundDefault, generalView, captureCombo,
     maskInput, promptView, replyValid, eventView, safeWebUrl, flowOutcome, connectorsView, soundDefault, generalView, captureCombo,

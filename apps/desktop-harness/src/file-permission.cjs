@@ -7,7 +7,8 @@ const { redactCommand, touchesCredentialPath } = require('./redact.cjs');
 const MAX_LINES = 8, MAX_BYTES = 160, MAX_PATH_BYTES = 160, MAX_EDITS = 3, MAX_SCAN_BYTES = 4096;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const unsafe = s => /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cs}\u2028\u2029\x00-\x08\x0b-\x1f\x7f-\x9f]/u.test(s);
-const inside = (root, target) => { const rel = path.relative(root, target); return rel !== '..' && !rel.startsWith('../') && !path.isAbsolute(rel); };
+// `pathMod` is a test seam (path.win32 on any OS); production always uses the platform's own `path`.
+const inside = (root, target, pathMod = path) => { const rel = pathMod.relative(root, target); return rel !== '..' && !rel.startsWith('..' + pathMod.sep) && !pathMod.isAbsolute(rel); };
 // Resolve existing ancestors too: a nonexistent destination inside a symlink is not implicitly trusted.
 function canonical(target) {
   const suffix = [];
@@ -36,10 +37,13 @@ function secret(s) {
   return r.redactions > 0 || /(?:^|\n)\s*(?:export\s+)?[A-Za-z_][\w]*\s*=/m.test(s) ||
     /(?:key|token|secret|password|credential|private|authorization)\s*["']?\s*[:=]/i.test(s) || /PRIVATE KEY/.test(s);
 }
-function sensitivePath(p) {
+// Dot-directories that hold credentials or control tooling. Windows: either separator and case-insensitive (NTFS is);
+// elsewhere the Unix rule is unchanged ('/' only, case-sensitive). `platform` is a test seam.
+const DOT_DIRS = { win32: /(?:^|[\\/])\.(?:ssh|claude|codex|config|git)(?:[\\/]|$)/i, posix: /(?:^|\/)\.(?:ssh|claude|codex|config|git)(?:\/|$)/ };
+function sensitivePath(p, platform = process.platform) {
   const home = os.homedir();
   return touchesCredentialPath(p) || inside('/etc', p) ||
-    /(?:^|\/)\.(?:ssh|claude|codex|config|git)(?:\/|$)/.test(p) ||
+    (platform === 'win32' ? DOT_DIRS.win32 : DOT_DIRS.posix).test(p) ||
     (inside(home, p) && path.relative(home, p).startsWith('.'));
 }
 function describeFilePermission(name, input, cwd) {
@@ -95,4 +99,4 @@ function describeFilePermission(name, input, cwd) {
     return { filePreview: true, text: full, lossy: trimmed, ...(trimmed ? { reason: 'contenido recortado (8 líneas / 160 bytes)' } : {}) };
   } catch { return base; }
 }
-module.exports = { describeFilePermission, sensitivePath, secret, canonical, MAX_LINES, MAX_BYTES, MAX_PATH_BYTES, MAX_EDITS };
+module.exports = { describeFilePermission, inside, sensitivePath, secret, canonical, MAX_LINES, MAX_BYTES, MAX_PATH_BYTES, MAX_EDITS };
