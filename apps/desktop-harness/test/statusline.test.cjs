@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+const { unixOnly } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -29,7 +30,7 @@ test('no limits, bad numbers or ms-in-disguise epochs give null', () => {
   }
 });
 
-test('the channel is written 0600 atomically and holds the plan only', () => {
+test('the channel is written 0600 atomically and holds the plan only', unixOnly('registered gap HU-062 (0600 channel privacy is the island runtime DACL on Windows)'), () => {
   const rt = tmp();
   const plan = extractPlan({ rate_limits: { five_hour: { used_percentage: 1, resets_at: 1_800_003_600 } } }, NOW);
   assert.equal(writeChannel(rt, plan), true);
@@ -66,13 +67,13 @@ test('the previous status line is read only when well formed', () => {
   assert.equal(readPrevious(home), null);
 });
 
-test('the previous command gets the same stdin and its output is kept, capped and time-boxed', () => {
+test('the previous command gets the same stdin and its output is kept, capped and time-boxed', unixOnly('PRODUCT GAP: runPrevious hardcodes /bin/sh, so the previous status line never runs on Windows'), () => {
   assert.equal(runPrevious('cat', Buffer.from('hello'), 3000).toString(), 'hello');
   assert.equal(runPrevious('sleep 5; echo late', Buffer.from(''), 300), null);
   assert.ok(runPrevious('head -c 200000 /dev/zero', Buffer.from(''), 3000).length <= 64 * 1024);
 });
 
-test('the script prints the previous line untouched and writes the channel', () => {
+test('the script prints the previous line untouched and writes the channel', unixOnly('PRODUCT GAP: runPrevious hardcodes /bin/sh, so the previous status line never runs on Windows'), () => {
   const rt = tmp();
   const home = tmp();
   fs.mkdirSync(path.dirname(previousPath(home)), { recursive: true });

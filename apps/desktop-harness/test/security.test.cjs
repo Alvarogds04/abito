@@ -5,13 +5,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { verifyEndpoint } = require('../src/security.cjs');
 const { fakeReceiver } = require('./fake-receiver.cjs');
+// Unix socket mechanism (mode bits, uid, sun_path) does not exist on Windows. The Windows equivalent of every test gated
+// here is 'windows verifyEndpoint: metadata shape + runtime binding, no unix socket checks' in windows-transport.test.cjs
+// (shape and runtime binding; owner-only DACL, live pid and server SID are verified by the native relay, covered by the island's Rust tests).
+const unixOnly = { skip: process.platform === 'win32' && 'Unix socket mechanism; Windows twin: windows-transport.test.cjs «windows verifyEndpoint»' };
 
 test('accepts a private socket and returns dev/ino', async t => {
   const r = await fakeReceiver(t);
   const id = verifyEndpoint(r.endpoint, r.runtime);
   assert.ok(Number.isInteger(id.ino) && id.dev !== undefined);
 });
-test('rejects wrong socket mode, wrong dir mode and runtime mismatch', async t => {
+test('rejects wrong socket mode, wrong dir mode and runtime mismatch', unixOnly, async t => {
   const r = await fakeReceiver(t);
   fs.chmodSync(r.endpoint, 0o666);
   assert.throws(() => verifyEndpoint(r.endpoint, r.runtime));
@@ -37,7 +41,7 @@ test('rejects symlinked endpoint, symlinked directory and regular files', async 
   fs.writeFileSync(path.join(file, 's'), '', { mode: 0o600 });
   assert.throws(() => verifyEndpoint(path.join(file, 's'), r.runtime));
 });
-test('rejects entries owned by someone else (simulated uid mismatch)', async t => {
+test('rejects entries owned by someone else (simulated uid mismatch)', unixOnly, async t => {
   const r = await fakeReceiver(t);
   const real = process.getuid;
   process.getuid = () => real.call(process) + 12345;
@@ -48,7 +52,7 @@ test('rejects entries owned by someone else (simulated uid mismatch)', async t =
 // HU-062 (found on macOS CI): the Claude Code / Codex hooks refused EVERY endpoint on macOS because the check hard-coded
 // `process.platform !== 'linux'`, so a hook could never reach the island there (desktop-pi already allowed darwin). The platform is
 // now a seam like on win32; a private Unix socket is accepted on linux and darwin, and any other platform stays refused.
-test('macOS (darwin) accepts a private Unix socket exactly like Linux; unknown platforms stay refused', async t => {
+test('macOS (darwin) accepts a private Unix socket exactly like Linux; unknown platforms stay refused', unixOnly, async t => {
   const r = await fakeReceiver(t);
   const linux = verifyEndpoint(r.endpoint, r.runtime, { platform: 'linux' });
   // darwin's sun_path is 103 bytes: a checkout path long enough to exceed it is refused there, which is the rule under test.
@@ -56,7 +60,7 @@ test('macOS (darwin) accepts a private Unix socket exactly like Linux; unknown p
   else assert.throws(() => verifyEndpoint(r.endpoint, r.runtime, { platform: 'darwin' }), /Unexpected endpoint/);
   for (const platform of ['freebsd', 'sunos', 'aix']) assert.throws(() => verifyEndpoint(r.endpoint, r.runtime, { platform }), /Unexpected endpoint/);
 });
-test('the endpoint path limit follows the platform: 103 bytes on macOS, 107 on Linux', () => {
+test('the endpoint path limit follows the platform: 103 bytes on macOS, 107 on Linux', unixOnly, () => {
   const { endpointShape } = require('../src/config.cjs');
   const runtime = '/r' + 'x'.repeat(80);
   const endpoint = `${runtime}/p-abcdef/s`;

@@ -159,6 +159,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Windows install layout for the harness suite (real ACL helper + manifest)
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop-tauri
+        shell: bash
+        run: |
+          # The checkout is laid out like the install (apps/desktop-harness next to the helper and abito-install.json), so the
+          # installer tests run the real HU-047 Windows path: the native helper, hash-checked against a manifest written by the
+          # SAME generator the installer build uses (packaging/windows/install-manifest.cjs).
+          cargo build --locked --bin abito-private-session
+          cp target/debug/abito-private-session.exe ../abito-private-session.exe
+          node packaging/windows/install-manifest.cjs --dist ../
+          echo "ABITO_TEST_HELPER=$(cd .. && pwd -W)/abito-private-session.exe" >> "$GITHUB_ENV"
       - name: desktop-harness full suite
         working-directory: apps/desktop-harness
         shell: bash

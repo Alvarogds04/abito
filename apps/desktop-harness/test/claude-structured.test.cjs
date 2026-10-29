@@ -3,8 +3,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { plan } = require('../src/claude-ask.cjs');
-const { handleClaudeHook } = require('../src/claude.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { handleClaudeHook: raw_handleClaudeHook } = require('../src/claude.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
 const q = (i = 0, multiSelect = false) => ({ header: `Step ${i}`, question: `Question ${i}?`, multiSelect,
   options: [{ label: 'Alpha', description: '' }, { label: 'Beta', description: '' }] });
 // S2: questions travel on PermissionRequest (allow + updatedInput), never on PreToolUse any more.

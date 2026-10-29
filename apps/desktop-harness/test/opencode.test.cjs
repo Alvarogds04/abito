@@ -3,13 +3,15 @@
 // {"status":"allow"|"deny"} into output.status. Anything else leaves output.status UNTOUCHED, so OpenCode shows its own prompt.
 // NOT verified against a real OpenCode (not installed here): payload fields and the permission.ask wiring are from its docs.
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { handleOpencodeHook, OC_ALLOW, OC_DENY } = require('../src/opencode.cjs');
+const { handleOpencodeHook: raw_handleOpencodeHook, OC_ALLOW, OC_DENY } = require('../src/opencode.cjs');
 const { renderPlugin } = require('../src/install-opencode.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleOpencodeHook = viaPipe(raw_handleOpencodeHook);
 
 const cwd = path.resolve(__dirname, '..');
 const perm = (over = {}) => JSON.stringify({ sessionID: 'ses_1', directory: cwd, type: 'bash', title: 'Run: ls', pattern: 'ls', metadata: { command: 'ls' }, ...over });
@@ -47,10 +49,10 @@ test('anything but a plain bash command is lossy: allow is not offered', async t
 });
 test('every non-answer outcome => EMPTY stdout', async () => {
   for (const s of ['expired', 'busy', 'cancelled', 'human_cancelled', 'unavailable', 'unsupported_receiver', 'protocol_error', 'invalid_request', 'weird']) {
-    const r = await call(perm(), { ABITO_DESKTOP_SOCKET: '/nope' }, { clientFactory: stub(s) });
+    const r = await call(perm(), stubEndpoint(), { clientFactory: stub(s) });
     assert.equal(r.stdout, '', s); assert.equal(r.exitCode, 0);
   }
-  assert.equal((await call(perm(), { ABITO_SOCKET_DIR: '/nonexistent-abito-test' })).stdout, '');
+  assert.equal((await call(perm(), offlineDir('nonexistent-abito-test'))).stdout, '');
   for (const input of ['garbage', '', perm({ directory: 'rel' }), perm({ sessionID: undefined, type: undefined })]) assert.equal((await call(input, {})).stdout, '');
 });
 
@@ -101,7 +103,7 @@ test('plugin: session.idle runs the stop hook (a settled notice) and never touch
   assert.deepEqual(JSON.parse(lines[0].replace(/^opencode stop /, '')), { sessionID: 'ses_1', directory: cwd });
 });
 test('stop adapter: one settled notice naming opencode + project; no island => nothing', async t => {
-  const { handleOpencodeHook: h } = require('../src/opencode.cjs');
+  const h = handleOpencodeHook;
   const rcv = await fakeReceiver(t, {});
   const r = await h({ event: 'stop', input: JSON.stringify({ sessionID: 'ses_1', directory: cwd }), env: envOf(rcv), argv: [] });
   assert.deepEqual(r, { stdout: '', stderr: '', exitCode: 0 });

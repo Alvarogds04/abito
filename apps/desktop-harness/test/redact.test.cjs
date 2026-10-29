@@ -6,7 +6,7 @@ const { redactCommand, PATTERNS } = require('../src/redact.cjs');
 const { describeToolDetailed } = require('../src/projection.cjs');
 const claude = require('../src/claude.cjs');
 const codex = require('../src/codex.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
 
 // Risky command words are assembled so this source never carries them as one literal.
 const SUDO = ['su', 'do'].join(''), SH = ['s', 'h'].join(''), RMRF = ['rm', '-rf'].join(' ');
@@ -468,7 +468,7 @@ const answerer = (rcv, value) => rcv.next('question').then(q => rcv.send({ v: 1,
   sessionId: q.sessionId, at: Date.now(), id: q.id, source: 'human', answer: { type: 'option', value } }));
 // S2 (ad0ae382) keeps Claude answering; S4/T2 makes Codex NOTICE-ONLY, so its rows live in the `Codex (aviso)` block
 // at the end of this file. The redaction contract itself (never a secret on the wire) is asserted for both.
-const ADAPTERS = [['Claude Code', claude.handleClaudeHook, claude]];
+const ADAPTERS = [['Claude Code', viaPipe(claude.handleClaudeHook), claude]];
 const input = command => JSON.stringify({ session_id: 's', cwd, hook_event_name: 'PermissionRequest', tool_name: 'Bash',
   tool_input: { command, description: 'SECRETDESC' }, last_assistant_message: 'SECRETREPLY' });
 const checkSize = (rcv, q) => {
@@ -477,7 +477,7 @@ const checkSize = (rcv, q) => {
 };
 const codexNotice = async (t, command) => {
   const rcv = await fakeReceiver(t, { questions: true });
-  const r = await codex.handleCodexHook({ event: 'permission-request', input: input(command), env: envOf(rcv), argv: [] });
+  const r = await viaPipe(codex.handleCodexHook)({ event: 'permission-request', input: input(command), env: envOf(rcv), argv: [] });
   const notice = await rcv.seen('attention');
   assert.equal(r.stdout, ''); assert.equal(r.exitCode, 0);
   assert.equal(rcv.frames.filter(f => f.type === 'questions_hello' || f.type === 'question').length, 0, 'never a question');

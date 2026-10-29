@@ -2,10 +2,12 @@
 // Copilot CLI permissionRequest hook. Output contract (docs.github.com/copilot/reference/hooks-configuration):
 // {"behavior":"allow"|"deny","message"?} ; empty output or {} = Copilot's normal permission flow. Exit 2 would DENY, so we never use it.
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { handleCopilotHook, COPILOT_ALLOW, COPILOT_DENY } = require('../src/copilot.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { handleCopilotHook: raw_handleCopilotHook, COPILOT_ALLOW, COPILOT_DENY } = require('../src/copilot.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleCopilotHook = viaPipe(raw_handleCopilotHook);
 
 const cwd = path.resolve(__dirname, '..');
 // camelCase is the native shape; the PascalCase/VS Code shape (snake_case) must work too.
@@ -55,17 +57,17 @@ test('a sandbox-bypass request offers only deny / terminal (Copilot ignores allo
 });
 test('every non-answer outcome => EMPTY stdout and exit 0 (never exit 2, which Copilot treats as DENY; never allow)', async () => {
   for (const s of ['expired', 'busy', 'cancelled', 'human_cancelled', 'unavailable', 'unsupported_receiver', 'protocol_error', 'invalid_request', 'weird']) {
-    const r = await call(camel(), { ABITO_DESKTOP_SOCKET: '/nope' }, { clientFactory: stub(s) });
+    const r = await call(camel(), stubEndpoint(), { clientFactory: stub(s) });
     assert.equal(r.stdout, '', s); assert.equal(r.exitCode, 0); assert.doesNotMatch(r.stderr, /ls\b/);
   }
   for (const answer of [{ type: 'option', value: 'always' }, { type: 'text', text: 'allow' }, undefined]) {
-    const r = await call(camel(), { ABITO_DESKTOP_SOCKET: '/x' }, { clientFactory: () => ({ ask: async () => ({ status: 'answered', answer }) }) });
+    const r = await call(camel(), stubEndpoint('x'), { clientFactory: () => ({ ask: async () => ({ status: 'answered', answer }) }) });
     assert.equal(r.stdout, '');
   }
-  assert.equal((await call(camel(), { ABITO_SOCKET_DIR: '/nonexistent-abito-test' })).stdout, '');
+  assert.equal((await call(camel(), offlineDir('nonexistent-abito-test'))).stdout, '');
 });
 test('a forged allow to a question that never offered it is not a decision', async () => {
-  const r = await call(camel({ toolName: 'edit', toolInput: { path: '/x' } }), { ABITO_DESKTOP_SOCKET: '/x' },
+  const r = await call(camel({ toolName: 'edit', toolInput: { path: '/x' } }), stubEndpoint('x'),
     { clientFactory: () => ({ ask: async () => ({ status: 'answered', answer: { type: 'option', value: 'allow' } }) }) });
   assert.equal(r.stdout, '');
 });
@@ -84,6 +86,6 @@ test('sessionEnd (event stop) sends ONE settled notice naming copilot-cli + proj
   for (let i = 0; i < 40 && !rcv.frames.some(f => f.type === 'settled'); i++) await new Promise(x => setTimeout(x, 25));
   const n = rcv.frames.find(f => f.type === 'settled');
   assert.equal(n.agent, 'copilot-cli'); assert.equal(n.projectName, path.basename(cwd));
-  assert.deepEqual(await handleCopilotHook({ event: 'stop', input: camel(), env: { ABITO_SOCKET_DIR: '/nonexistent-abito-test' }, argv: [] }), { stdout: '', stderr: '', exitCode: 0 });
+  assert.deepEqual(await handleCopilotHook({ event: 'stop', input: camel(), env: offlineDir('nonexistent-abito-test'), argv: [] }), { stdout: '', stderr: '', exitCode: 0 });
   assert.deepEqual(await handleCopilotHook({ event: 'weird', input: camel(), env: {}, argv: [] }), { stdout: '', stderr: '', exitCode: 0 });
 });

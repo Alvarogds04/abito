@@ -1,13 +1,16 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { describeToolDetailed, sanitizeText } = require('../src/projection.cjs');
 const { ALLOW } = require('../src/hook-common.cjs');
-const { handleClaudeHook } = require('../src/claude.cjs');
-const { handleCodexHook } = require('../src/codex.cjs');
+const { handleClaudeHook: raw_handleClaudeHook } = require('../src/claude.cjs');
+const { handleCodexHook: raw_handleCodexHook } = require('../src/codex.cjs');
 const { IslandClient } = require('../src/client.cjs');
-const { fakeReceiver, transportOf } = require('./fake-receiver.cjs');
+const { fakeReceiver, transportOf, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
+const handleCodexHook = viaPipe(raw_handleCodexHook);
 const cwd = path.resolve(__dirname, '..');
 const bash = command => describeToolDetailed('Bash', { command });
 const screenshot = 'echo "una linea larga para ver cómo se acomoda el texto en la tarjeta de permiso" > ./prueba-isla/tres.txt';
@@ -15,7 +18,7 @@ const screenshot = 'echo "una linea larga para ver cómo se acomoda el texto en 
 // `Codex (aviso)` tests at the end of this file, which assert the ONE attention notice instead of a decision.
 const agents = [['Claude Code', handleClaudeHook]];
 const input = command => JSON.stringify({ cwd, session_id: 'latin-test', hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command } });
-const offline = { ABITO_SOCKET_DIR: '/nonexistent-abito-test', ABITO_DESKTOP_SOCKET: '/nonexistent-abito-test/p-abcdef/s' };
+const offline = offlineEnv('nonexistent-abito-test');
 
 for (const [agent, handle] of agents) test(`R22 screenshot: ${agent} offers allow and displays the exact command`, async () => {
   let request;

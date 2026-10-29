@@ -67,9 +67,9 @@ test('windows config: explicit ABITO_DESKTOP_SOCKET override keeps the relay met
   }
 });
 test('linux config behaviour is unchanged (same function, default platform)', () => {
-  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false }),
+  assert.deepEqual(resolveConfig({}, 4321, { procExists: () => false, platform: process.platform === 'darwin' ? 'darwin' : 'linux' }),
     { runtime: process.platform === 'darwin' ? require('node:fs').realpathSync(require('node:os').tmpdir()) + '/abito-island' : '/run/user/4321/abito-island', endpoint: undefined, source: undefined });
-  assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: '/nonexistent/abito-windows-test' }, undefined));
+  assert.throws(() => resolveConfig({ ABITO_SOCKET_DIR: '/nonexistent/abito-windows-test' }, undefined, { platform: 'linux' }));
 });
 
 // --- security (Windows branch) ----------------------------------------------
@@ -83,7 +83,7 @@ test('windows verifyEndpoint: metadata shape + runtime binding, no unix socket c
   }
 });
 test('linux verifyEndpoint behaviour is unchanged (default platform)', () => {
-  assert.throws(() => verifyEndpoint('/run/user/1000/abito-island/p-abc123/s', '/run/user/1000/abito-island'));
+  assert.throws(() => verifyEndpoint('/run/user/1000/abito-island/p-abc123/s', '/run/user/1000/abito-island', { platform: 'linux' }));
 });
 
 // --- relay adapter (windows-transport) --------------------------------------

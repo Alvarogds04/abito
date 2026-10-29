@@ -1,10 +1,13 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { handleClaudeHook, ALLOW, DENY } = require('../src/claude.cjs');
+const { viaPipe } = require('./fake-receiver.cjs');
+const { handleClaudeHook: raw_handleClaudeHook, ALLOW, DENY } = require('../src/claude.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
 const cwd = path.resolve(__dirname, '..');
-const TEST_ENV = { ABITO_SOCKET_DIR: '/nonexistent-r13', ABITO_DESKTOP_SOCKET: '/nonexistent-r13/p-abcdef/s' };
+const TEST_ENV = offlineEnv('nonexistent-r13');
 const rule = (destination = 'session', ruleContent = 'ls') => ({ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent }], behavior: 'allow', destination });
 async function run(suggestions, value = 'deny', over = {}, mutate) {
   let question;

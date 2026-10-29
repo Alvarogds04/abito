@@ -10,6 +10,7 @@ const { EventEmitter } = require('node:events');
 // refused there) plus the `<runtime>\endpoint.json` metadata file; the receiver then carries `platform: 'win32'`
 // and an `open` seam that connects straight to the pipe. Tests that build an IslandClient spread `transport(receiver)`.
 // Child-process tests (bin/abito-hook.cjs) go through the native relay, which the hosted runner does not have.
+let latest = {};
 async function fakeReceiver(t, { questions = false, busyReason = false, structured = false } = {}) {
   const runtime = fs.mkdtempSync(path.join(path.resolve(__dirname, '..'), '.test-'));
   const windows = process.platform === 'win32';
@@ -75,6 +76,7 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
     const existing = frames.find(f => f.type === type);
     return existing ? Promise.resolve(existing) : next(type);
   }
+  latest = transport;
   return { ...transport, runtime, endpoint, frames, rawFrames, clients, next, seen,
     send: value => { for (const c of clients) c.write(JSON.stringify(value) + '\n'); },
     replyBusy: (q, code) => {
@@ -90,4 +92,12 @@ async function fakeReceiver(t, { questions = false, busyReason = false, structur
 }
 // The IslandClient options that make a client talk to this receiver on the platform's real transport ({} on Unix).
 const transportOf = receiver => ({ ...(receiver.platform ? { platform: receiver.platform } : {}), ...(receiver.open ? { open: receiver.open } : {}) });
-module.exports = { fakeReceiver, transportOf };
+// In-process hook handlers build their own IslandClient (hook-common defaultFactory). On Windows that client would go through the
+// native relay, which the hosted runner does not have; the wrapper makes it use the most recent fake receiver's named pipe instead,
+// so the same hook <-> island protocol is exercised on every OS. An explicit `clientFactory` in the call still wins; Unix is unchanged.
+function viaPipe(handle) {
+  if (process.platform !== 'win32') return handle;
+  const { IslandClient } = require('../src/client.cjs');
+  return args => handle({ clientFactory: o => new IslandClient({ ...o, ...latest }), ...args });
+}
+module.exports = { fakeReceiver, transportOf, viaPipe };

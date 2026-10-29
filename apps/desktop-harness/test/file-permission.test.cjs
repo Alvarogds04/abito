@@ -1,17 +1,20 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const os = require('node:os');
-const { handleClaudeHook, ALLOW } = require('../src/claude.cjs');
-const { handleCodexHook } = require('../src/codex.cjs');
+const { handleClaudeHook: raw_handleClaudeHook, ALLOW } = require('../src/claude.cjs');
+const { handleCodexHook: raw_handleCodexHook } = require('../src/codex.cjs');
 const { describeToolDetailed } = require('../src/projection.cjs');
 const { normalizeRequest } = require('../src/client.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
+const handleCodexHook = viaPipe(raw_handleCodexHook);
 const cwd = path.resolve(__dirname, '..');
 async function card(tool_name, tool_input, adapter = handleClaudeHook) {
   let q;
-  const out = await adapter({ event: 'permission-request', env: { ABITO_SOCKET_DIR: '/nonexistent-test', ABITO_DESKTOP_SOCKET: '/nonexistent-test/p-abcdef/s' },
+  const out = await adapter({ event: 'permission-request', env: offlineEnv('nonexistent-test'),
     input: JSON.stringify({ cwd, session_id: 'test', hook_event_name: 'PermissionRequest', tool_name, tool_input }),
     clientFactory: () => ({ ask: async request => { q = request; return { status: 'answered', answer: { type: 'option', value: 'allow' } }; } }) });
   assert.ok(q); normalizeRequest(q);

@@ -1,5 +1,9 @@
 'use strict';
-const { test } = require('node:test');
+const { test: baseTest } = require('node:test');
+const { unixTest } = require('./platform-env.cjs');
+// The whole file is the Unix handoff (/run/user runtime, socket mode, uid, /proc). Windows twin: windows-transport.test.cjs
+// «resolveConfig» win32 cases (LOCALAPPDATA metadata handoff, endpoint shape) and windows verifyEndpoint.
+const test = unixTest(baseTest, 'windows-transport.test.cjs win32 config/handoff cases');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const net = require('node:net');

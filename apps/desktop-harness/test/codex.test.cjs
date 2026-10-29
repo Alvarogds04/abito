@@ -3,13 +3,15 @@
 // `PermissionRequest` and the plan-mode `PreToolUse` observer send ONE bounded, non-blocking NOTICE and return at once
 // (empty stdout, exit 0), so Codex's own prompt appears immediately; `Stop` clears it. No decision line exists here.
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
-const { handleCodexHook, codexToolDescription, shownText } = require('../src/codex.cjs');
+const { handleCodexHook: raw_handleCodexHook, codexToolDescription, shownText } = require('../src/codex.cjs');
 const { parseArgs, watchdogMs, startWatchdog } = require('../src/hook-common.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleCodexHook = viaPipe(raw_handleCodexHook);
 
 const cwd = path.resolve(__dirname, '..');
 const permission = (over = {}) => JSON.stringify({ session_id: 'sess-1', transcript_path: '/home/x/SECRETPATH/t.jsonl', cwd, model: 'm',
@@ -132,7 +134,7 @@ test('stop_hook_active:true is a re-entrant stop and sends nothing at all', asyn
 });
 
 test('no island: silent exit 0, no notice, no stderr noise', async () => {
-  for (const env of [{ ABITO_DESKTOP_SOCKET: '/nope' }, { ABITO_SOCKET_DIR: '/nonexistent-abito-test' }, {}]) {
+  for (const env of [stubEndpoint(), offlineDir('nonexistent-abito-test'), {}]) {
     for (const event of ['permission-request', 'pre-tool-use', 'post-tool-use', 'stop']) assertSilent(await call(event, {}, env));
   }
 });
