@@ -202,6 +202,30 @@ fn same_user_handshake_notice_and_bounded_close() {
     );
 }
 
+/// HU-065 (registered gap: «Ver» does not yet take the human to the agent's terminal on Windows/macOS). Until it does, this pins the
+/// documented behaviour so nobody mistakes it for working: Windows NEVER invents a terminal origin. An accepted notice, an unknown id,
+/// and a pending-question id all resolve to nothing, and the notice view carries no process or terminal field. The Linux twin is
+/// `r21_socket_peer_notice_origin_is_host_only_bounded_and_revoked`; macOS has `macos_origin_is_never_invented_even_for_an_accepted_notice`.
+#[test]
+fn windows_never_invents_a_terminal_origin_hu065() {
+    use abito_island::focushost::{OriginKind, OriginRequest};
+    let fixture = Fixture::new("win-notice-origin");
+    let client = TestClient::connect(&fixture.transport);
+    client.send(&hello(&fixture.project));
+    assert_eq!(client.read_some(Duration::from_secs(5)).as_deref(), Some(READY_LINE));
+    let id = "3f2b8a40-1c2d-4e5f-8a6b-7c8d9e0f1a2b";
+    client.send(&json!({"v":1, "type":"settled", "project":fixture.project, "sessionId":"session-1", "at":now_ms(), "id":id}));
+    assert!(fixture.events.wait(|e| e.notice_count() >= 1, Duration::from_secs(5)), "notice delivered");
+    for kind in [OriginKind::Notice, OriginKind::Pending] {
+        let request = OriginRequest { kind, id: id.into() };
+        assert!(fixture.transport.origin_for(&request).is_none(), "an accepted id has no origin");
+    }
+    let unknown = OriginRequest { kind: OriginKind::Notice, id: "00000000-0000-0000-0000-000000000000".into() };
+    assert!(fixture.transport.origin_for(&unknown).is_none());
+    let view = serde_json::to_value(&fixture.events.notices.lock().unwrap()[0]).unwrap();
+    for key in ["pid", "ppid", "starttime", "tty", "pane", "terminal", "origin"] { assert!(view.get(key).is_none(), "{key}"); }
+}
+
 // --- FIRST_INSTANCE squat guard ---------------------------------------------
 
 #[test]

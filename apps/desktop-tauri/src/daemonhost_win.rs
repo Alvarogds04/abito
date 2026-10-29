@@ -105,6 +105,8 @@ pub fn discover_node(
     if let Some(base) = program_files.map(PathBuf::from).filter(|b| b.is_absolute()) {
         candidates.push(base.join("nodejs").join("node.exe"));
     }
+    // HU-069: nvm-windows, fnm, Volta: same bounded lookup as Linux/macOS (a GUI launch does not see the shell setup).
+    candidates.extend(crate::nodefinder::candidates("node", crate::nodefinder::Os::Windows, &crate::nodefinder::Env::from_process()));
     candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| "node missing (PATH and canonical locations)".to_owned())
 }
 
