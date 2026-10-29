@@ -1625,3 +1625,12 @@ test("custom provider: create -> key via auth_start/auth_reply -> discovery; gua
 	const wire = JSON.stringify(c.frames);
 	for (const banned of [KEY, "sk-fake", "127.0.0.1", "baseUrl"]) assert.equal(wire.includes(banned), false, banned);
 });
+
+test("a refused (non-private) credential store reaches the client as the closed code store_not_private, not as a generic failure", async (t) => {
+	const { endpoint, accounts } = await setup(t);
+	const { CredentialStoreError } = require("../src/auth.cjs");
+	accounts.createAccount = async () => { throw new CredentialStoreError(); };
+	const c = await login(t, endpoint);
+	c.send({ type: "account_create", label: "x", provider: "p" });
+	await c.wait((f) => f.type === "error" && f.code === "store_not_private");
+});

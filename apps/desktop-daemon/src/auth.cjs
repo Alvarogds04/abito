@@ -72,6 +72,16 @@ function helperEnv(base, { home, tmp }) {
 
 const fail = (message) => new Error(message);
 
+/** The human-facing refusal when the account's credential files are not private to this user (Windows, HU-061). Fixed text, no paths, no secrets. */
+const STORE_NOT_PRIVATE_MESSAGE = "Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.";
+class CredentialStoreError extends Error {
+	constructor() {
+		super(STORE_NOT_PRIVATE_MESSAGE);
+		this.name = "CredentialStoreError";
+		this.code = "store_not_private";
+	}
+}
+
 function accountDto(meta) {
 	return {
 		accountId: meta.accountId,
@@ -614,15 +624,15 @@ class AccountManager extends EventEmitter {
 		const dir = assertSecurePath(this.accountDir(accountId));
 		const dirFacts = w.checkPath(dir);
 		if (!dirFacts.exists || dirFacts.kind !== "dir" || dirFacts.reparse || !dirFacts.private || !dirFacts.parent_ok) {
-			throw fail("Account store is not a private directory");
+			throw new CredentialStoreError();
 		}
 		const file = path.join(dir, "auth.json");
 		const facts = w.checkPath(file);
 		if (!facts.exists) return;
-		if (facts.reparse || facts.kind !== "file" || facts.nlink !== 1) throw fail("Account credentials are not a regular file");
+		if (facts.reparse || facts.kind !== "file" || facts.nlink !== 1) throw new CredentialStoreError();
 		// The helper has no operation that tightens an existing entry (delete/move/write all require a private source), so a
 		// credential file that is not private is REFUSED, never trusted and never loosely rewritten: sign in again after removing it.
-		if (!facts.private) throw fail("Account credentials are not private to this user");
+		if (!facts.private) throw new CredentialStoreError();
 	}
 
 	// ----- helper child client -------------------------------------------
@@ -806,8 +816,8 @@ class AccountManager extends EventEmitter {
 		if (flow.finished) return;
 		try {
 			this.enforceCredentialPermissions(flow.accountId);
-		} catch {
-			this.endFlow(flow, { ok: false, message: GENERIC_LOGIN_FAILURE });
+		} catch (error) {
+			this.endFlow(flow, { ok: false, message: error instanceof CredentialStoreError ? STORE_NOT_PRIVATE_MESSAGE : GENERIC_LOGIN_FAILURE });
 			return;
 		}
 		if (flow.cancelRequested || result.cancelled) {
@@ -894,4 +904,4 @@ class AccountManager extends EventEmitter {
 	}
 }
 
-module.exports = { AccountManager, LOCAL_PLACEHOLDER, helperEnv, isStrictAccountId };
+module.exports = { AccountManager, CredentialStoreError, STORE_NOT_PRIVATE_MESSAGE, LOCAL_PLACEHOLDER, helperEnv, isStrictAccountId };

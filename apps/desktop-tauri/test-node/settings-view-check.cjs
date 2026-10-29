@@ -491,6 +491,10 @@ test('outcome: success is announced only when no engine error arrived after the 
     assert.ok(!r.say.includes('creada'), `${code}: the success text is never said (${r.say})`);
     assert.ok(r.say.includes(word), code);
   }
+  // HU-061: a non-private credential store (Windows) tells the human WHAT TO DO, in the app's language
+  const sn = S.commandOutcome(ac(null, 0), ac('store_not_private', 1), 'Cuenta Casa creada.');
+  assert.equal(sn.ok, false);
+  assert.equal(sn.say, 'Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.');
   // the SAME code twice is a new event: the counter decides
   assert.equal(S.commandOutcome(ac('failed', 4), ac('failed', 5), 'x').ok, false);
   assert.equal(S.commandOutcome(ac('failed', 4), ac('failed', 4), 'x.').ok, true, 'an old error is not this command\'s');

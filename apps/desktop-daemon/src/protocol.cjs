@@ -399,7 +399,7 @@ function encodeServerFrame(frame, seq) {
 
 const EMITTED_ERROR_CODES = new Set([
 	"bad_request", "busy", "not_busy", "unavailable", "rate_limited", "unknown_ask", "paused", "failed",
-	"unknown_proposal", "digest_mismatch", "needs_setup", "signin_failed",
+	"unknown_proposal", "digest_mismatch", "needs_setup", "signin_failed", "store_not_private",
 ]);
 // Recognized by the host's broader enum, but collapsed to stale/failed before H2c can emit them.
 const RESERVED_CONNECTOR_ERROR_CODES = new Set(["already_decided", "session_mismatch", "pending_full"]);

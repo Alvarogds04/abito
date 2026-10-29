@@ -718,11 +718,12 @@
   const ENGINE_ERRORS = Object.freeze({
     failed: ['No se pudo', 'triangle', 'red'], busy: ['Motor ocupado', 'lock', 'sun'],
     bad_request: ['Pedido no válido', 'triangle', 'red'], rate_limited: ['Demasiados pedidos', 'clock', 'sun'],
+    store_not_private: ['Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.', 'lock', 'red'],
     unavailable: ['No disponible', 'plug-off', 'faint'], not_busy: ['Nada en curso', 'info', 'faint'], unknown_ask: ['Pedido desconocido', 'info', 'faint'],
   });
   const errorSeq = st => (st && st.last_error && Number.isInteger(st.last_error.n) ? st.last_error.n : 0);
   function commandOutcome(before, after, okSay) {
-    const failure = (word, icon, tone) => ({ ok: false, word, icon, tone, say: `${word}.` });
+    const failure = (word, icon, tone) => ({ ok: false, word, icon, tone, say: /[.!?]$/.test(word) ? word : `${word}.` });
     if (!after || typeof after !== 'object') return failure('No se pudo', 'triangle', 'red');
     if (after.connection && after.connection !== 'connected') {
       const cv = connectionView(after);

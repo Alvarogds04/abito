@@ -11,7 +11,7 @@ const assert = require("node:assert/strict");
 
 const winfs = require("../src/win-fs.cjs");
 const { ensurePrivateDir, writePrivateFile } = require("../src/isolation.cjs");
-const { AccountManager } = require("../src/auth.cjs");
+const { AccountManager, CredentialStoreError, STORE_NOT_PRIVATE_MESSAGE } = require("../src/auth.cjs");
 const { fakeBackend } = require("./win-fake-backend.cjs");
 
 // The fake backend judges POSIX mode bits, which NTFS does not have (lstat reports 0o666/0o777): on Windows the REAL helper is exercised by the
@@ -229,7 +229,7 @@ test("re-assert REFUSES a loose auth.json (the helper cannot tighten an entry) a
 		writeFileSync(file, '{"k":1}\n', { mode: 0o600 });
 		chmodSync(file, 0o644);
 		const { backend, calls } = spied();
-		await withBackend(backend, async () => assert.throws(() => manager(root).enforceCredentialPermissions("acc"), /not private/i));
+		await withBackend(backend, async () => assert.throws(() => manager(root).enforceCredentialPermissions("acc"), /no son privados/i));
 		assert.equal(readFileSync(file, "utf8"), '{"k":1}\n');
 		assert.deepEqual(calls, [], "no mutating helper call: nothing is rewritten, deleted or moved");
 		assert.deepEqual(require("node:fs").readdirSync(dir), ["auth.json"]);
@@ -273,6 +273,46 @@ test("re-assert refuses a symlinked auth.json, a hard-linked one and a non-priva
 		assert.deepEqual(calls, []);
 		assert.equal(readFileSync(victim, "utf8"), "{}\n");
 		assert.equal(statSync(victim).mode & 0o777, 0o644);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+// Parent request (HU-061): the refusal is a typed error with a closed code and the app-language text, so the UI can say what to do.
+test("a refused credential store is a CredentialStoreError{store_not_private} with the Spanish instruction, secret-free", async () => {
+	const root = root0();
+	try {
+		assert.equal(STORE_NOT_PRIVATE_MESSAGE, "Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.");
+		const dir = account(root, "acc");
+		const file = path.join(dir, "auth.json");
+		writeFileSync(file, '{"k":"sk-SECRET"}\n', { mode: 0o600 });
+		chmodSync(file, 0o644);
+		const { backend } = spied();
+		await withBackend(backend, async () => {
+			let error;
+			try { manager(root).enforceCredentialPermissions("acc"); } catch (e) { error = e; }
+			assert.ok(error instanceof CredentialStoreError);
+			assert.equal(error.code, "store_not_private");
+			assert.equal(error.message, STORE_NOT_PRIVATE_MESSAGE);
+			assert.doesNotMatch(error.message, /SECRET/);
+		});
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a login flow whose store is refused ends with the Spanish instruction, not the generic sign-in failure", async () => {
+	const root = root0();
+	try {
+		const dir = account(root, "acc");
+		writeFileSync(path.join(dir, "auth.json"), "{}\n", { mode: 0o600 });
+		chmodSync(path.join(dir, "auth.json"), 0o644);
+		const m = manager(root);
+		const ended = [];
+		m.endFlow = (flow, result) => ended.push(result);
+		const { backend } = spied();
+		await withBackend(backend, () => m.onLoginResult({ id: "f", accountId: "acc", finished: false }, { ok: true }));
+		assert.deepEqual(ended, [{ ok: false, message: STORE_NOT_PRIVATE_MESSAGE }]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
