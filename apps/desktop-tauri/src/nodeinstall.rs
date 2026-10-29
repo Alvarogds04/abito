@@ -98,6 +98,10 @@ pub fn pick_artifact(shasums: &str, os: Os, arch: Arch) -> Result<Artifact, Reas
 pub fn validate_listing(listing: &str, root: &str) -> Result<(), Reason> {
     let bad = Reason::UnsafeArchive;
     let mut any = false;
+    // Every symlink seen so far (archive-relative, components). No later entry may pass THROUGH one, and no target may either:
+    // that is what turns a chain of harmless-looking links into a write outside the root (JD-A-001).
+    let mut links: Vec<Vec<String>> = Vec::new();
+    let through_link = |parts: &[String], links: &[Vec<String>]| (1..parts.len()).any(|n| links.iter().any(|l| l.as_slice() == &parts[..n]));
     for line in listing.lines().filter(|l| !l.trim().is_empty()) {
         any = true;
         let kind = line.chars().next().ok_or(bad)?;
@@ -111,25 +115,30 @@ pub fn validate_listing(listing: &str, root: &str) -> Result<(), Reason> {
         }
         let _ = fields.next();
         let rest = rest.trim_start();
+        if rest.matches(" -> ").count() > 1 || (kind != 'l' && rest.contains(" -> ")) { return Err(bad) }
         let (name, target) = match rest.split_once(" -> ") { Some((n, t)) => (n, Some(t)), None => (rest, None) };
         if kind != 'l' && target.is_some() { return Err(bad) }
         if kind == 'l' && target.is_none() { return Err(bad) }
         let name_path = safe_relative(name).ok_or(bad)?;
         if name_path.components().next().and_then(|c| c.as_os_str().to_str()) != Some(root) { return Err(bad) }
+        let name_parts: Vec<String> = name_path.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        if through_link(&name_parts, &links) { return Err(bad) }
         if let Some(target) = target {
             let t = Path::new(target);
             if t.is_absolute() || target.is_empty() { return Err(bad) }
             // resolve against the link's own folder, depth counted from the archive top
-            let mut depth: i64 = name_path.components().count() as i64 - 1;
+            let mut at: Vec<String> = name_parts[..name_parts.len() - 1].to_vec();
             for c in t.components() {
                 match c {
-                    Component::Normal(_) => depth += 1,
+                    Component::Normal(n) => at.push(n.to_string_lossy().into_owned()),
                     Component::CurDir => {}
-                    Component::ParentDir => depth -= 1,
+                    Component::ParentDir => { at.pop(); }
                     _ => return Err(bad),
                 }
-                if depth < 1 { return Err(bad) } // left the root folder (or landed on the root itself)
+                if at.is_empty() { return Err(bad) } // left the root folder
+                if through_link(&at, &links) || links.iter().any(|l| *l == at) { return Err(bad) } // a link resolved through (or onto) another link
             }
+            links.push(name_parts);
         }
     }
     if any { Ok(()) } else { Err(bad) }
@@ -204,12 +213,16 @@ pub fn install_tarball(env: &dyn Env, artifact: &Artifact, data: &Path) -> Resul
     let root = artifact.root().ok_or(Reason::Unsupported)?;
     let tar = system_tool(env, "tar").ok_or(Reason::TarMissing)?;
     system_tool(env, "xz").ok_or(Reason::XzMissing)?;
+    // The listing parser reads GNU's column layout; any other tar (bsdtar...) is refused with its own reason instead of a false «unsafe».
+    let version = env.run(&tar, &["--version".into()], None).map_err(|_| Reason::TarMissing)?;
+    if !String::from_utf8_lossy(&version).contains("GNU tar") { return Err(Reason::TarMissing) }
     let tmp = private_dir(data, "node-tmp")?;
     let result = (|| {
         let file = download_verified(env, artifact, &tmp)?;
         let file_arg = file.to_string_lossy().into_owned();
         let listing = env.run(&tar, &["-tvJf".into(), file_arg.clone()], Some(&tmp)).map_err(|_| Reason::UnsafeArchive)?;
         validate_listing(&String::from_utf8_lossy(&listing), root)?;
+        reverify(artifact, &file)?; // the bytes that were listed are the bytes extracted
         let out = tmp.join("x");
         std::fs::create_dir(&out).map_err(|_| Reason::InstallFailed)?;
         env.run(&tar, &["-xJf".into(), file_arg, "-C".into(), out.to_string_lossy().into_owned(), "--no-same-owner".into(), "--no-same-permissions".into()], Some(&tmp))
@@ -225,8 +238,22 @@ pub fn install_tarball(env: &dyn Env, artifact: &Artifact, data: &Path) -> Resul
         }
         Ok(dest)
     })();
-    let _ = std::fs::remove_dir_all(&tmp);
+    force_remove(&tmp);
     result
+}
+/// Remove a tree even when an archive left directories without owner write permission.
+fn force_remove(dir: &Path) {
+    #[cfg(unix)]
+    fn open_up(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let Ok(meta) = std::fs::symlink_metadata(dir) else { return };
+        if !meta.is_dir() { return }
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        if let Ok(entries) = std::fs::read_dir(dir) { for e in entries.flatten() { open_up(&e.path()); } }
+    }
+    #[cfg(unix)]
+    open_up(dir);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// The `bin` folder of the user-folder install; the finder looks here on Linux.
@@ -355,6 +382,10 @@ mod tests {
             format!("hrwxr-xr-x r/r 0 2025-01-01 00:00 {ROOT}/bin/x link to {ROOT}/bin/y\n"),
             format!("crw-rw-rw- 1/1 0,0 2025-01-01 00:00 {ROOT}/dev\n"),
             format!("-rw-r--r-- r/r 1 2025-01-01 00:00 {ROOT}/a -> b\n"),
+            // JD-A-001: a name holding « -> » must not shift the parsed target, and chained links must not climb out
+            format!("lrwxrwxrwx r/r 0 2025-01-01 00:00 {ROOT}/x -> a -> ../..\n"),
+            format!("lrwxrwxrwx r/r 0 2025-01-01 00:00 {ROOT}/sub/l1 -> ..\nlrwxrwxrwx r/r 0 2025-01-01 00:00 {ROOT}/l2 -> sub/l1/..\n"),
+            format!("lrwxrwxrwx r/r 0 2025-01-01 00:00 {ROOT}/d -> bin\n-rw-r--r-- r/r 1 2025-01-01 00:00 {ROOT}/d/PWNED\n"),
             String::new(), "garbage\n".to_owned(),
         ] { assert_eq!(ok(&bad), Err(Reason::UnsafeArchive), "{bad:?}"); }
     }

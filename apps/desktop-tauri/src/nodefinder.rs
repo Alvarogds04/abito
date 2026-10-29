@@ -41,7 +41,6 @@ pub fn candidate_dirs(os: Os, env: &Env) -> Vec<PathBuf> {
     let unix = os != Os::Windows;
     if unix {
         // HU-069 T2 (Linux): the official build Abito unpacked for the user (see `nodeinstall`).
-        if os == Os::Linux { if let Some(h) = &home { push(Some(h.join(".local/share/abito/node/bin"))); } }
         if let Some(h) = &home { push(Some(h.join(".local/bin"))); push(Some(h.join(".npm-global/bin"))); }
     }
     // Volta: shims live in <VOLTA_HOME>/bin.
@@ -51,6 +50,7 @@ pub fn candidate_dirs(os: Os, env: &Env) -> Vec<PathBuf> {
     }).map(|v| v.join("bin")));
     // Windows Volta installs also drop shims under %LOCALAPPDATA%\Volta\bin; the `.volta` home form is checked as well.
     if os == Os::Windows { push(home.as_ref().map(|h| h.join(".volta").join("bin"))); }
+    // Last among the managers on purpose: a Node the user installs later (nvm, Volta, fnm) must win over this one, which Abito never updates.
     // nvm (unix): $NVM_DIR or ~/.nvm.
     if unix {
         let root = env.nvm_dir.clone().or_else(|| home.as_ref().map(|h| h.join(".nvm")));
@@ -67,6 +67,7 @@ pub fn candidate_dirs(os: Os, env: &Env) -> Vec<PathBuf> {
         let versions = root.join("node-versions");
         push(newest_dir(&versions, |inst| if unix { inst.join("installation/bin") } else { inst.join("installation") }));
     }
+    if os == Os::Linux { if let Some(h) = &home { push(Some(h.join(".local/share/abito/node/bin"))); } }
     if os == Os::Windows {
         // nvm-windows: %NVM_SYMLINK% is the ACTIVE version; %NVM_HOME% (default %APPDATA%\nvm) holds every installed one.
         push(env.nvm_symlink.clone());
