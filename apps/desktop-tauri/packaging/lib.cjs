@@ -180,7 +180,7 @@ StartupWMClass=Abito-island
 // ---- receipt verification (no launch) -------------------------------------
 const DAEMON_FILES = ['package.json', 'identity.md', 'THIRD-PARTY-NOTICES.md',
   'src/agent-hooks.cjs', 'src/agents-direct.cjs', 'src/agents.cjs', 'src/auth.cjs', 'src/cli.cjs', 'src/config.cjs',
-  'src/connectors.cjs', 'src/connector-host.cjs', 'src/connector-host-client.cjs', 'src/custom-provider.cjs',
+  'src/connectors.cjs', 'src/connector-host.cjs', 'src/connector-host-client.cjs', 'src/custom-provider.cjs', 'src/custom-provider-extension.cjs',
   'src/daemon.cjs', 'src/interrupt.cjs', 'src/isolation.cjs', 'src/mcp-import.cjs', 'src/profiles.cjs',
   'src/protocol.cjs', 'src/rotation.cjs', 'src/runtime.cjs', 'src/sdk-helper.mjs', 'src/server.cjs',
   'src/sessions.cjs', 'src/procinfo.cjs', 'src/spaces.cjs'];

@@ -42,6 +42,10 @@ pub mod files;
 pub mod contextwin;
 pub mod focushost;
 pub mod sessionterm;
+#[cfg(target_os = "macos")]
+pub mod sessionterm_mac;
+#[cfg(windows)]
+pub mod sessionterm_win;
 pub mod github;
 pub mod githubcmd;
 pub mod daemonhost;
