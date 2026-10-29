@@ -90,3 +90,27 @@ test('describeToolDetailed: MCP lossless only with a plain empty object; unknown
     for (const i of [undefined, null, [], 'x', 5, {}, { a: 1 }]) assert.equal(d(n, i).lossy, true, n + JSON.stringify(i));
   }
 });
+
+// HU-062 (found on Windows CI): the home contraction only knew '/home/...' and process.env.HOME, so on Windows the user's profile path
+// (C:\Users\name, backslashes or slashes, any case) was shown in full on the island card.
+test('sanitizeText contracts a Windows home (drive path, either separator, case-insensitive) and nothing else', () => {
+  const p = require('../src/projection.cjs');
+  const home = 'C:\\Users\\dev';
+  assert.equal(p.sanitizeText('cat C:\\Users\\dev\\.ssh\\id_rsa', { max: 100, home }), 'cat ~\\.ssh\\id_rsa');
+  assert.equal(p.sanitizeText('cat c:/users/dev/.ssh/id_rsa', { max: 100, home }), 'cat ~/.ssh/id_rsa');
+  assert.equal(p.sanitizeText('cat C:\\Users\\devx\\a', { max: 100, home }), 'cat C:\\Users\\devx\\a', 'a longer name is not the home');
+  assert.equal(p.sanitizeText('C:\\Users\\dev', { max: 100, home }), '~');
+});
+
+// Judge finding (HU-062): under Git Bash HOME is a POSIX-style path (/c/Users/dev) while the paths the tools print are C:\Users\dev;
+// HOME must not hide USERPROFILE, so every candidate home is contracted.
+test('sanitizeText tries every home candidate (HOME in Git Bash style does not hide USERPROFILE)', () => {
+  const p = require('../src/projection.cjs');
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  try {
+    process.env.HOME = '/c/Users/dev'; process.env.USERPROFILE = 'C:\\Users\\dev';
+    assert.equal(p.sanitizeText('cat C:\\Users\\dev\\.ssh\\id_rsa and /c/Users/dev/x'), 'cat ~\\.ssh\\id_rsa and ~/x');
+    process.env.HOME = ''; 
+    assert.equal(p.sanitizeText('cat C:\\Users\\dev\\a'), 'cat ~\\a');
+  } finally { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+});

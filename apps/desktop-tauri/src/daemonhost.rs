@@ -115,31 +115,28 @@ impl HostSlot {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
-#[path = "daemonhost_discovery_mac.rs"]
-mod mac_discovery;
-
 /// Session PATH first; only these canonical locations are tried afterwards.
 /// Empty/relative PATH components are ignored: no working-directory execution.
 pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Result<PathBuf, String> {
+    discover_in(name, path, home, &crate::nodefinder::Env::from_process())
+}
+/// [`discover`] with the version-manager environment given explicitly (tests build it; the app passes the process's own).
+pub fn discover_in(name: &str, path: Option<&OsStr>, home: Option<&OsStr>, finder: &crate::nodefinder::Env) -> Result<PathBuf, String> {
     // Windows lookup lives entirely in `daemonhost_win.rs` (node.exe and the
     // npm package CLI JS — never a .cmd shim); the unix/macOS logic below is
     // untouched.
     #[cfg(windows)]
-    return win::discover(name, path, home);
+    return win::discover(name, path, home, finder);
     #[cfg(not(windows))]
     {
         let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
             .filter(|p| p.is_absolute()).map(|p| p.join(name)).collect();
-        // Finder does not inherit shell npm prefixes. These are bounded, customary
-        // user install locations, not a shell invocation or a recursive disk search.
-        #[cfg(target_os = "macos")]
-        if matches!(name, "node" | "pi") {
-            if let Some(home) = home.map(Path::new).filter(|h| h.is_absolute()) {
-                candidates.push(home.join(".local/bin").join(name));
-                candidates.push(home.join(".npm-global/bin").join(name));
-                candidates.extend(mac_discovery::candidates(name, home));
-            }
+        // HU-069: a GUI launch (Finder, desktop launcher) does not load the shell profile, so version managers (nvm, fnm, Volta) and
+        // the customary user bin directories are looked up here, the same way on every OS. Bounded, no shell, no recursive search.
+        {
+            let mut env = finder.clone();
+            env.home = home.map(PathBuf::from).filter(|h| h.is_absolute());
+            candidates.extend(crate::nodefinder::candidates(name, crate::nodefinder::Os::current(), &env));
         }
         match name {
             "node" => {
@@ -260,5 +257,69 @@ impl Drop for Host {
         // Never block app exit in wait(). In an uninterruptible kernel wait,
         // PDEATHSIG remains the final backstop when this app process exits.
         eprintln!("island host: bounded reap expired; kernel parent-death protection remains active");
+    }
+}
+
+/// HU-069 T3 / rule 12: «Instalar Pi» and the chat host must work when the app is started from Finder / Explorer / a desktop launcher,
+/// i.e. with NO Node on PATH and no shell setup, whenever Node lives where a version manager keeps it. The same test runs on Linux,
+/// macOS and Windows CI (only the manager layout differs). The Node binary used is the runner's own, copied into the fake layout.
+#[cfg(test)]
+mod gui_launch_tests {
+    use super::*;
+
+    fn real_node() -> Option<PathBuf> {
+        let name = if cfg!(windows) { "node.exe" } else { "node" };
+        std::env::split_paths(&std::env::var_os("PATH")?).filter(|d| d.is_absolute()).map(|d| d.join(name)).find(|p| p.is_file())
+    }
+    #[test]
+    fn node_and_npm_are_found_and_used_with_the_minimal_finder_explorer_environment() {
+        let Some(real) = real_node() else {
+            assert!(std::env::var_os("CI").is_none(), "CI has Node: this test must not skip silently");
+            eprintln!("skipped: no node on PATH");
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("abito-gui-launch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let empty_path = root.join("empty-path");
+        let no_program_files = root.join("no-program-files");
+        for d in [&home, &empty_path, &no_program_files] { std::fs::create_dir_all(d).unwrap(); }
+        // The layout each OS's version manager really uses, with a Node newer than the minimum.
+        let (node_dir, npm_cli_dir) = if cfg!(windows) {
+            let dir = home.join("AppData/Roaming/fnm/node-versions/v22.21.0/installation");
+            (dir.clone(), dir.join("node_modules/npm/bin"))
+        } else {
+            let prefix = home.join(".nvm/versions/node/v26.13.0");
+            (prefix.join("bin"), prefix.join("lib/node_modules/npm/bin"))
+        };
+        std::fs::create_dir_all(&node_dir).unwrap();
+        std::fs::create_dir_all(&npm_cli_dir).unwrap();
+        let node = node_dir.join(real.file_name().unwrap());
+        std::fs::copy(&real, &node).unwrap();
+        let record = root.join("seen.json");
+        std::fs::write(npm_cli_dir.join("npm-cli.js"), format!("require('fs').writeFileSync({:?}, JSON.stringify(process.argv.slice(2)));", record)).unwrap();
+
+        // The Finder/Explorer environment, built explicitly: no process-wide variable is touched (other tests read HOME in parallel).
+        let finder = crate::nodefinder::Env { home: Some(home.clone()), app_data: Some(home.join("AppData/Roaming")),
+            local_app_data: Some(home.join("AppData/Local")), program_files: Some(no_program_files.clone()), ..Default::default() };
+        let found = discover_in("node", Some(empty_path.as_os_str()), Some(home.as_os_str()), &finder).expect("Node must be found without PATH");
+        assert_eq!(std::fs::canonicalize(&found).unwrap(), std::fs::canonicalize(&node).unwrap());
+        // «Instalar Pi» then runs npm with that Node, with nothing from the shell
+        let cli = crate::piinstall::npm_cli(&found).expect("npm sits next to the managed Node");
+        let vars: Vec<(String, String)> = ["SystemRoot", "TEMP", "TMP", "TMPDIR", "PATH"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
+        let env = crate::piinstall::env(&found, &vars);
+        let outcome = crate::piinstall::run(&found, &cli, &env, Some(&home), std::time::Duration::from_secs(30));
+        if outcome.is_err() {
+            // npm's own output is never shown to users; in CI the reason must be visible.
+            let direct = std::process::Command::new(&found).arg(&cli).args(["install", "-g", "x"]).current_dir(&home).output();
+            eprintln!("DIAG node={found:?} cli={cli:?} direct={direct:?}");
+        }
+        assert_eq!(outcome, Ok(()));
+        let seen: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+        assert_eq!(seen, serde_json::json!(["install", "-g", "@earendil-works/pi-coding-agent"]));
+        // the daemon would be started with that absolute Node first on its PATH
+        let child_path = runtime_path(Some(empty_path.as_os_str()), &found, &found).unwrap();
+        assert_eq!(std::env::split_paths(&child_path).last().unwrap(), found.parent().unwrap());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

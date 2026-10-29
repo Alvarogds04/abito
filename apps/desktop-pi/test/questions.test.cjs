@@ -99,3 +99,15 @@ test('shutdown, turn end and disconnect close unanswered questions; session repl
     assert.notEqual(value.status, 'answered'); assert.equal(value.answer, undefined);
   }
 });
+
+test('answer stamped a few ms off this process clock (cross-process skew) is accepted; beyond the tolerance it is rejected', async t => {
+  for (const [name, at, status] of [['behind', q => q.at - 20, 'answered'], ['ahead', () => Date.now() + 200, 'answered'],
+    ['far behind', q => q.at - 5000, 'protocol_error'], ['far ahead', () => Date.now() + 5000, 'protocol_error']]) {
+    const { receiver, controller, ctx } = await setup(t);
+    const frame = receiver.next('question');
+    const result = controller.ask(input, ctx);
+    const q = await frame;
+    receiver.send({ ...answer(q), at: at(q) });
+    assert.equal((await result).status, status, name);
+  }
+});

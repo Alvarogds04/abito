@@ -324,6 +324,17 @@ test("agents frames: closed agentId set, plan_hash 64 lowercase hex, unknown key
 	]) assert.equal(P.decodeClientLine(line(bad)).error, "bad_request", JSON.stringify(bad));
 });
 
+test("HU-047: agentsFrame carries the unsafe folder only with its closed reason and only for that detail", () => {
+	const ok = { id: "pi", state: "error", backup: false, detail: "unsafe_folder", folder: "/home/u/.pi/agent/extensions", folder_reason: "writable" };
+	const f = P.agentsFrame([ok]);
+	assert.deepEqual([f.agents[0].folder, f.agents[0].folder_reason], [ok.folder, "writable"]);
+	for (const bad of [{ folder_reason: "bogus" }, { folder: "a\nb" }, { folder: "" }, { folder: "x".repeat(401) }, { detail: "install_failed" }]) {
+		const r = P.agentsFrame([{ ...ok, ...bad }]); // never throws: one odd folder must not break the whole agents list
+		assert.deepEqual([r.agents[0].folder, r.agents[0].folder_reason], [undefined, undefined], JSON.stringify(bad).slice(0, 40));
+	}
+	assert.equal(P.agentsFrame([{ ...ok, folder: "é".repeat(400) }]).agents[0].folder.length, 400, "the limit counts characters, like the Rust side");
+});
+
 test("agentsFrame rebuilds from the closed vocabulary; nothing off-allowlist survives", () => {
 	const hash = "ab".repeat(32);
 	const frame = P.agentsFrame([
@@ -400,6 +411,7 @@ test("set_paused: required boolean; extras dropped; error code `paused` is in th
 		assert.deepEqual(P.decodeClientLine(line(bad)), { error: "bad_request" }, JSON.stringify(bad));
 	}
 	assert.deepEqual(P.errorFrame("paused"), { type: "error", code: "paused" });
+	assert.deepEqual(P.errorFrame("store_not_private"), { type: "error", code: "store_not_private" });
 });
 
 test("mcpImportFrame emission caps: 128 servers ok, 129 or >200 KiB serialized -> throws", () => {

@@ -46,7 +46,7 @@ test('S18 General: «Atajo del sistema» is not a loose label: it is a value row
 });
 
 test('S19 Pills: no card of the page is an empty box (the «Colores de identidad» section drew an empty field over the Abito row)', async r => {
-  await r.go('General'); // 0.2.1: Instrucciones and Colores de identidad live in General
+  await r.go('Isla'); // HU-063 S2: «Colores de identidad» moved from General to the Isla page (0.2.1 had it in General)
   const empty = await r.page.evaluate(() => [...document.querySelectorAll('.hub-card')].filter(c => !c.children.length && !c.textContent.trim()).map(c => c.parentElement && c.parentElement.querySelector('.hub-label') ? c.parentElement.querySelector('.hub-label').textContent : c.className));
   assert.deepEqual(empty, [], `empty cards: ${JSON.stringify(empty)}`);
   const rows = await r.page.evaluate(() => { const sec = [...document.querySelectorAll('section')].find(s => /colores de identidad/i.test((s.querySelector('.hub-label') || {}).textContent || '')); const card = sec.querySelector('.hub-card'); return { rowInsideCard: !!card && !!card.querySelector('.hub-row'), rows: sec.querySelectorAll('.hub-row').length }; });
@@ -275,7 +275,7 @@ test('HU-046: with Pi present (engine connected) neither page shows the control'
 
 test('0.1.2 paused pages are hidden: the sidebar lists exactly the active pages, no grey «En pausa» row (visual check: hub-side screenshot)', async r => {
   const items = await navTitles(r.page);
-  const want = Object.keys(PAGE_IDS).filter(t => !['Teléfono', 'Ajustes'].includes(t) && !isPaused(t));
+  const want = Object.keys(PAGE_IDS).filter(t => !['Teléfono', 'Ajustes'].includes(t) && !isPaused(t)).concat('Isla'); // HU-063 S2: the new additive «Isla» page
   assert.deepEqual([...items].sort(), [...want].sort(), JSON.stringify(items));
   assert.equal(await r.page.locator('.hub-side .hub-paused, .hub-side .hub-item.paused, .hub-side [disabled]').count(), 0, 'nothing greyed out');
   if (process.env.ABITO_SHOT_DIR) await r.page.locator('.hub-side').screenshot({ path: require('node:path').join(process.env.ABITO_SHOT_DIR, 'hub-side.png') });
@@ -354,11 +354,17 @@ test('0.2.1 ⓘ tip: hidden at rest, shown on hover AND on keyboard focus, hidde
   assert.equal(await tip.getAttribute('aria-describedby'), await box.getAttribute('id'));
 });
 
-test('0.2.1 General (L2 A, S6): holds recap on/off + clear, Instrucciones, Colores, manual-open; the shortcut is only a value + link; no plan switch here', async r => {
-  await r.go('General');
-  const page = await r.page.evaluate(() => { const root = document.querySelector('.hub-page'); return { text: root.textContent.replace(/\s+/g, ' '), ids: ['hub-recap', 'hub-recap-clear', 'abito-instructions', 'hub-open-at-launch'].map(id => !!root.querySelector('#' + id)),
+test('0.2.1 General (L2 A, S6) + HU-063 S2: General keeps Instrucciones + manual-open; recap on/off + clear, Colores and the «Ir a Atajos» link live in Isla; no plan switch here', async r => {
+  const read = () => r.page.evaluate(() => { const root = document.querySelector('.hub-page'); return { text: root.textContent.replace(/\s+/g, ' '), ids: ['hub-recap', 'hub-recap-clear', 'abito-instructions', 'hub-open-at-launch'].map(id => !!root.querySelector('#' + id)),
     colors: root.querySelectorAll('[id^="identity-"]').length, editor: [...root.querySelectorAll('button')].some(b => b.textContent === 'Cambiar' || b.textContent === 'Original'), link: [...root.querySelectorAll('button')].some(b => b.textContent === 'Ir a Atajos') }; });
-  assert.deepEqual(page.ids, [true, true, true, true]); assert(page.colors > 0, 'identity colours'); assert(!page.editor && page.link, 'shortcut: value and link only');
+  await r.go('General');
+  const general = await read();
+  assert.deepEqual(general.ids, [false, false, true, true], 'General: Instrucciones + manual-open stay; recap moved to Isla');
+  assert.equal(general.colors, 0, 'General: identity colours moved to Isla'); assert(!general.link, 'General: the shortcut link moved to Isla');
+  await r.go('Isla');
+  const page = await read();
+  assert.deepEqual(page.ids.slice(0, 2), [true, true], 'Isla: recap on/off + clear');
+  assert(page.colors > 0, 'Isla: identity colours'); assert(!page.editor && page.link, 'Isla: shortcut is only a value and a link');
   assert.doesNotMatch(page.text, /Mostrar plan|uso del plan|Modelo principal/);
 });
 

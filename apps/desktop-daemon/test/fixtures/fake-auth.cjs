@@ -56,6 +56,14 @@ function writeCredential(accountId, providerId, credential) {
 // FAKE_LOOSE_MODE=1 simulates an SDK/umask leaving 0644 files in a 0755 account dir.
 function loosen(accountId) {
 	if (process.env.FAKE_LOOSE_MODE !== "1") return;
+	if (process.platform === "win32") {
+		// HU-061: a real loose DACL (Everyone: full control) — the daemon's re-assert must tighten it through the helper.
+		for (const target of [credentialPath(accountId), path.dirname(credentialPath(accountId))]) {
+			const r = require("node:child_process").spawnSync("icacls", [target, "/grant", "*S-1-1-0:F"], { encoding: "utf8" });
+			if (r.status !== 0) throw new Error(`icacls could not loosen ${target}: ${r.stdout}${r.stderr}`);
+		}
+		return;
+	}
 	fs.chmodSync(credentialPath(accountId), 0o644);
 	fs.chmodSync(path.dirname(credentialPath(accountId)), 0o755);
 }

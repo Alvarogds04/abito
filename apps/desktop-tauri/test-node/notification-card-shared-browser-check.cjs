@@ -207,6 +207,9 @@ const uid = n => `0b3a5c9e-8f27-4d11-9a0e-${String(n).padStart(12, '0')}`;
   const notes = [1, 2].map(i => ({ id: `0b3a5c9e-8f27-4d11-9a0e-00000000009${i}`, kind: 'settled', severity: 'info', title: `Codex terminó ${i}`,
     agent: 'codex', projectName: 'abito', at: Date.now(), expiresAt: Date.now() + 600000 }));
   await page.evaluate(n => window.__desktop({ state: 'expanded', revision: 9, notices: n, card: null }), notes);
+  // HU-057: the host's phase hook is emulated exactly as Rust evals it on «expanded» (see the header); without it `#island` stays the 40x32 compact
+  // pill in this fake bridge, and «island y» told nothing about the expanded overview. Now `isl` below IS the expanded overview notch.
+  await page.evaluate(() => window.__islandSetState('overview'));
   await page.waitForTimeout(6500); // past the 5.2 s «terminó» lane: the plain overview with its Avisos band
   const strip = await page.evaluate(() => {
     const r = el => { const b = document.getElementById(el).getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
@@ -214,7 +217,12 @@ const uid = n => `0b3a5c9e-8f27-4d11-9a0e-${String(n).padStart(12, '0')}`;
     return { isl, pill, band, engineShown: getComputedStyle(document.getElementById('engine-band')).display !== 'none',
       title: document.getElementById('notice-title').textContent, strip: document.getElementById('capsule').dataset.noticeStrip || '' };
   });
-  ok('S1 avisos: the strip sits UNDER the overview card, in the «Sin cuenta» slot (not over the sessions column)', strip.strip === 'on' && strip.pill.y - strip.isl.y >= 170, JSON.stringify(strip));
+  // HU-057 (odd/tasks/isla-nusa.md): the overview card is the 150px Nusa notch (was a 184px card), bands start at its bottom - 6 = y 144. The old loose
+  // «>= 170» becomes an exact window: the strip starts between 144 and 160 px under the island top, i.e. at/below the notch body's lower edge zone, is
+  // 700x32, and never overlaps the Agentes/sessions body (pill top >= notch bottom - 6, band is outside the content area).
+  const gap = strip.pill.y - strip.isl.y;
+  ok('S1 avisos: the strip sits UNDER the 150px notch, in the «Sin cuenta» slot (not over the sessions column)', strip.strip === 'on' && strip.isl.w === 720 && strip.isl.h >= 150 && gap >= 144 && gap <= 160, JSON.stringify(strip));
+  ok('S1 avisos: the strip is 700x32 and does not overlap the notch body content', strip.pill.w === 700 && strip.pill.h === 32 && strip.pill.y >= strip.isl.y + 144 && strip.pill.y + strip.pill.h <= strip.isl.y + strip.isl.h + 1, JSON.stringify(strip));
   ok('S1 avisos: compact — at most 32px tall and as wide as the bottom band', strip.pill.h <= 32 && strip.pill.w >= 600, JSON.stringify(strip.pill));
   ok('S1 avisos: it still says how many there are', /2/.test(strip.title), strip.title);
   ok('S1 avisos: a notice outranks «Sin cuenta» in the shared slot (never two bands on top of each other)', !strip.engineShown, JSON.stringify(strip));

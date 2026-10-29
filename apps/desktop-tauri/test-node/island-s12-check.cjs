@@ -1,52 +1,45 @@
 'use strict';
-/* S12 (12 «Ver todas», B): the full list is a GRID of coloured mascots; every cell >= 44x44, names on one line, whole rows, no overlap,
-   inside the card; a click focuses that session and closes the grid. Real layout. */
+/* S12 (12 «Ver todas», B), updated for HU-057 L4/L5.
+   Before: «Todas» anchored to the blobs card opened a GRID of coloured mascots (cells >= 44x44, names on one line, click focuses a session).
+   HU-057: the idle overview is the Nusa notch; #blobs, its «Todas» link and the mascot grid entry point are hidden BY DESIGN (no equivalent:
+   Nusa has no mascots; the Agentes tab lists the first 3 agents as rows). So this test now asserts:
+   1. «Todas» is NOT shown in the idle overview (hidden by design) and the grid stays closed;
+   2. the Nusa Agentes tab shows whole rows inside the notch, each receiving its own click: with MORE than 3 sessions it shows 2 rows + the «Ver todas (N)»
+      link (HU-057, human option A: 3 rows + the link do not fit the 104px panel), with 3 or fewer it shows them all and no link;
+   3. a long project name no longer shows whole in a tip (that tip came from the grid cell, gone by design): the Nusa model truncates it with «…»
+      (island-nusa.js agentRows) and it never overflows the row. The full-name tip has NO Nusa equivalent — reported as a gap to the parent.
+   Real layout. */
 const assert = require('node:assert/strict');
 const H = require('./island-geometry-harness.cjs');
 if (!H.findPlaywright()) { console.log('SKIPPED island-s12-check: no playwright — NOT a pass'); process.exit(0); }
 (async () => {
   {
-    // v8: «Todas» is anchored to the blobs card (bottom of that column, per the MD), not loose under the mascot; long names show whole in the island tip
     const r = await H.open({ manyPi: true });
     try {
-      const sa = (await r.measure('#blobs-links .see-all'))[0], bl = (await r.measure('#blobs'))[0], list = (await r.measure('#pill-choices'))[0];
-      assert.ok(sa.shown, '«Todas» is shown');
-      assert.ok(sa.left >= bl.left - 0.5 && sa.right <= bl.right + 0.5 && sa.bottom <= bl.bottom + 0.5 && sa.top >= list.bottom - 0.5, `«Todas» sits at the bottom of the blobs card, under the list [${Math.round(sa.left)},${Math.round(sa.top)},${Math.round(sa.right)},${Math.round(sa.bottom)}] in blobs [${Math.round(bl.left)},${Math.round(bl.top)},${Math.round(bl.right)},${Math.round(bl.bottom)}]`);
-      const rows = (await r.measure('.pill-choice')).filter(b => b.shown).filter(b => b.top >= list.top - 0.5 && b.bottom <= list.bottom + 0.5);
-      assert.ok(rows.length >= 3, `still 3 whole blob rows (${rows.length})`);
-      assert.deepEqual((await r.hit('.see-all')).filter(h => !h.ok), [], '«Todas» gets its click');
+      const sa = (await r.measure('#blobs-links .see-all'))[0];
+      assert.ok(!sa || !sa.shown, '«Todas» is hidden in the Nusa idle overview (HU-057: no mascot grid by design)');
+      assert.equal(await r.page.evaluate(() => document.querySelector('.sessions-all').hidden), true, 'the mascot grid stays closed');
+      await r.page.click('[data-tab=agentes]'); await r.page.waitForTimeout(300);
+      const isl = (await r.measure('#island'))[0];
+      const rows = (await r.measure('.nusa-agent')).filter(b => b.shown);
+      assert.equal(rows.length, 2, 'Nusa Agentes: 2 whole rows when «Ver todas (N)» is needed (14 sessions)');
+      const all = (await r.measure('.nusa-all')).filter(b => b.shown);
+      assert.equal(all.length, 1, 'the «Ver todas (N)» link is shown with many sessions');
+      assert.ok(all[0].left >= isl.left - 0.5 && all[0].right <= isl.right + 0.5 && all[0].bottom <= isl.bottom + 0.5, 'the link sits inside the notch');
+      assert.ok(rows.every(b => b.left >= isl.left - 0.5 && b.right <= isl.right + 0.5 && b.bottom <= isl.bottom + 0.5), 'rows sit inside the notch');
+      assert.deepEqual((await r.hit('.nusa-agent')).filter(h => !h.ok), [], 'rows receive their own click');
     } finally { await r.close(); }
   }
   {
     const long = 'isla-expandida-con-un-nombre-muy-largo';
     const r = await H.open({ sessions: [{ id: 's-00000001', kind: 'pi', cwd: long, state: 'running', origin: null }, { id: 's-00000002', kind: 'pi', cwd: 'settings-pantalla-ajustes-generales', state: 'sleeping', origin: null }] });
     try {
-      const sa = (await r.measure('#blobs-links .see-all'))[0]; await r.page.mouse.click(sa.left + sa.w / 2, sa.top + sa.h / 2); await r.page.waitForTimeout(700);
-      const c = (await r.measure('.sessions-all-pick')).filter(b => b.shown)[0];
-      await r.page.mouse.move(c.left + c.w / 2, c.top + c.h / 2); await r.page.waitForTimeout(700);
-      const tip = await r.page.evaluate(() => { const t = document.getElementById('island-tip'), b = t.getBoundingClientRect(), i = document.getElementById('island').getBoundingClientRect(); return { shown: !t.hidden && b.width > 0, text: t.textContent, inside: b.left >= i.left - 0.5 && b.right <= i.right + 0.5 && b.bottom <= i.bottom + 0.5, z: getComputedStyle(t).zIndex }; });
-      assert.ok(tip.shown && tip.text.includes(long) && tip.inside, `the tip shows the full name inside the island: ${JSON.stringify(tip)}`);
+      await r.page.click('[data-tab=agentes]'); await r.page.waitForTimeout(300);
+      const m = await r.page.evaluate(() => [...document.querySelectorAll('.nusa-agent')].map(row => { const n = row.querySelector('.nusa-agent-name'), b = row.getBoundingClientRect(), nb = n.getBoundingClientRect(); return { aria: row.getAttribute('aria-label'), inside: nb.left >= b.left - 0.5 && nb.right <= b.right + 0.5, ellipsis: getComputedStyle(n).textOverflow === 'ellipsis' }; }));
+      assert.equal(m.length, 2);
+      assert.ok(m[0].aria.includes('…') && !m[0].aria.includes(long), `the long name is truncated with «…» by the Nusa model: ${m[0].aria}`);
+      assert.ok(m.every(x => x.inside && x.ellipsis), `names ellipsise inside their rows: ${JSON.stringify(m)}`);
     } finally { await r.close(); }
   }
-  const r = await H.open({});
-  try {
-    const sa = (await r.measure('#blobs-links .see-all'))[0]; assert.ok(sa && sa.shown, '«Todas» link is drawn');
-    await r.page.mouse.click(sa.left + sa.w / 2, sa.top + sa.h / 2); await r.page.waitForTimeout(900);
-    const cells = (await r.measure('.sessions-all-pick')).filter(b => b.shown);
-    assert.ok(cells.length >= 5, `a cell per session (${cells.length})`);
-    assert.ok(cells.every(b => b.w >= 44 && b.h >= 44), `cells >= 44x44: ${cells.map(b => Math.round(b.w) + 'x' + Math.round(b.h))}`);
-    const list = (await r.measure('.sessions-all-list'))[0];
-    const cols = new Set(cells.map(b => Math.round(b.left))).size; assert.ok(cols >= 2, `a grid, not a column (${cols} columns)`);
-    const o = [];
-    for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) { const a = cells[i], b = cells[j]; if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1) o.push(i + 'x' + j); }
-    assert.deepEqual(o, [], 'cells do not overlap');
-    const vis = cells.filter(b => b.top >= list.top - 0.5 && b.bottom <= list.bottom + 0.5); assert.ok(vis.length >= 4, `at least 4 whole cells visible (${vis.length})`);
-    const partial = cells.filter(b => { const v = Math.min(b.bottom, list.bottom) - Math.max(b.top, list.top); return v > 0.5 && v < b.h - 0.5; }).length; assert.equal(partial, 0, 'no cell is cut by the bottom');
-    const m = await r.page.evaluate(() => ({ svgs: document.querySelectorAll('.sessions-all-pick .sa-mascot svg').length, names: [...document.querySelectorAll('.sessions-all-pick .sa-cwd')].every(e => e.scrollWidth <= e.clientWidth + 1 || getComputedStyle(e).textOverflow === 'ellipsis') }));
-    assert.ok(m.svgs >= 5, 'a mascot per cell'); assert.ok(m.names);
-    assert.deepEqual((await r.hit('.sessions-all-pick')).filter(h => !h.ok), [], 'cells receive their own click');
-    const c = cells[1]; await r.page.mouse.click(c.left + c.w / 2, c.top + c.h / 2); await r.page.waitForTimeout(600);
-    assert.equal(await r.page.evaluate(() => document.querySelector('.sessions-all').hidden), true, 'choosing a session closes the grid');
-  } finally { await r.close(); }
   console.log('island-s12-check: ok');
 })().catch(e => { console.error('FAIL', e.message, e.actual, e.expected); process.exit(1); });

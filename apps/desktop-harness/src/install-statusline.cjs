@@ -9,6 +9,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const ic = require('./install-claude.cjs');
 const winfs = require('./win-fs.cjs');
+const { previousShell } = require('./statusline.cjs');
 
 const STATUSLINE_BIN = path.resolve(__dirname, '../bin/abito-statusline.cjs');
 const MARKER = 'abito-statusline.cjs';
@@ -21,7 +22,19 @@ const previousFile = home => path.join(home, '.abito', 'statusline-previous.json
 const removePrevious = home => { const w = winfs.active(); if (w) w.remove(previousFile(home)); else fs.unlinkSync(previousFile(home)); };
 const ser = (v, style) => JSON.stringify(v, null, style.unit).replace(/\n/g, style.eol + style.mi);
 
-function planStatusLine({ settingsPath, remove = false, execPath = process.execPath, binPath = STATUSLINE_BIN, uid = winfs.uidOf(), home = null }) {
+// The statusLine command for the shell Claude Code will actually run it with (same resolver as the relay's previous-command runner,
+// https://code.claude.com/docs/en/statusline «Windows configuration»): Unix /bin/sh single-quoted; Windows Git Bash `"C:/…/node.exe" "C:/…/x.cjs"`
+// (forward slashes: bash eats backslashes); Windows PowerShell `& "C:\…\node.exe" "C:\…\x.cjs"` (a leading quoted path is a string expression there).
+// HU-047 L6 refusals stay (quote, %, ^, &, |, <, >, control), plus `$` and backtick, which both bash and PowerShell expand inside double quotes.
+function statusLineCommand(execPath, binPath, shell) {
+  if (!shell) throw refuse('no shell that Claude Code can use was found (Git Bash or PowerShell); nothing was written');
+  const q = p => { winfs.quoteWindowsCommandPath(p); if (/[$`]/.test(p)) throw new winfs.WinFsError('unsafe_path', 'unsafe character in a command path'); return p; };
+  q(execPath); q(binPath);
+  if (/(^|[\\/])bash\.exe$/i.test(shell.file)) { const f = p => `"${p.replace(/\\/g, '/')}"`; return `${f(execPath)} ${f(binPath)}`; }
+  return `& "${execPath}" "${binPath}"`;
+}
+
+function planStatusLine({ settingsPath, remove = false, execPath = process.execPath, binPath = STATUSLINE_BIN, uid = winfs.uidOf(), home = null, shell }) {
   ic.checkSettingsSyntax(settingsPath);
   ic.checkParent(settingsPath, uid);
   const cur = ic.readTarget(settingsPath, uid);
@@ -44,8 +57,8 @@ function planStatusLine({ settingsPath, remove = false, execPath = process.execP
   const ours = member && isOurs(existing);
   let patch = null, action = 'unchanged', savePrevious = null, restorePrevious = false, value;
   if (!remove) {
-    // Windows runs the status line through cmd: double-quoted paths, with characters cmd would expand refused (HU-047 L6).
-    const command = winfs.active() ? `${winfs.quoteWindowsCommandPath(execPath)} ${winfs.quoteWindowsCommandPath(binPath)}` : `${shq(execPath)} ${shq(binPath)}`;
+    // Windows: Claude Code runs the status line through Git Bash or PowerShell (statusLineCommand); an installed form for the other shell is `replace` => «Desactualizado».
+    const command = winfs.active() ? statusLineCommand(execPath, binPath, shell === undefined ? previousShell() : shell) : `${shq(execPath)} ${shq(binPath)}`;
     value = { ...(existing || {}), type: existing && existing.type ? existing.type : 'command', command };
     if (!existing || !ours || existing.command !== command) {
       action = member ? 'replace' : 'add';
@@ -200,4 +213,4 @@ function parseArgs(argv) {
   return o;
 }
 
-module.exports = { removePrevious, planStatusLine, runStatusLineInstall, STATUSLINE_BIN, isOurs, previousFile, writeSaved, verify, USAGE };
+module.exports = { statusLineCommand, removePrevious, planStatusLine, runStatusLineInstall, STATUSLINE_BIN, isOurs, previousFile, writeSaved, verify, USAGE };
