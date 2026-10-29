@@ -37,7 +37,10 @@ test('configured fake socket carries exactly legacy v1 lifecycle frames', async 
 
 test('permissions and symlinks fail closed before connecting; no opt-in is inert', async t => {
   const receiver = await fakeReceiver(t);
-  fs.chmodSync(receiver.endpoint, 0o666);
+  // Unix: a world-writable socket is refused. Windows twin of the same behaviour (an endpoint the adapter cannot
+  // verify is refused before any connection): metadata that is not the one `endpoint.json` the island publishes.
+  if (process.platform === 'win32') receiver.endpoint = require('node:path').win32.join(receiver.runtime, 'other.json');
+  else fs.chmodSync(receiver.endpoint, 0o666);
   const { handlers, ctx } = harness(registerAdapter, receiver);
   t.after(() => handlers.get('session_shutdown')());
   handlers.get('session_start')({}, ctx);

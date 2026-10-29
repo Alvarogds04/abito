@@ -25,7 +25,11 @@ if (!H.findPlaywright()) { console.log('SKIPPED island-s10-check: no playwright 
     // the agent that finished is RUNNING again -> the band is gone and the island is back to the overview height
     const r = await H.open({ finishedCard: 'claude-code' });
     try {
-      const isl = (await r.measure('#island'))[0]; assert.equal(Math.round(isl.h), 184, 'claude-code runs (api): no band');
+      const isl = (await r.measure('#island'))[0];
+      // The finished BAND is gone while the agent runs. The retained notice itself is still listed: since abito-avisos-ux S1 (human:
+      // «que salga abajo como sale los avisos de sin cuenta», edb3bd76) it is the 36px «Avisos · N» strip in that same slot, so 220, not 184.
+      assert.equal(Math.round(isl.h), 220, 'claude-code runs (api): no finished band, only the Avisos strip slot');
+      assert.equal(await r.page.locator('#notice-title').textContent(), 'Avisos · 1', 'the retained notice is the Avisos strip');
       assert.ok(!(await r.measure('#notice-card'))[0].shown, 'the band is hidden while it runs');
     } finally { await r.close(); }
   }
@@ -38,7 +42,8 @@ if (!H.findPlaywright()) { console.log('SKIPPED island-s10-check: no playwright 
         const n = document.getElementById('notices').getBoundingClientRect(), isl = document.getElementById('island').getBoundingClientRect(), msg = document.getElementById('notice-card-message');
         return { h: isl.height, band: [n.top - isl.top, n.height, n.width], capsule: ['notice-row', 'notice-pill', 'notice-list'].filter(id => document.getElementById(id) && vis(document.getElementById(id))), card: vis(document.getElementById('notice-card')),
           msg: msg.textContent, fits: msg.scrollWidth <= msg.clientWidth + 1, tip: msg.getAttribute('data-tip') }; });
-      assert.equal(Math.round(m.h), 184, 'retained history does not add a competing finished band');
+      // 184 + the 36px Avisos strip (abito-avisos-ux S1, edb3bd76) = 220: no finished BAND, the strip is the one thing in that slot
+      assert.equal(Math.round(m.h), 220, 'retained history does not add a competing finished band');
       assert.ok(m.capsule.includes('notice-pill')); assert.equal(m.card, false);
       assert.equal(await r.page.locator('#notice-title').textContent(), 'Avisos · 1');
       await r.page.locator('#notice-action').click();
