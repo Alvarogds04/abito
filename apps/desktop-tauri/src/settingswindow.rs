@@ -23,7 +23,7 @@ pub const SETTINGS_LABEL: &str = "settings";
 /// T6.2 (D2, design §3): the own window's contract sizes, in LOGICAL px — the
 /// unit `inner_size`/`min_inner_size` take. The default is the design size; the
 /// minimum matches `prefs::SETTINGS_WINDOW_SIZE_MIN`.
-pub(crate) const DEFAULT_INNER_SIZE: (f64, f64) = (960.0, 640.0);
+pub(crate) const DEFAULT_INNER_SIZE: (f64, f64) = (760.0, 560.0);
 pub(crate) const MIN_INNER_SIZE: (f64, f64) = (720.0, 480.0);
 
 /// T6.2 (pure): the inner size the own Ajustes window opens at, in logical px.
@@ -480,14 +480,14 @@ mod tests {
 
     use super::{opening_size, save_due, DEFAULT_INNER_SIZE, MIN_INNER_SIZE};
 
-    /// T6.2 (D2, design §3): the own window is 960x640 with min 720x480, both
+    /// T6.2 (D2, design §3): the own window is 760x560 (HU-063 S1: the Sidebar-Koda design size; was 960x640) with min 720x480, both
     /// in logical px — the unit `inner_size`/`min_inner_size` take.
     #[test]
     fn t62_the_window_opens_at_the_design_size_and_honors_the_minimum() {
-        assert_eq!(DEFAULT_INNER_SIZE, (960.0, 640.0));
+        assert_eq!(DEFAULT_INNER_SIZE, (760.0, 560.0));
         assert_eq!(MIN_INNER_SIZE, (720.0, 480.0));
-        assert_eq!(opening_size(None, (1920, 1080)), (960.0, 640.0));
-        assert_eq!(opening_size(None, (7680, 4320)), (960.0, 640.0));
+        assert_eq!(opening_size(None, (1920, 1080)), (760.0, 560.0));
+        assert_eq!(opening_size(None, (7680, 4320)), (760.0, 560.0));
     }
 
     /// T6.2: a remembered size is used only when it is within the stored bounds
@@ -507,24 +507,24 @@ mod tests {
         // outside the current screen (either axis): the default, not a clamp
         assert_eq!(
             opening_size(Some((2200, 1400)), (1920, 1080)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
         assert_eq!(
             opening_size(Some((1100, 1400)), (1920, 1080)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
         assert_eq!(
             opening_size(Some((1921, 1080)), (1920, 1080)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
         // hostile stored values (already dropped at load; re-checked here because
         // this function is pure) fall back to the default too
-        assert_eq!(opening_size(Some((100, 700)), (1920, 1080)), (960.0, 640.0));
+        assert_eq!(opening_size(Some((100, 700)), (1920, 1080)), (760.0, 560.0));
         assert_eq!(
             opening_size(Some((5000, 700)), (8000, 4000)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
-        assert_eq!(opening_size(Some((960, 100)), (8000, 4000)), (960.0, 640.0));
+        assert_eq!(opening_size(Some((960, 100)), (8000, 4000)), (760.0, 560.0));
     }
 
     /// T6.2: whatever size was chosen (default or remembered) is clamped into
@@ -534,17 +534,17 @@ mod tests {
     #[test]
     fn t62_the_opening_size_is_clamped_to_the_work_area_never_below_the_minimum() {
         // the default fits: untouched
-        assert_eq!(opening_size(None, (1920, 1080)), (960.0, 640.0));
-        // work area shorter than the default: clamped down on that axis only
-        assert_eq!(opening_size(None, (900, 700)), (900.0, 640.0));
+        assert_eq!(opening_size(None, (1920, 1080)), (760.0, 560.0));
+        // work area narrower or shorter than the default: clamped down on that axis only
+        assert_eq!(opening_size(None, (740, 700)), (740.0, 560.0));
         assert_eq!(
             opening_size(None, (1920, 500)),
-            (960.0, 500.0),
+            (760.0, 500.0),
             "clamped to the area, still above the minimum"
         );
         assert_eq!(
             opening_size(None, (1920, 470)),
-            (960.0, 480.0),
+            (760.0, 480.0),
             "the minimum floors the clamp"
         );
         // work area smaller than the minimum: the minimum wins on both axes

@@ -2,6 +2,7 @@
 import { h, clear } from "../views/dom.js";
 import { action, trusted } from "./runtime.js";
 const PI_COMMAND = "npm install -g @earendil-works/pi-coding-agent";
+const NODE_PLAN = "Abito descarga el instalador oficial de Node.js desde nodejs.org, comprueba su huella SHA-256 y, en macOS y Windows, lo abre para que lo termines vos; en Linux lo deja en tu carpeta de usuario, sin permisos de administrador. No se instala nada sin tu clic.";
 const PLAN = `Se va a ejecutar: ${PI_COMMAND}, con el Node.js de tu equipo. No pide permisos de administrador. Tarda unos minutos y se corta a los 5.`;
 function missingPiece(state) {
   const code = state?.connection === "no_daemon" ? state?.last_error?.code : null;
@@ -12,14 +13,14 @@ function piInstallControl({ call, watch, work, onDone }) {
   let missing = null, phase = "idle", say = "", confirming = false, finished = false, already = false, reason = "";
   const apply = (view) => {
     if (!view || typeof view !== "object") return;
-    const next = ["idle", "running", "done", "failed"].includes(view.phase) ? view.phase : null;
+    const next = ["idle", "running", "done", "failed", "node_ready", "node_installer"].includes(view.phase) ? view.phase : null;
     if (!next) return;
     phase = next;
     confirming = false;
     say = typeof view.say === "string" ? view.say : "";
     already = view.already === true;
     reason = typeof view.reason === "string" ? view.reason : "";
-    if (view.reason === "node_appeared" && missing === "node") missing = "pi";
+    if ((view.reason === "node_appeared" || next === "node_ready") && missing === "node") missing = "pi";
     if (next === "done" && !finished) {
       finished = true;
       onDone?.();
@@ -45,9 +46,23 @@ function piInstallControl({ call, watch, work, onDone }) {
       paint();
     });
   };
+  const installNode = () => {
+    work(() => call("pi_install_action", { action: "install_node" }), apply, () => {
+      phase = "failed";
+      say = "No se pudo iniciar la descarga de Node.js.";
+      paint();
+    });
+  };
+  const checkNode = () => {
+    work(() => call("pi_install_action", { action: "check_node" }), apply, () => {
+      phase = "failed";
+      say = "No se pudo comprobar Node.js.";
+      paint();
+    });
+  };
   function paint() {
     clear(box);
-    box.hidden = !missing && phase !== "running" && phase !== "done";
+    box.hidden = !missing && phase !== "running" && phase !== "done" && phase !== "node_installer";
     if (box.hidden) return;
     if (phase === "running") {
       box.append(h("span", { class: "agent-progress", role: "status" }, h("span", { class: "hub-progress indeterminate", "aria-hidden": "true" }, h("i")), h("span", { class: "hub-note", text: "Instalando Pi… no cierres Abito." })));
@@ -57,10 +72,17 @@ function piInstallControl({ call, watch, work, onDone }) {
       box.append(h("p", { class: "hub-note", role: "status", text: already ? "Pi ya estaba instalado; el chat de Abito está listo." : "Pi quedó instalado y el chat de Abito arrancó." }));
       return;
     }
+    if (phase === "node_installer") {
+      box.append(h("p", { class: "hub-note", role: "status", text: say }), action("Ya lo instalé", checkNode));
+      return;
+    }
+    if (phase === "node_ready") box.append(h("p", { class: "hub-note", role: "status", text: say }));
     if (phase === "failed" && say) box.append(h("p", { class: "hub-note notice err", role: "alert", text: say }));
     if (missing === "node") {
       box.append(
         h("p", { class: "hub-note", text: "El chat de Abito funciona con Pi, y Pi necesita Node.js, que no está instalado." }),
+        h("p", { class: "hub-note", id: "node-install-plan", text: NODE_PLAN }),
+        action("Descargar e instalar Node.js", installNode),
         action("Abrir nodejs.org", openNode)
       );
       return;
@@ -92,7 +114,7 @@ function piInstallControl({ call, watch, work, onDone }) {
     const m = missingPiece(state);
     if (m !== missing) {
       missing = m;
-      if (!m && phase === "failed") phase = "idle";
+      if (!m && (phase === "failed" || phase === "node_ready")) phase = "idle";
       paint();
     }
   } };
