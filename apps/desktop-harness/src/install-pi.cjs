@@ -17,9 +17,11 @@ const listing = files => JSON.stringify(files);
 const foreign = () => Object.assign(core.InstallErrorRefuse('Pi extension folder is not an Abito install'), { foreignExtension: true });
 function dirCheck(dir, uid) {
   const st = fs.lstatSync(dir);
-  if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== uid || (st.mode & 0o022) || fs.realpathSync(dir) !== dir) throw refuse();
+  if (!st.isDirectory() || st.isSymbolicLink() || fs.realpathSync(dir) !== dir) throw refuse();
+  if (st.uid !== uid) throw core.unsafeFolder(dir, 'foreign_owner');
+  if (st.mode & 0o022) throw core.unsafeFolder(dir, 'writable');
 }
-function parents(home, uid, create = false) {
+function parents(home, uid, create = false, made = []) {
   dirCheck(home, uid);
   let dir = home, missing = false;
   for (const part of ['.pi', 'agent', 'extensions']) {
@@ -28,7 +30,7 @@ function parents(home, uid, create = false) {
     try { dirCheck(dir, uid); }
     catch (e) {
       if (e.code !== 'ENOENT') throw e;
-      if (create) { fs.mkdirSync(dir, {mode:0o700}); dirCheck(dir, uid); }
+      if (create) { fs.mkdirSync(dir, {mode:0o700}); made.push(dir); dirCheck(dir, uid); }
       else missing = true;
     }
   }
@@ -72,13 +74,13 @@ function payload(uid) {
   data[MANIFEST] = Buffer.from(JSON.stringify({schema:SCHEMA,files}) + '\n');
   return {data, files};
 }
-function backupRoot(home, uid, create = false) {
+function backupRoot(home, uid, create = false, made = []) {
   const root = path.join(home, '.pi', 'agent', 'abito-backups');
   try { dirCheck(root, uid); }
   catch (e) {
     if (e.code !== 'ENOENT') throw e;
     if (!create) return root;
-    fs.mkdirSync(root, {mode:0o700}); dirCheck(root, uid);
+    fs.mkdirSync(root, {mode:0o700}); made.push(root); dirCheck(root, uid);
   }
   if (fs.lstatSync(root).mode & 0o077) throw refuse();
   return root;
@@ -128,13 +130,18 @@ function cleanStage(dir) {
     fs.rmdirSync(dir);
   } catch { /* leave evidence, never recursively remove unknown data */ }
 }
+// HU-047 L2: a refusal leaves no empty folder behind. Only directories THIS run created, deepest first, and only when empty.
+function removeMade(made, rmdir) {
+  for (const dir of [...made].reverse()) { try { rmdir(dir); } catch { /* not empty or not ours any more: leave it */ } }
+}
 async function applyPi(plan, {backupPath, out, err}) {
   if (winfs.active()) return require('./install-pi-win.cjs').applyPi(plan, {backupPath, out, err});
-  let stage = null, saved = false, published = false;
+  let stage = null, saved = false, published = false, done = false;
+  const made = [];
   try {
     if (!same(plan)) { err('changed since the preview'); return 70; }
-    const parent = parents(plan.home, plan.uid, true);
-    const root = backupRoot(plan.home, plan.uid, true);
+    const parent = parents(plan.home, plan.uid, true, made);
+    const root = backupRoot(plan.home, plan.uid, true, made);
     if (root !== plan.backupRoot || fs.statSync(root).dev !== fs.statSync(parent).dev) throw refuse();
     if (!plan.remove) {
       stage = fs.mkdtempSync(path.join(root, '.abito-island-stage-'));
@@ -156,6 +163,7 @@ async function applyPi(plan, {backupPath, out, err}) {
     }
     if (saved) pruneBackups(root, backupPath, plan.uid);
     out('Done. Pi extension updated.\n');
+    done = true;
     return 0;
   } catch {
     const verificationFailed = published;
@@ -170,6 +178,6 @@ async function applyPi(plan, {backupPath, out, err}) {
     } catch { err('could not restore'); return 70; }
     err(verificationFailed ? 'verification failed; previous state restored' : 'could not apply Pi extension');
     return 70;
-  } finally { cleanStage(stage); }
+  } finally { cleanStage(stage); if (!done) removeMade(made, d => fs.rmdirSync(d)); }
 }
-module.exports = {FILES, MANIFEST, SCHEMA, planPi, applyPi};
+module.exports = { removeMade, FILES, MANIFEST, SCHEMA, planPi, applyPi};

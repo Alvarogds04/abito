@@ -114,7 +114,7 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     let open = false;
     const entry = h('div', { class: 'agent-entry', id: `agent-row-${id}` });
     const line = h('div', { class: 'agent-row', role: 'row' }, h('span', { class: 'agent-name', role: 'cell', text: name }),
-      unknown && !['node_missing', 'failed'].includes(state?.agentsRuntime) ? stateCell('·', UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || '○', r.word), islandSwitch(id, installed), actions);
+      !r || (unknown && !['node_missing', 'failed'].includes(state?.agentsRuntime)) ? stateCell('·', UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || '○', r.word), islandSwitch(id, installed), actions);
     entry.append(line, menu, detail);
     if (id === 'pi') { piControl.update(state); entry.append(piControl.element); }
     const redraw = () => {

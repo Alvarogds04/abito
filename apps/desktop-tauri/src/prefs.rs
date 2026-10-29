@@ -168,6 +168,9 @@ const POSITION_LIMIT: u32 = 1_000_000;
 /// G16: whole seconds the folded island waits before hiding at the edge.
 const ABSENCE_SECONDS: std::ops::RangeInclusive<u16> = 5..=300;
 const ABSENCE_DEFAULT_SECONDS: u16 = 10;
+/// HU-057 S9: the closed island-size set.
+fn valid_island_size(s: &str) -> bool { matches!(s, "s" | "m" | "l" | "auto") }
+
 fn valid_absence_seconds(v: u16) -> bool { ABSENCE_SECONDS.contains(&v) }
 /// The new key wins; an invalid or absent one falls back to the pre-change `absence_minutes` (1–120 minutes, x 60, clamped to 300).
 fn absence_seconds_from(v: &Value) -> Option<u16> {
@@ -284,6 +287,8 @@ pub struct Prefs {
     /// #336 T1b-a: whether a trusted mouse entry may open the settled compact island.
     /// `None` means the default (off) and is never written.
     pub open_on_hover: Option<bool>,
+    /// HU-057 S9: island size `s|m|l|auto`; `None` means `auto` and is never written.
+    pub island_size: Option<String>,
     /// G16: optional whole seconds the folded island waits before it hides at the edge (5–300); absent means ten seconds.
     /// A file written before this change carries `absence_minutes` instead: it is still READ (minutes x 60, clamped to 300) and
     /// never written again, so the file converts the first time it is saved.
@@ -368,6 +373,7 @@ impl Default for Prefs {
             chosen_models: None,
             auto_close_seconds: None,
             open_on_hover: None,
+            island_size: None,
             absence_seconds: None,
             custom_blobs: None,
             monitor: None,
@@ -601,6 +607,10 @@ impl Prefs {
 
     /// #336: the effective hover policy — absent means off.
     pub fn open_on_hover(&self) -> bool { self.open_on_hover.unwrap_or(false) }
+    /// HU-057 S9: the effective island size; absent or foreign means `auto`.
+    pub fn island_size(&self) -> &str {
+        self.island_size.as_deref().filter(|s| valid_island_size(s)).unwrap_or("auto")
+    }
     pub fn absence_seconds(&self) -> u16 { self.absence_seconds.filter(|v| valid_absence_seconds(*v)).unwrap_or(ABSENCE_DEFAULT_SECONDS) }
 
     /// S10 (L30): the effective plan-pill policy — absent means off.
@@ -637,6 +647,7 @@ impl Prefs {
             auto_close_seconds: v.get("auto_close_seconds").and_then(Value::as_u64)
                 .and_then(|s| u16::try_from(s).ok()).filter(|s| *s == 0 || (5..=120).contains(s)),
             open_on_hover: v.get("open_on_hover").and_then(Value::as_bool),
+            island_size: v.get("island_size").and_then(Value::as_str).filter(|s| valid_island_size(s)).map(str::to_string),
             absence_seconds: absence_seconds_from(&v),
             custom_blobs: {
                 let blobs = custom_blobs_from(v.get(CUSTOM_BLOBS));
@@ -695,6 +706,9 @@ impl Prefs {
         if let Some(seconds) = self.absence_seconds.filter(|v| valid_absence_seconds(*v)) { v["absence_seconds"] = json!(seconds); }
         if let Some(hover) = self.open_on_hover {
             v["open_on_hover"] = json!(hover);
+        }
+        if let Some(size) = self.island_size.as_deref().filter(|s| valid_island_size(s)) {
+            v["island_size"] = json!(size);
         }
         if let Some(blobs) = &self.custom_blobs {
             if !blobs.is_empty() {
@@ -792,6 +806,8 @@ pub enum Command {
     /// shape — integer `auto_close_seconds` 0 («Nunca», #438) or 5..=120 and
     /// `open_on_hover`.
     SetIslandInteraction { auto_close_seconds: u16, open_on_hover: bool },
+    /// HU-057 S9: the island size, closed set `s|m|l|auto`.
+    SetIslandSize(String),
     SetAbsenceSeconds(u16),
     /// #389: the platform monitor name the island is pinned to (Ajustes → Panel).
     /// A choice is only ever one of the keys the island itself saw and offered;
@@ -986,6 +1002,11 @@ pub fn parse_command(payload: &Value) -> Result<Command, CommandError> {
         // `as_u64` already refuses floats, strings, null and negatives; the
         // accepted set is {0} («Nunca», #438) ∪ 5..=120, matching the public
         // scheduler contract.
+        Some("set_island_size") if map.len() == 2 => {
+            let size = map.get("island_size").and_then(Value::as_str).ok_or(CommandError)?;
+            if !valid_island_size(size) { return Err(CommandError); }
+            Ok(Command::SetIslandSize(size.to_string()))
+        }
         Some("set_island_interaction") if map.len() == 3 => {
             let seconds = map.get("auto_close_seconds").and_then(Value::as_u64).ok_or(CommandError)?;
             if !(seconds == 0 || (5..=120).contains(&seconds)) {
@@ -1141,6 +1162,10 @@ pub fn apply(current: &Prefs, command: &Command) -> Result<Prefs, CommandError> 
         // range/type checks already ran at parse and run again here for
         // direct callers, exactly like every other typed command. #438:
         // accepted values are {0} («Nunca») ∪ 5..=120.
+        Command::SetIslandSize(size) => {
+            if !valid_island_size(size) { return Err(CommandError); }
+            next.island_size = Some(size.clone());
+        }
         Command::SetIslandInteraction { auto_close_seconds, open_on_hover } => {
             if !(*auto_close_seconds == 0 || (5..=120).contains(auto_close_seconds)) { return Err(CommandError); }
             next.auto_close_seconds = Some(*auto_close_seconds);
@@ -1276,4 +1301,41 @@ pub fn transact(
         publish(&next);
     }
     Ok(next)
+}
+
+#[cfg(test)]
+mod island_size_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_is_auto_and_never_written() {
+        assert_eq!(Prefs::default().island_size(), "auto");
+        assert!(!Prefs::default().to_text().contains("island_size"));
+    }
+
+    #[test]
+    fn closed_set_and_zero_mutation_on_unknown() {
+        for ok in ["s", "m", "l", "auto"] {
+            assert!(parse_command(&json!({"action":"set_island_size","island_size":ok})).is_ok(), "{ok}");
+        }
+        for bad in [json!("xl"), json!("S"), json!(""), json!(1), json!(null), json!("auto ")] {
+            assert!(parse_command(&json!({"action":"set_island_size","island_size":bad})).is_err(), "{bad}");
+        }
+        assert!(parse_command(&json!({"action":"set_island_size"})).is_err());
+        assert!(parse_command(&json!({"action":"set_island_size","island_size":"m","x":1})).is_err());
+        let current = apply(&Prefs::default(), &Command::SetIslandSize("l".into())).unwrap();
+        assert!(apply(&current, &Command::SetIslandSize("huge".into())).is_err());
+        assert_eq!(current.island_size(), "l");
+    }
+
+    #[test]
+    fn persistence_round_trip_and_foreign_value_falls_back() {
+        let p = apply(&Prefs::default(), &Command::SetIslandSize("s".into())).unwrap();
+        let back = Prefs::from_text(Some(&p.to_text()));
+        assert_eq!(back.island_size(), "s");
+        let foreign = Prefs::from_text(Some(r#"{"v":1,"island_size":"giant"}"#));
+        assert_eq!(foreign.island_size(), "auto");
+        assert!(!foreign.to_text().contains("island_size"));
+    }
 }
