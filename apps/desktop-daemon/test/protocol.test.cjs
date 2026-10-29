@@ -411,6 +411,7 @@ test("set_paused: required boolean; extras dropped; error code `paused` is in th
 		assert.deepEqual(P.decodeClientLine(line(bad)), { error: "bad_request" }, JSON.stringify(bad));
 	}
 	assert.deepEqual(P.errorFrame("paused"), { type: "error", code: "paused" });
+	assert.deepEqual(P.errorFrame("store_not_private"), { type: "error", code: "store_not_private" });
 });
 
 test("mcpImportFrame emission caps: 128 servers ok, 129 or >200 KiB serialized -> throws", () => {

@@ -214,14 +214,14 @@ fn disconnected_state_explains_why_with_a_closed_vocabulary() {
 fn a_command_error_from_the_engine_is_kept_as_a_closed_code_with_a_counter() {
     let mut st = ClientState::connected();
     assert_eq!(serde_json::to_value(&st).unwrap()["last_error"], json!({"code": null, "n": 0}));
-    for (n, code) in ["failed", "busy", "bad_request", "rate_limited"].iter().enumerate() {
+    for (n, code) in ["failed", "busy", "bad_request", "rate_limited", "store_not_private"].iter().enumerate() {
         st.apply(&json!({"type":"error","code":code})).unwrap();
         let v = serde_json::to_value(&st).unwrap();
         assert_eq!(v["last_error"], json!({"code": code, "n": n + 1}), "{code}");
     }
     // the same code twice is still a NEW event: the counter is how the page tells them apart
     st.apply(&json!({"type":"error","code":"failed"})).unwrap();
-    assert_eq!(serde_json::to_value(&st).unwrap()["last_error"]["n"], json!(5));
+    assert_eq!(serde_json::to_value(&st).unwrap()["last_error"]["n"], json!(6));
 }
 
 #[test]
