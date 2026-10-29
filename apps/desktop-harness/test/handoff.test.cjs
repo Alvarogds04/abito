@@ -337,6 +337,9 @@ test('procStart: unreadable start time of a claimed pid fails closed, injectable
 });
 test('procStart: a parent pid that is a different live process is refused (pid reuse)', async t => {
   const rcv = await fakeReceiver(t, {});
+  // macOS reads start times with `ps -o lstart=` (1-second resolution): a child started in the same second as this process is
+  // indistinguishable. Documented residual (HU-054); the test crosses the second boundary first so it checks the mechanism, not luck.
+  if (process.platform === 'darwin') await new Promise(r => setTimeout(r, Math.max(0, 1100 - process.uptime() * 1000)));
   const { spawn } = require('node:child_process');
   const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 20000)'], { stdio: 'ignore' });
   t.after(() => child.kill('SIGKILL'));

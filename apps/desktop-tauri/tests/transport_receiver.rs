@@ -785,31 +785,19 @@ fn r21_review_origin_resolution_does_not_hold_the_question_mutex() {
     send(&mut stream,&json!({"v":1,"type":"question","questionVersion":1,"project":project,"sessionId":"session-1","at":now_ms(),
         "id":"3f2b8a40-1c2d-4e5f-8a6b-7c8d9e0f1a2b","kind":"question","text":"Choose",
         "options":[{"value":"a","label":"A","description":""},{"value":"b","label":"B","description":""}],"allowFreeText":false,"expiresAt":now_ms()+30000})).unwrap();
-    // Linux freezes the kernel peer's birth identity from /proc and resolves its terminal (herdr) through the injected resolver, so the
-    // resolver runs while the question is admitted. macOS has no /proc: the peer pid is 0, the origin stays unknown (HU-065) and the
-    // resolver must NEVER run; the same guarantee («snapshots stay available while a question is admitted») then holds trivially and
-    // is asserted below without waiting for a resolution that cannot happen.
-    #[cfg(target_os = "linux")]
+    // Linux (/proc + SO_PEERCRED) and, since HU-065, macOS (LOCAL_PEERPID + proc_pidinfo) both freeze the kernel peer's identity
+    // and resolve its terminal through the injected resolver while the question is admitted.
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    #[cfg(not(target_os = "linux"))]
-    {
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(entered_rx.try_recv().is_err(), "no /proc: the origin resolver is never invoked on this platform");
-    }
     let t = transport.clone(); let (read_tx,read_rx) = mpsc::channel();
     let reader = std::thread::spawn(move || { let pending = t.question_snapshot().pending.is_some(); read_tx.send(pending).unwrap(); });
     let unlocked = read_rx.recv_timeout(Duration::from_millis(200));
     release_tx.send(()).unwrap(); reader.join().unwrap(); transport.close().unwrap();
-    #[cfg(target_os = "linux")]
-    assert_eq!(unlocked,Ok(false),"question snapshots/answers must remain available while herdr is resolving");
-    // macOS twin: the question was admitted (pending) and readable at once, with no resolver in the way.
-    #[cfg(not(target_os = "linux"))]
-    assert_eq!(unlocked,Ok(true),"question snapshots/answers must remain available while a question is admitted");
+    assert_eq!(unlocked,Ok(false),"question snapshots/answers must remain available while the terminal origin is resolving");
 }
 
-/// HU-065 (registered gap: «Ver» does not yet reach the agent's terminal on macOS). macOS has no /proc to freeze a birth identity from,
-/// so the peer pid is 0 and the session origin stays unknown (src/transport.rs `peer_credentials`). Pin it: an accepted socket notice has
-/// NO origin, and the notice view carries no process or terminal field. Linux twin: the r21 test above; Windows: windows_notice.rs.
+/// HU-065: on macOS the receiver resolves a peer's terminal from LOCAL_PEERPID + proc_pidinfo (sessionterm_mac.rs). A test process
+/// has no allowlisted terminal ancestor, so no origin may be invented for it, and the notice view never carries a process or terminal
+/// field. Linux twin: the r21 tests above; Windows: windows_notice.rs.
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_origin_is_never_invented_even_for_an_accepted_notice() {
@@ -826,7 +814,7 @@ fn macos_origin_is_never_invented_even_for_an_accepted_notice() {
     let id = "3f2b8a40-1c2d-4e5f-8a6b-7c8d9e0f1a2b";
     send(&mut stream, &json!({"v":1,"type":"settled","project":project,"sessionId":"session-1","at":now_ms(),"id":id})).unwrap();
     assert!(events.wait(|e| e.notice_count() == 1, Duration::from_secs(2)));
-    assert!(transport.origin_for(&OriginRequest { kind: OriginKind::Notice, id: id.into() }).is_none(), "no /proc on macOS: no origin");
+    assert!(transport.origin_for(&OriginRequest { kind: OriginKind::Notice, id: id.into() }).is_none(), "no terminal ancestor: no origin is invented");
     let view = serde_json::to_value(&events.notices.lock().unwrap()[0]).unwrap();
     for key in ["pid", "ppid", "starttime", "tty", "pane", "terminal", "origin"] { assert!(view.get(key).is_none(), "{key}"); }
     transport.close().expect("close");
