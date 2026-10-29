@@ -253,7 +253,7 @@ test('T2 wiring: the same renderer shows transients; they never outrank a pendin
 const vm = require('node:vm');
 function boot(initial, opts = {}) {
   let now = NOW, seq = 1; const timers = new Map(), docEvents = {}, dispatched = [], tauri = {};
-  const el = tag => { const ls = {}; const e = { tag, children: [], style: {}, dataset: {}, hidden: false, textContent: '', scrollWidth: 120, offsetWidth: 10, ownerDocument: null,
+  const el = tag => { const ls = {}; const e = { tag, children: [], style: { setProperty(k, v) { this[k] = v; }, getPropertyValue(k) { return this[k] || ''; } }, dataset: {}, hidden: false, textContent: '', scrollWidth: 120, offsetWidth: 10, ownerDocument: null,
     appendChild(n) { e.children.push(n); return n; }, remove() {},
     setAttribute(k, v) { (e.attrs ||= {})[k] = String(v); }, getAttribute: k => (e.attrs || {})[k], append(...n) { e.children.push(...n.filter(Boolean)); }, replaceChildren(...n) { e.children = n; },
     addEventListener(n, f) { (ls[n] ||= []).push(f); }, getBoundingClientRect: () => ({ top: 0, height: 40, width: 288 }), fire(n, ev) { (ls[n] || []).forEach(f => f(ev)); } }; return e; };
@@ -272,14 +272,15 @@ function boot(initial, opts = {}) {
     matchMedia: () => ({ matches: !!opts.reduced, addEventListener() {} }), getComputedStyle: () => ({ borderBottomLeftRadius: '14px' }),
     DOMParser: class { parseFromString() { return { documentElement: { nodeName: 'svg' } }; } }, CustomEvent: class { constructor(type, o) { this.type = type; this.detail = o && o.detail; } },
     MutationObserver: class { observe() {} }, ResizeObserver: class { observe() {} }, console, Math, Number, String, Object, Array, JSON, RegExp, Set, Map, Promise, Error, Boolean, Symbol, parseInt, parseFloat, isNaN, isFinite,
-    __TAURI__: { core: { invoke: async () => initial }, event: { listen: async (n, f) => { (tauri[n] ||= []).push(f); return () => {}; } } } };
+    __TAURI__: { core: { invoke: opts.invoke || (async () => initial) }, event: { listen: async (n, f) => { (tauri[n] ||= []).push(f); return () => {}; } } } };
   sb.window = sb.self = sb.globalThis = sb;
   const ctx = vm.createContext(sb);
-  for (const f of [...(opts.abito ? ['clay-engine.js', 'character-motion.js'] : []), 'notify-view.js', 'question-toast.js']) { if (f === 'question-toast.js') sb.AbitoIcons = { svg: n => `<svg data-icon="${n}"></svg>` }; vm.runInContext(fs.readFileSync(path.join(frontend, f), 'utf8'), ctx, { filename: f }); }
+  for (const f of [...(opts.abito ? ['clay-engine.js', 'character-motion.js'] : []), 'notify-view.js', 'island-layout.js', 'question-toast.js']) { if (f === 'question-toast.js') sb.AbitoIcons = { svg: n => `<svg data-icon="${n}"></svg>` }; vm.runInContext(fs.readFileSync(path.join(frontend, f), 'utf8'), ctx, { filename: f }); }
   const toast = capsule.children.find(c => c.tag === 'button');
   return { toast, capsule, advance, ctx, badge: () => toast.children[1].children[0], abitoFrames: () => vm.runInContext('AbitoClay.frames', ctx), title: () => (toast.hidden ? null : toast.children[1].children[1].textContent), emit: s => (tauri['question:state'] || []).forEach(f => f({ payload: s })),
     arrive: n => (docEvents['abito:notice-arrival'] || []).forEach(f => f({ detail: n })), key: k => toast.fire('keydown', { key: k, preventDefault() {}, stopPropagation() {} }),
-    shown: () => dispatched.filter(e => e.type === 'abito:question-toast').map(e => e.detail.shown) };
+    shown: () => dispatched.filter(e => e.type === 'abito:question-toast').map(e => e.detail.shown), docEvents,
+    actions: capsule.children.find(c => c.id === 'question-toast-actions'), doc: document, island, ls: undefined };
 }
 const settledArrival = (over = {}) => ({ id: '5c1f8f0e-3b52-4f7e-8d0a-0a9b7c6d5e4f', kind: 'settled', title: 'Terminó la revisión', agent: 'codex', projectName: 'abito', ...over });
 const SNAP_NOW = () => snap({ pending: pending({ expires_at: NOW + 600000 }) });
@@ -413,6 +414,134 @@ mtest('T3-7 no Abito engine available: the generic icon is the fallback and the 
   const r = boot(SNAP_NOW()); await ready();
   assert.equal(r.badge().children.length, 1); assert.equal(r.badge().children[0].nodeName || 'svg', 'svg');
   assert.equal(r.toast.hidden, false); assert.equal(r.title(), 'Pi pregunta');
+});
+
+
+// ---- HU-063 T3: the toast's Aprobar/Rechazar buttons (risk item 2). Same host path as the card; every guarantee has a negative test. ----
+const PERM = (over = {}) => pending({ kind: 'approval', text: 'Permiso para ejecutar: ls', options: [{ index: 0, label: 'Aprobar', description: '' }, { index: 1, label: 'Rechazar', description: '' }], expires_at: NOW + 600000, ...over });
+const PSNAP = (over = {}) => snap({ pending: PERM(), ...over });
+const OTHER_ID = '11111111-1111-4111-8111-111111111111';
+async function decideBoot(initial, opts = {}) {
+  const calls = []; let behave = opts.behave || (() => Promise.resolve({}));
+  const r = boot(initial, { ...opts, invoke: (cmd, arg) => { if (arg && arg.payload && arg.payload.action === 'view') return Promise.resolve(initial); calls.push({ cmd, arg }); return behave(); } });
+  await Promise.resolve(); await Promise.resolve();
+  r.calls = calls; r.setBehave = f => { behave = f; };
+  r.advance(800); // the body unfolds by itself shortly after arriving; the buttons arm after 500 ms
+  const [reject, approve] = r.actions.children;
+  r.reject = reject; r.approve = approve;
+  r.click = (b, trusted = true) => b.fire('click', { isTrusted: trusted, preventDefault() {}, stopPropagation() {} });
+  return r;
+}
+const T3 = (n, fn) => mtest(`HU-063 T3 ${n}`, fn);
+const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+T3('buttons exist only for the actionable permission; plain question has none and keeps open-the-island', async () => {
+  const r = await decideBoot(PSNAP());
+  assert.equal(r.toast.dataset.expanded, 'true'); assert.equal(r.actions.hidden, false);
+  assert.equal(r.actions.attrs.role, 'group'); assert.equal(r.actions.attrs['aria-label'], 'Decidir el permiso');
+  assert.deepEqual([r.reject.textContent, r.approve.textContent, r.reject.type, r.approve.type], ['Rechazar', 'Aprobar', 'button', 'button']);
+  const q = await decideBoot(SNAP_NOW());
+  assert.equal(q.actions.hidden, true, 'plain question: no buttons');
+  const opened = []; q.docEvents['abito:question-open'] = [e => opened.push(e.detail)];
+  q.toast.fire('click', { isTrusted: true }); assert.equal(JSON.stringify(opened), JSON.stringify([{ id: ID }]));
+  const lossy = await decideBoot(PSNAP({ pending: pending({ kind: 'question', text: 'Claude Code pide permiso para Bash: ls (detalles solo en la terminal; decidir en la terminal)', options: [{ index: 0, label: 'Aprobar una vez' }, { index: 1, label: 'Rechazar' }], expires_at: NOW + 600000 }) }));
+  assert.equal(lossy.actions.hidden, true, 'lossy: no buttons');
+  const hook = await decideBoot(PSNAP({ pending: pending({ kind: 'question', text: 'Claude Code pide permiso para Bash: ls', options: [{ index: 0, label: 'Aprobar una vez' }, { index: 1, label: 'Rechazar' }], expires_at: NOW + 600000 }) }));
+  assert.equal(hook.actions.hidden, false); assert.equal(hook.approve.textContent, 'Aprobar una vez');
+  const hidden = await decideBoot(none(null)); assert.equal(hidden.actions.hidden, true);
+});
+T3('exact payloads: Aprobar = answer{id,index}, Rechazar = answer{id,index} (same as the card), by label not position', async () => {
+  const r = await decideBoot(PSNAP({ pending: PERM({ options: [{ index: 4, label: 'Rechazar', description: '' }, { index: 9, label: 'Aprobar', description: '' }] }) }));
+  r.click(r.approve); await flush();
+  assert.equal(JSON.stringify(r.calls), JSON.stringify([{ cmd: 'question_action', arg: { payload: { action: 'answer', id: ID, index: 9 } } }]));
+  const d = await decideBoot(PSNAP()); d.click(d.reject); await flush();
+  assert.equal(JSON.stringify(d.calls), JSON.stringify([{ cmd: 'question_action', arg: { payload: { action: 'answer', id: ID, index: 1 } } }]));
+});
+T3('a synthetic (untrusted) click sends nothing', async () => {
+  const r = await decideBoot(PSNAP());
+  r.click(r.approve, false); r.click(r.reject, false); r.approve.fire('click', {}); r.approve.fire('click', { isTrusted: 'true' });
+  await flush(); assert.equal(r.calls.length, 0); assert.equal(r.approve.disabled, false);
+});
+T3('inert when the snapshot changed id, expired, left idle, or the card took over: nothing is sent', async () => {
+  let r = await decideBoot(PSNAP()); r.emit(PSNAP({ pending: PERM({ id: OTHER_ID }) })); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'id changed');
+  r = await decideBoot(PSNAP()); r.emit(PSNAP({ pending: PERM({ expires_at: NOW - 1 }) })); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'expired');
+  r = await decideBoot(PSNAP()); r.advance(700000); r.click(r.reject); await flush(); assert.equal(r.calls.length, 0, 'expired by the clock');
+  r = await decideBoot(PSNAP()); r.emit(PSNAP({ native_transition: 'collapsing' })); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'native transition');
+  r = await decideBoot(PSNAP()); r.emit(PSNAP({ pending: PERM({ options: [{ index: 0, label: 'Permitir' }, { index: 1, label: 'Denegar' }] }) })); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'options changed');
+  r = await decideBoot(PSNAP()); r.capsule.dataset.phase = 'expanded'; r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'the card is on screen');
+  r = await decideBoot(PSNAP()); r.emit(none('answered')); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'no longer pending');
+  r = await decideBoot(PSNAP()); r.emit(PSNAP({ native_transition: 'idle' })); r.click(r.approve); await flush(); assert.equal(r.calls.length, 1, 'idle still works');
+});
+T3('a request that replaces the shown one disarms the buttons for 500 ms: a click aimed at the old one cannot land on the new one', async () => {
+  const r = await decideBoot(PSNAP()); r.emit(PSNAP({ pending: PERM({ id: OTHER_ID }) }));
+  assert.equal(r.approve.disabled, true); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0);
+  r.advance(700); assert.equal(r.approve.disabled, false); r.click(r.approve); await flush();
+  assert.equal(r.calls[0].arg.payload.id, OTHER_ID);
+});
+T3('double click sends once; both buttons disabled while in flight', async () => {
+  const r = await decideBoot(PSNAP(), { behave: () => new Promise(() => {}) });
+  r.click(r.approve); assert.equal(r.approve.disabled, true); assert.equal(r.reject.disabled, true);
+  r.click(r.approve); r.click(r.reject); await flush();
+  assert.equal(r.calls.length, 1);
+});
+T3('a host rejection re-enables, shows «No se pudo enviar.», never claims approval', async () => {
+  const r = await decideBoot(PSNAP(), { behave: () => Promise.reject(new Error('boom')) });
+  r.click(r.approve); await flush();
+  assert.equal(r.approve.disabled, false); assert.equal(r.reject.disabled, false);
+  const body = r.toast.children[2].children[0].textContent;
+  assert.equal(body, 'No se pudo enviar.'); assert.doesNotMatch(body, /Aprobad/i);
+  r.setBehave(() => Promise.resolve({})); r.click(r.reject); await flush(); assert.equal(r.calls.length, 2, 'retry is possible after a failure');
+});
+T3('success: the toast paints nothing itself; the next state push drives it', async () => {
+  const r = await decideBoot(PSNAP());
+  r.click(r.approve); await flush();
+  assert.notEqual(r.toast.children[2].children[0].textContent, 'No se pudo enviar.');
+  assert.doesNotMatch(r.toast.children[2].children[0].textContent, /Aprobad/i);
+  r.emit(none('answered')); r.advance(400); assert.equal(r.toast.hidden, true); assert.equal(r.actions.hidden, true);
+});
+T3('Escape, hover, focus, blur and timeouts send nothing; the group hides when folded or dismissed', async () => {
+  const r = await decideBoot(PSNAP());
+  r.toast.fire('pointerenter', {}); r.toast.fire('focus', {}); r.toast.fire('blur', {}); r.toast.fire('pointerleave', {});
+  r.actions.fire('pointerenter', {}); r.actions.fire('focusin', {}); r.actions.fire('focusout', {}); r.actions.fire('pointerleave', {});
+  r.toast.fire('keydown', { key: 'y', preventDefault() {}, stopPropagation() {} }); r.toast.fire('keydown', { key: 'n', preventDefault() {}, stopPropagation() {} });
+  r.advance(60000);
+  assert.equal(r.calls.length, 0);
+  assert.equal(r.actions.hidden, true, 'folded by the timeout: group hidden');
+  const e = await decideBoot(PSNAP()); e.actions.fire('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} }); e.advance(400);
+  assert.equal(e.calls.length, 0); assert.equal(e.toast.hidden, true); assert.equal(e.actions.hidden, true);
+});
+T3('R1 long / multi-line / hidden-char request: NO Aprobar/Rechazar, only «Ver todo» which opens the island and answers nothing', async () => {
+  for (const text of ['Permiso para ejecutar: ' + 'a'.repeat(200), 'ls\nrm -rf ~', 'ls \u202erm']) {
+    const r = await decideBoot(PSNAP({ pending: PERM({ text }) }));
+    assert.equal(r.actions.hidden, false); assert.equal(r.toast.dataset.decide, 'false'); assert.equal(r.toast.dataset.fullview, 'true');
+    assert.equal(r.reject.hidden, true); assert.equal(r.approve.hidden, true);
+    const viewAll = r.actions.children[2]; assert.equal(viewAll.textContent, 'Ver todo'); assert.equal(viewAll.hidden, false);
+    r.click(r.reject); r.click(r.approve); await flush(); assert.equal(r.calls.length, 0, 'hidden decision buttons are inert');
+    const opened = []; r.docEvents['abito:question-open'] = [e => opened.push(e.detail)];
+    r.click(viewAll); await flush();
+    assert.equal(JSON.stringify(opened), JSON.stringify([{ id: ID }]), 'one open event');
+    assert.equal(r.calls.length, 0, 'nothing reaches question_action');
+    r.click(viewAll, false); viewAll.fire('click', {}); assert.equal(opened.length, 1, 'synthetic click does nothing');
+    assert.equal(r.calls.length, 0);
+  }
+});
+T3('R1 a short one-line request keeps the buttons and has no «Ver todo»; replacing it with a long one swaps them', async () => {
+  const r = await decideBoot(PSNAP());
+  assert.equal(r.actions.children[2].hidden, true); assert.equal(r.approve.hidden, false); assert.equal(r.toast.dataset.fullview, 'false');
+  r.emit(PSNAP({ pending: PERM({ text: 'x'.repeat(130) }) }));
+  assert.equal(r.approve.hidden, true); assert.equal(r.actions.children[2].hidden, false);
+  r.click(r.approve); await flush(); assert.equal(r.calls.length, 0);
+});
+T3('R1 a plain question never shows «Ver todo» (the toast click already opens it)', async () => {
+  const q = await decideBoot(SNAP_NOW()); assert.equal(q.actions.hidden, true); assert.equal(q.actions.children[2].hidden, true);
+});
+T3('source contract: textContent only, no innerHTML, no new shortcut, 32px buttons with a 44px hit area', () => {
+  const js = fs.readFileSync(path.join(frontend, 'question-toast.js'), 'utf8'), css = fs.readFileSync(path.join(frontend, 'question-toast.css'), 'utf8');
+  assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML/);
+  assert.doesNotMatch(js, /addEventListener\('key(down|press|up)'[^]*?['"]y['"]/i);
+  assert.match(css, /\.q-toast-act \{[^}]*height: 32px/); assert.match(css, /\.q-toast-act::after \{[^}]*inset: -6px/);
+  assert.equal(T.TOAST.hMax, 96, 'TOAST numbers unchanged');
+  assert.match(css, /\[data-decide="true"\] \.q-toast-body \{[^}]*-webkit-line-clamp: unset[^}]*overflow: visible/, 'R1: no clamp while buttons show');
 });
 
 (async () => {

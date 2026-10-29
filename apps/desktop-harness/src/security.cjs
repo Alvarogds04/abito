@@ -30,7 +30,7 @@ function verifyEndpoint(endpoint, runtime, options = {}) {
     }
     return { dev: 0, ino: 0 };
   }
-  if (process.platform !== 'linux' || !endpointShape(endpoint, runtime)) throw new Error('Unexpected endpoint');
+  if ((platform !== 'linux' && platform !== 'darwin') || !endpointShape(endpoint, runtime, { platform })) throw new Error('Unexpected endpoint');
   const owner = process.getuid();
   privateDirectory(runtime, owner);
   privateDirectory(path.dirname(endpoint), owner);

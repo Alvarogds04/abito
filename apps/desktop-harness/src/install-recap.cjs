@@ -18,7 +18,7 @@ const PROFILE = {
   usage: USAGE,
   checkPaths: () => {},
   buildEntry: (_event, timeoutSec, binPath, execPath) => ({ type: 'command', command: execPath, args: [binPath], timeout: timeoutSec }),
-  isOurs: (h, binPath) => ic.isObj(h) && h.type === 'command' && Array.isArray(h.args) && h.args.includes(binPath),
+  isOurs: (h, binPath) => ic.isObj(h) && h.type === 'command' && Array.isArray(h.args) && (h.args.includes(binPath) || (h.args.length === 1 && ic.isFormerScript(h.args[0], 'abito-recap-hook.cjs'))),
   previewNotes: () => ['Notify-only: these hooks only count activity (prompts, tool kinds, lines changed) for the weekly recap. No command text, path or prompt is kept.'],
   postNotes: () => [],
 };

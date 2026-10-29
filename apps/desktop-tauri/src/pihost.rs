@@ -6,6 +6,7 @@
 use crate::{now_ms, AppState};
 use abito_island::bridge::{self, BridgeError};
 use abito_island::daemonhost::{self, HostSlot};
+use abito_island::nodeinstall;
 use abito_island::piinstall::{self, Reason};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -16,7 +17,11 @@ fn err(code: &str) -> BridgeError { BridgeError::denied(code) }
 
 /// What the page may read: a closed phase and, after a failure, a closed reason with its fixed sentence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Phase { Idle, Running, Done, Failed(Reason) }
+pub(crate) enum Phase { Idle, Running, Done, Failed(Reason),
+    /// HU-069: Node.js is now where Abito looks (Linux user folder): the human can press «Instalar Pi».
+    NodeReady,
+    /// HU-069: the verified official installer was opened (macOS .pkg / Windows .msi); the human finishes it, then «Ya lo instalé».
+    NodeInstallerOpened }
 static PHASE: Mutex<Phase> = Mutex::new(Phase::Idle);
 
 pub(crate) fn view(phase: Phase) -> Value {
@@ -25,6 +30,8 @@ pub(crate) fn view(phase: Phase) -> Value {
         Phase::Running => json!({"action":"status","phase":"running"}),
         Phase::Done => json!({"action":"status","phase":"done"}),
         Phase::Failed(r) => json!({"action":"status","phase":"failed","reason":r.code(),"say":r.say()}),
+        Phase::NodeReady => json!({"action":"status","phase":"node_ready","say":"Node.js quedó instalado. Tocá «Instalar Pi»."}),
+        Phase::NodeInstallerOpened => json!({"action":"status","phase":"node_installer","say":"Se abrió el instalador oficial de Node.js, ya verificado. Terminá la instalación y volvé a tocar «Ya lo instalé»."}),
     }
 }
 
@@ -59,6 +66,10 @@ pub(crate) fn flow(steps: &Steps) -> Result<Outcome, Reason> {
 pub(crate) fn open_node_decision(node_found: bool) -> (bool, Phase) {
     if node_found { (false, Phase::Failed(Reason::NodeAppeared)) } else { (true, Phase::Failed(Reason::NodeMissing)) }
 }
+/// «Ya lo instalé» (and what runs after an install): re-detect Node. Found = the human can install Pi; still missing = say so.
+pub(crate) fn check_node_decision(node_found: bool) -> Phase { if node_found { Phase::NodeReady } else { Phase::Failed(Reason::NodeMissing) } }
+/// The one-click Node install is allowed only while Node is STILL missing (a stale page or a script must not download anything).
+pub(crate) fn install_node_allowed(node_found: bool) -> Result<(), Phase> { if node_found { Err(Phase::Failed(Reason::NodeAppeared)) } else { Ok(()) } }
 /// Run `f`; if it panics, report a failure through `on_panic` so the phase can never stay stuck at `running`.
 pub(crate) fn guarded(f: impl FnOnce(), on_panic: impl FnOnce(Phase)) {
     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() { on_panic(Phase::Failed(Reason::InstallFailed)); }
@@ -119,6 +130,59 @@ fn open_nodejs() {
     }
 }
 
+/// Open a file the host just verified with the platform's own opener (the OS installer UI takes over; Abito never runs it itself).
+#[cfg(any(target_os = "macos", windows))]
+fn open_installer(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("/usr/bin/open");
+    #[cfg(windows)]
+    let mut command = {
+        let root = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("SYSTEMROOT")).map(PathBuf::from).filter(|p| p.is_absolute());
+        let Some(root) = root else { return false };
+        std::process::Command::new(root.join("explorer.exe"))
+    };
+    command.arg(path).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    match command.spawn() { Ok(mut child) => { std::thread::spawn(move || { let _ = child.wait(); }); true } Err(_) => false }
+}
+/// Linux installs from a tarball and never opens an installer.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn open_installer(_path: &Path) -> bool { false }
+/// Where Abito keeps what it downloads for Node: a user folder, never a shared temp.
+fn node_data_dir() -> Option<PathBuf> {
+    let home = install_dir()?;
+    #[cfg(windows)]
+    { return Some(std::env::var_os("LOCALAPPDATA").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or(home.join("AppData/Local")).join("Abito")); }
+    #[cfg(target_os = "macos")]
+    { return Some(home.join("Library/Application Support/Abito")); }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    { Some(home.join(".local/share/abito")) }
+}
+/// The one-click Node install of one run, with the network, the runner and the opener injected so it is tested offline.
+pub(crate) fn node_install_flow(env: &dyn nodeinstall::Env, os: abito_island::nodefinder::Os, arch: Option<nodeinstall::Arch>, data: Option<PathBuf>,
+    open: &dyn Fn(&Path) -> bool, node_found: &dyn Fn() -> bool) -> Phase {
+    let (Some(arch), Some(data)) = (arch, data) else { return Phase::Failed(Reason::Unsupported) };
+    let step = || -> Result<Phase, Reason> {
+        std::fs::create_dir_all(&data).map_err(|_| Reason::DownloadFailed)?;
+        let scratch = nodeinstall::private_dir(&data, "node-plan")?;
+        let planned = nodeinstall::plan(env, os, arch, &scratch);
+        let _ = std::fs::remove_dir_all(&scratch);
+        let artifact = planned?;
+        match artifact.kind {
+            nodeinstall::Kind::Tarball => {
+                nodeinstall::install_tarball(env, &artifact, &data)?;
+                Ok(check_node_decision(node_found()))
+            }
+            nodeinstall::Kind::Pkg | nodeinstall::Kind::Msi => {
+                let dir = nodeinstall::private_dir(&data, "node-installer")?;
+                let file = nodeinstall::download_verified(env, &artifact, &dir)?;
+                nodeinstall::reverify(&artifact, &file)?;
+                if open(&file) { Ok(Phase::NodeInstallerOpened) } else { Err(Reason::InstallFailed) }
+            }
+        }
+    };
+    step().unwrap_or_else(Phase::Failed)
+}
+
 fn finish(app: &AppHandle, phase: Phase) { finish_with(app, phase, Outcome::Installed); }
 fn finish_with(app: &AppHandle, phase: Phase, outcome: Outcome) {
     *PHASE.lock().expect("pi install phase") = phase;
@@ -160,6 +224,24 @@ pub async fn pi_install_action(app: AppHandle, webview: tauri::Webview, state: S
         let (open, phase) = open_node_decision(discover("node").is_some());
         if open { open_nodejs(); }
         return Ok(view(phase));
+    }
+    if action == "check_node" {
+        // «Ya lo instalé»: only re-detects. Nothing is downloaded or opened.
+        return Ok(view(check_node_decision(discover("node").is_some())));
+    }
+    if action == "install_node" {
+        if let Err(phase) = install_node_allowed(discover("node").is_some()) { return Ok(view(phase)); }
+        if let Err(reason) = begin(&PHASE) { return Ok(view(Phase::Failed(reason))); }
+        let _ = app.emit("pi-install:state", view(Phase::Running));
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            let worker = handle.clone();
+            guarded(move || {
+                let phase = node_install_flow(&nodeinstall::Real, abito_island::nodefinder::Os::current(), nodeinstall::Arch::current(), node_data_dir(), &open_installer, &|| discover("node").is_some());
+                finish(&worker, phase);
+            }, |phase| finish(&handle, phase));
+        });
+        return Ok(view(Phase::Running));
     }
     if app.try_state::<HostSlot>().is_none() { return Err(err("host_unavailable")); }
     if let Err(reason) = begin(&PHASE) { return Ok(view(Phase::Failed(reason))); }
@@ -219,6 +301,47 @@ mod tests {
     fn the_node_button_never_installs_it_opens_nodejs_only_while_node_is_still_missing() {
         assert_eq!(open_node_decision(false), (true, Phase::Failed(Reason::NodeMissing)));
         assert_eq!(open_node_decision(true), (false, Phase::Failed(Reason::NodeAppeared)), "Node showed up meanwhile: nothing is opened and nothing is installed");
+    }
+    #[test]
+    fn install_node_runs_only_while_node_is_missing_and_check_node_only_redetects() {
+        assert_eq!(install_node_allowed(false), Ok(()));
+        assert_eq!(install_node_allowed(true), Err(Phase::Failed(Reason::NodeAppeared)), "a stale page cannot trigger a download when Node exists");
+        assert_eq!(check_node_decision(true), Phase::NodeReady);
+        assert_eq!(check_node_decision(false), Phase::Failed(Reason::NodeMissing));
+        assert_eq!(view(Phase::NodeReady)["phase"], "node_ready");
+        assert_eq!(view(Phase::NodeInstallerOpened)["phase"], "node_installer");
+    }
+    /// Offline end to end per OS family: the verified installer is OPENED (never run) on mac/Windows; on Linux Node is unpacked and re-detected.
+    #[test]
+    fn the_node_flow_opens_a_verified_installer_on_mac_and_windows_and_never_without_a_good_hash() {
+        use abito_island::nodefinder::Os;
+        use std::collections::HashMap;
+        struct Net(HashMap<String, Vec<u8>>);
+        impl nodeinstall::Env for Net {
+            fn get(&self, url: &str, _max: u64, sink: &mut dyn std::io::Write) -> Result<(), Reason> { sink.write_all(self.0.get(url).ok_or(Reason::DownloadFailed)?).map_err(|_| Reason::DownloadFailed) }
+            fn run(&self, _: &Path, _: &[String], _: Option<&Path>) -> Result<Vec<u8>, Reason> { Err(Reason::InstallFailed) }
+        }
+        for (os, name) in [(Os::Mac, "node-v22.30.1.pkg"), (Os::Windows, "node-v22.30.1-x64.msi")] {
+            let body = b"installer bytes".to_vec();
+            let good = |hash: String| { let mut m = HashMap::new(); m.insert(format!("{}SHASUMS256.txt", nodeinstall::DIST_BASE), format!("{hash}  {name}\n").into_bytes()); m.insert(format!("{}{name}", nodeinstall::DIST_BASE), body.clone()); Net(m) };
+            let data = std::env::temp_dir().join(format!("abito-pihost-node-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&data);
+            let opened = RefCell::new(Vec::new());
+            let open = |p: &Path| { opened.borrow_mut().push(p.to_path_buf()); true };
+            let phase = node_install_flow(&good(nodeinstall::sha256_hex(&body)), os, Some(nodeinstall::Arch::X64), Some(data.clone()), &open, &|| false);
+            assert_eq!(phase, Phase::NodeInstallerOpened, "{os:?}");
+            assert_eq!(opened.borrow().len(), 1);
+            assert!(opened.borrow()[0].starts_with(&data) && opened.borrow()[0].ends_with(name));
+            let opened2 = RefCell::new(0);
+            let open2 = |_: &Path| { *opened2.borrow_mut() += 1; true };
+            let phase = node_install_flow(&good("0".repeat(64)), os, Some(nodeinstall::Arch::X64), Some(data.clone()), &open2, &|| false);
+            assert_eq!(phase, Phase::Failed(Reason::ChecksumMismatch));
+            assert_eq!(*opened2.borrow(), 0, "a file that fails the hash is never opened");
+            let no_open = |_: &Path| false;
+            assert_eq!(node_install_flow(&good(nodeinstall::sha256_hex(&body)), os, Some(nodeinstall::Arch::X64), Some(data.clone()), &no_open, &|| false), Phase::Failed(Reason::InstallFailed));
+            assert_eq!(node_install_flow(&good(String::new()), os, None, Some(data.clone()), &open2, &|| false), Phase::Failed(Reason::Unsupported));
+            let _ = std::fs::remove_dir_all(&data);
+        }
     }
     #[test]
     fn a_panic_while_installing_does_not_leave_the_phase_stuck_at_running() {
