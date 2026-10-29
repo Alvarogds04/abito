@@ -118,11 +118,15 @@ impl HostSlot {
 /// Session PATH first; only these canonical locations are tried afterwards.
 /// Empty/relative PATH components are ignored: no working-directory execution.
 pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Result<PathBuf, String> {
+    discover_in(name, path, home, &crate::nodefinder::Env::from_process())
+}
+/// [`discover`] with the version-manager environment given explicitly (tests build it; the app passes the process's own).
+pub fn discover_in(name: &str, path: Option<&OsStr>, home: Option<&OsStr>, finder: &crate::nodefinder::Env) -> Result<PathBuf, String> {
     // Windows lookup lives entirely in `daemonhost_win.rs` (node.exe and the
     // npm package CLI JS — never a .cmd shim); the unix/macOS logic below is
     // untouched.
     #[cfg(windows)]
-    return win::discover(name, path, home);
+    return win::discover(name, path, home, finder);
     #[cfg(not(windows))]
     {
         let mut candidates: Vec<PathBuf> = path.map(std::env::split_paths).into_iter().flatten()
@@ -130,7 +134,7 @@ pub fn discover(name: &str, path: Option<&OsStr>, home: Option<&OsStr>) -> Resul
         // HU-069: a GUI launch (Finder, desktop launcher) does not load the shell profile, so version managers (nvm, fnm, Volta) and
         // the customary user bin directories are looked up here, the same way on every OS. Bounded, no shell, no recursive search.
         {
-            let mut env = crate::nodefinder::Env::from_process();
+            let mut env = finder.clone();
             env.home = home.map(PathBuf::from).filter(|h| h.is_absolute());
             candidates.extend(crate::nodefinder::candidates(name, crate::nodefinder::Os::current(), &env));
         }
@@ -262,28 +266,13 @@ impl Drop for Host {
 #[cfg(test)]
 mod gui_launch_tests {
     use super::*;
-    use std::sync::Mutex;
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn real_node() -> Option<PathBuf> {
         let name = if cfg!(windows) { "node.exe" } else { "node" };
         std::env::split_paths(&std::env::var_os("PATH")?).filter(|d| d.is_absolute()).map(|d| d.join(name)).find(|p| p.is_file())
     }
-    struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
-    impl Restore {
-        fn set(vars: &[(&'static str, Option<&Path>)]) -> Self {
-            let saved = vars.iter().map(|(k, _)| (*k, std::env::var_os(k))).collect();
-            for (k, v) in vars { match v { Some(v) => std::env::set_var(k, v), None => std::env::remove_var(k) } }
-            Restore(saved)
-        }
-    }
-    impl Drop for Restore {
-        fn drop(&mut self) { for (k, v) in self.0.drain(..) { match v { Some(v) => std::env::set_var(k, v), None => std::env::remove_var(k) } } }
-    }
-
     #[test]
     fn node_and_npm_are_found_and_used_with_the_minimal_finder_explorer_environment() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let Some(real) = real_node() else {
             assert!(std::env::var_os("CI").is_none(), "CI has Node: this test must not skip silently");
             eprintln!("skipped: no node on PATH");
@@ -310,15 +299,14 @@ mod gui_launch_tests {
         let record = root.join("seen.json");
         std::fs::write(npm_cli_dir.join("npm-cli.js"), format!("require('fs').writeFileSync({:?}, JSON.stringify(process.argv.slice(2)));", record)).unwrap();
 
-        let _env = Restore::set(&[
-            ("HOME", Some(&home)), ("USERPROFILE", Some(&home)), ("APPDATA", Some(&home.join("AppData/Roaming"))), ("LOCALAPPDATA", Some(&home.join("AppData/Local"))),
-            ("ProgramFiles", Some(&no_program_files)), ("NVM_DIR", None), ("FNM_DIR", None), ("VOLTA_HOME", None), ("NVM_HOME", None), ("NVM_SYMLINK", None),
-        ]);
-        let found = discover("node", Some(empty_path.as_os_str()), Some(home.as_os_str())).expect("Node must be found without PATH");
+        // The Finder/Explorer environment, built explicitly: no process-wide variable is touched (other tests read HOME in parallel).
+        let finder = crate::nodefinder::Env { home: Some(home.clone()), app_data: Some(home.join("AppData/Roaming")),
+            local_app_data: Some(home.join("AppData/Local")), program_files: Some(no_program_files.clone()), ..Default::default() };
+        let found = discover_in("node", Some(empty_path.as_os_str()), Some(home.as_os_str()), &finder).expect("Node must be found without PATH");
         assert_eq!(std::fs::canonicalize(&found).unwrap(), std::fs::canonicalize(&node).unwrap());
         // «Instalar Pi» then runs npm with that Node, with nothing from the shell
         let cli = crate::piinstall::npm_cli(&found).expect("npm sits next to the managed Node");
-        let vars: Vec<(String, String)> = ["SystemRoot", "TEMP", "TMP"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
+        let vars: Vec<(String, String)> = ["SystemRoot", "TEMP", "TMP", "TMPDIR", "PATH"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
         let env = crate::piinstall::env(&found, &vars);
         assert_eq!(crate::piinstall::run(&found, &cli, &env, Some(&home), std::time::Duration::from_secs(30)), Ok(()));
         let seen: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
@@ -326,7 +314,6 @@ mod gui_launch_tests {
         // the daemon would be started with that absolute Node first on its PATH
         let child_path = runtime_path(Some(empty_path.as_os_str()), &found, &found).unwrap();
         assert_eq!(std::env::split_paths(&child_path).last().unwrap(), found.parent().unwrap());
-        drop(_env);
         let _ = std::fs::remove_dir_all(&root);
     }
 }
