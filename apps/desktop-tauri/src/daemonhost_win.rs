@@ -105,8 +105,6 @@ pub fn discover_node(
     if let Some(base) = program_files.map(PathBuf::from).filter(|b| b.is_absolute()) {
         candidates.push(base.join("nodejs").join("node.exe"));
     }
-    // HU-069: nvm-windows, fnm, Volta: same bounded lookup as Linux/macOS (a GUI launch does not see the shell setup).
-    candidates.extend(crate::nodefinder::candidates("node", crate::nodefinder::Os::Windows, &crate::nodefinder::Env::from_process()));
     candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| "node missing (PATH and canonical locations)".to_owned())
 }
 
@@ -159,7 +157,10 @@ pub fn discover_pi(
     program_files: Option<&std::ffi::OsStr>,
     app_data: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, String> {
-    let node = discover_node(path, program_files).ok();
+    discover_pi_with(discover_node(path, program_files).ok(), app_data)
+}
+/// [`discover_pi`] with the Node already chosen (so the app can pass a version-manager Node).
+pub fn discover_pi_with(node: Option<PathBuf>, app_data: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
     npm_prefixes(node.as_deref(), app_data)
         .iter()
         .filter_map(|prefix| package_cli_js(&prefix.join("node_modules").join(PI_PACKAGE), "pi"))
@@ -170,9 +171,14 @@ pub fn discover_pi(
 /// The Windows lookup behind `daemonhost::discover` (cfg(windows) dispatch):
 /// only the two daemon runtimes have one; anything else refuses.
 pub fn discover(name: &str, path: Option<&std::ffi::OsStr>, home: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+    // HU-069: after PATH and Program Files, the version managers (nvm-windows, fnm, Volta) a GUI launch cannot see. The two functions
+    // above stay fully explicit (tests isolate them from the runner); only this app-level entry point adds the process environment.
+    let managed = || crate::nodefinder::candidates("node", crate::nodefinder::Os::Windows, &crate::nodefinder::Env::from_process()).into_iter().find(|p| p.is_file());
+    let node = || discover_node(path, std::env::var_os("ProgramFiles").as_deref()).ok().or_else(managed);
+    let _ = home;
     match name {
-        "node" => discover_node(path, std::env::var_os("ProgramFiles").as_deref()),
-        "pi" => discover_pi(path, home, std::env::var_os("ProgramFiles").as_deref(), std::env::var_os("AppData").as_deref()),
+        "node" => node().ok_or_else(|| "node missing (PATH and canonical locations)".to_owned()),
+        "pi" => discover_pi_with(node(), std::env::var_os("AppData").as_deref()),
         _ => Err(format!("{name} has no Windows lookup")),
     }
 }
