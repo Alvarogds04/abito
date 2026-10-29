@@ -34,6 +34,11 @@ test('choice/text-only/mixed legal; approval exactly two unique tokens, no free 
 
 test('source symlink is refused even when target is a private socket', async t => {
   const receiver = await fakeReceiver(t);
+  if (process.platform === 'win32') {
+    // Windows twin: an endpoint that is not directly `<runtime>\\endpoint.json` (a nested/redirected path) is refused.
+    assert.throws(() => verifyEndpoint(path.win32.join(receiver.runtime, 'sub', 'endpoint.json'), receiver.runtime));
+    return;
+  }
   const dir = path.join(receiver.runtime, 'p-symlnk');
   fs.symlinkSync(path.dirname(receiver.endpoint), dir);
   assert.throws(() => verifyEndpoint(path.join(dir, 's'), receiver.runtime));

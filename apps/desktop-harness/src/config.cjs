@@ -4,7 +4,9 @@
 // handoff yields {endpoint: undefined}: callers treat it as unavailable and never scan.
 // ABITO_PROJECT_ROOT is intentionally NOT read here.
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 // Windows (T2/S3): the island publishes the notice endpoint metadata at the
 // canonical `%LOCALAPPDATA%\Abito\notices\endpoint.json`. The hook clients
@@ -50,19 +52,67 @@ function normalized(value) {
   return typeof value === 'string' && value !== '/' && path.isAbsolute(value) &&
     path.normalize(value) === value && !value.endsWith('/') && !value.includes('\0');
 }
-function endpointShape(endpoint, runtime) {
-  return normalized(endpoint) && Buffer.byteLength(endpoint) <= 107 &&
+// sockaddr_un.sun_path: 108 bytes on Linux, 104 on macOS, both including the NUL (same rule as apps/desktop-pi/config.cjs).
+const sunPathMax = platform => (platform ?? process.platform) === 'darwin' ? 103 : 107;
+function endpointShape(endpoint, runtime, options = {}) {
+  return normalized(endpoint) && Buffer.byteLength(endpoint) <= sunPathMax(options.platform) &&
     path.dirname(path.dirname(endpoint)) === runtime && path.basename(endpoint) === 's' &&
     /^p-[a-zA-Z0-9]{6}$/.test(path.basename(path.dirname(endpoint)));
 }
 // Default runtime: ABITO_SOCKET_DIR, else $XDG_RUNTIME_DIR/abito-island, else /run/user/<uid>/abito-island.
 function defaultRuntime(env, owner) {
   if (env.ABITO_SOCKET_DIR !== undefined) return env.ABITO_SOCKET_DIR;
+  if (process.platform === 'darwin') {
+    try { return `${fs.realpathSync(os.tmpdir())}/abito-island`; } catch { throw new Error('No runtime base'); }
+  }
   const xdg = env.XDG_RUNTIME_DIR;
   if (normalized(xdg)) return `${xdg}/abito-island`;
   return `/run/user/${owner}/abito-island`;
 }
 const MAX_HANDOFF = 4096;
+// macOS has no /proc: the same pid facts come from `/bin/ps` (absolute path, fixed argv, no shell, bounded timeout).
+// The block below is a verbatim copy of apps/desktop-daemon/src/procinfo.cjs (PS, PS_ARGS, parsePsLine, runPs): this
+// extension ships alone into ~/.pi/agent/extensions and cannot require the daemon file. test/proc-darwin.test.cjs pins
+// the two copies identical. Any failure (ps missing, pid gone, unparseable output) is `undefined`, which readHandoff
+// treats as "pid not confirmed" and therefore refuses the endpoint (fail closed).
+const PS = "/bin/ps";
+const PS_ARGS = ["-ww", "-o", "lstart=", "-o", "ppid=", "-o", "state=", "-o", "uid=", "-o", "command="];
+/** `lstart` in the C locale is always exactly 24 characters: `Mon Jan  2 15:04:05 2006`. */
+const LSTART_LENGTH = 24;
+
+/** Pure parser of one `ps` line. Returns {start, ppid, state, uid, command} or undefined. */
+function parsePsLine(line) {
+	if (typeof line !== "string") return undefined;
+	const text = line.replace(/\r?\n$/, "");
+	if (text.length <= LSTART_LENGTH) return undefined;
+	const millis = Date.parse(text.slice(0, LSTART_LENGTH).trim());
+	if (!Number.isFinite(millis)) return undefined;
+	const match = /^\s+(\d+)\s+(\S+)\s+(\d+)\s+(.*)$/.exec(text.slice(LSTART_LENGTH));
+	if (!match) return undefined;
+	const ppid = Number(match[1]);
+	const uid = Number(match[3]);
+	if (!Number.isSafeInteger(ppid) || !Number.isSafeInteger(uid)) return undefined;
+	// Whole seconds since the epoch, decimal digits only: the same shape as the Linux clock ticks.
+	return { start: String(Math.floor(millis / 1000)), ppid, state: match[2][0], uid, command: match[4] };
+}
+
+function runPs(pid, exec = execFileSync) {
+	if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+	try {
+		const out = exec(PS, [...PS_ARGS, "-p", String(pid)], {
+			encoding: "utf8", env: { LC_ALL: "C", PATH: "/usr/bin:/bin" }, timeout: 2000, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024,
+		});
+		const lines = String(out).split("\n").filter((entry) => entry.trim() !== "");
+		return lines.length === 1 ? parsePsLine(lines[0]) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+const darwinProc = {
+  exists: pid => runPs(pid) !== undefined,
+  state: pid => runPs(pid)?.state,
+  start: pid => runPs(pid)?.start,
+};
 function readProcState(pid) {
   let fd;
   try {
@@ -145,10 +195,11 @@ function resolveConfig(env, owner, options = {}) {
     if (!endpointShape(explicit, runtime)) throw new Error('Unexpected endpoint');
     return { runtime, endpoint: explicit, source: 'env' };
   }
-  const procExists = options.procExists ?? (pid => fs.existsSync(`/proc/${pid}`));
-  const procState = options.procState ?? readProcState;
-  const procStart = options.procStart ?? readProcStart;
+  const mac = (options.platform ?? process.platform) === 'darwin';
+  const procExists = options.procExists ?? (mac ? darwinProc.exists : pid => fs.existsSync(`/proc/${pid}`));
+  const procState = options.procState ?? (mac ? darwinProc.state : readProcState);
+  const procStart = options.procStart ?? (mac ? darwinProc.start : readProcStart);
   const endpoint = readHandoff(runtime, owner, procExists, procState, procStart);
   return { runtime, endpoint, source: endpoint === undefined ? undefined : 'handoff' };
 }
-module.exports = { resolveConfig, endpointShape, windowsEndpointShape };
+module.exports = { darwinProc: { ...darwinProc, runPs, parsePsLine, PS, PS_ARGS }, resolveConfig, endpointShape, windowsEndpointShape };

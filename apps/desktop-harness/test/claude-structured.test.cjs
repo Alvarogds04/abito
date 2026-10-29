@@ -1,17 +1,19 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { plan } = require('../src/claude-ask.cjs');
-const { handleClaudeHook } = require('../src/claude.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { handleClaudeHook: raw_handleClaudeHook } = require('../src/claude.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
 const q = (i = 0, multiSelect = false) => ({ header: `Step ${i}`, question: `Question ${i}?`, multiSelect,
   options: [{ label: 'Alpha', description: '' }, { label: 'Beta', description: '' }] });
 // S2: questions travel on PermissionRequest (allow + updatedInput), never on PreToolUse any more.
 const input = questions => JSON.stringify({ cwd: path.resolve(__dirname, '..'), session_id: 'structured-test', permission_mode: 'default',
   hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: { questions } });
 const run = (questions, extra = {}) => handleClaudeHook({ event: 'permission-request', input: input(questions),
-  env: { ABITO_DESKTOP_SOCKET: '/test/p-abcdef/s', ABITO_SOCKET_DIR: '/test' }, ...extra });
+  env: offlineEnv('test'), ...extra });
 const picks = { type: 'options', values: ['o1', 'o0'] };
 
 test('multiSelect is planned and a real socket returns multiple original labels', async t => {

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { windowsTwin } = require('./windows-real-pi.cjs');
 const { fakeReceiver } = require('./fake-receiver.cjs');
 function findPi() {
   if (process.env.PI_CODING_AGENT_ROOT) return process.env.PI_CODING_AGENT_ROOT;
@@ -19,6 +20,7 @@ test('actual Pi loader exposes model-only abito_ask and returns the human reply 
   const root = findPi();
   if (!root) { t.skip('Installed Pi not found; set PI_CODING_AGENT_ROOT'); return; }
   const receiver = await fakeReceiver(t, { questions: true, busyReason: true });
+  if (process.platform === 'win32') return windowsTwin(t, root, receiver); // Windows twin: see windows-real-pi.cjs
   const vars = ['ABITO_SOCKET_DIR', 'ABITO_DESKTOP_SOCKET', 'ABITO_QUESTIONS', 'ABITO_QUESTION_TIMEOUT_MS'];
   const previous = Object.fromEntries(vars.map(k => [k, process.env[k]]));
   t.after(() => { for (const k of vars) {
