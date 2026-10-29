@@ -27,7 +27,7 @@ for key in ("USER", "LOGNAME", "TMPDIR"):
         env[key] = os.environ[key]
 
 
-def launch(name):
+def launch(name, while_running=None):
     log_path = home / (name + ".log")
     with log_path.open("w") as log:
         process = subprocess.Popen([str(binary)], cwd="/", env=env,
@@ -35,6 +35,8 @@ def launch(name):
         try:
             time.sleep(20)
             assert process.poll() is None, f"app exited early: {process.returncode}"
+            if while_running:
+                while_running(process.pid)
         finally:
             process.terminate()
             try:
@@ -48,7 +50,23 @@ def launch(name):
     return text
 
 
-healthy = launch("runtime-present")
+def endpoint_published(pid):
+    # HU-068: the stable handoff Pi and the hooks read to find the island (it used to be a «no receiver» stub here)
+    import json
+    runtime = pathlib.Path(env.get("TMPDIR", "/tmp")) / "abito-island"
+    handoff = runtime / "endpoint.json"
+    assert handoff.is_file(), f"no endpoint.json in {runtime}: {sorted(p.name for p in runtime.iterdir())}"
+    assert handoff.stat().st_mode & 0o777 == 0o600, oct(handoff.stat().st_mode)
+    data = json.loads(handoff.read_text())
+    assert set(data) == {"v", "endpoint", "pid", "procStart"}, data
+    assert data["v"] == 1 and data["pid"] == pid, data
+    assert pathlib.Path(data["endpoint"]).is_socket(), data
+    assert data["procStart"].isdigit(), data
+    print("endpoint.json published:", data, flush=True)
+
+
+healthy = launch("runtime-present", endpoint_published)
+assert "endpoint handoff not published" not in healthy, "the handoff must be published on macOS"
 assert "abito-island-daemon: running (pid " in healthy, "daemon never became ready"
 assert "ABITO_DESKTOP_SOCKET=" in healthy, "notice transport never started"
 assert "no_daemon" not in healthy and "transport unavailable" not in healthy
