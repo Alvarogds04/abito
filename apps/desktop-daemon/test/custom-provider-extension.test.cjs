@@ -22,7 +22,7 @@ const { discoverModels } = require("../src/custom-provider.cjs");
 
 const SECRET = "sk-fake-SECRET-2468-DO-NOT-LEAK";
 const FIXTURE = path.join(__dirname, "fixtures", "fake-auth.cjs");
-const tempRoot = () => mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-custom-ext-"));
+const tempRoot = () => mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-custom-ext-"));
 
 /**
  * Loopback fixture gateway. `hits` are requests that belong to the test; `strays` are unrelated local

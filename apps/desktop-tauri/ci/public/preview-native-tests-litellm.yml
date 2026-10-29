@@ -80,6 +80,16 @@ jobs:
           Get-Command pi -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host
           Get-ChildItem -Force (Split-Path (Get-Command pi).Source) -ErrorAction SilentlyContinue | Select-Object Name | Format-Table | Out-String | Write-Host
           node -e "console.log(process.platform, process.version, process.env.APPDATA, process.env.npm_config_prefix)"
+      - name: Windows install layout for the daemon suite (real ACL helper + manifest)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          # HU-061: same layout as the harness job (apps/abito-private-session.exe + apps/abito-install.json) so the daemon
+          # writes its credential files through the verified HU-047 helper, exactly like an install.
+          cargo build --locked --bin abito-private-session
+          cp target/debug/abito-private-session.exe ../abito-private-session.exe
+          node packaging/windows/install-manifest.cjs --dist ../
+          echo "ABITO_TEST_HELPER=$(cd .. && pwd -W)/abito-private-session.exe" >> "$GITHUB_ENV"
       - name: Daemon suite (custom provider, profiles, protocol)
         if: ${{ !cancelled() }}
         working-directory: apps/desktop-daemon
@@ -91,6 +101,7 @@ jobs:
           test/custom-provider-extension.test.cjs
           test/profiles.test.cjs test/protocol.test.cjs
           test/auth.test.cjs test/server.test.cjs
+          test/win-fixture.test.cjs test/win-private-fs.test.cjs
 
   macos:
     runs-on: macos-26

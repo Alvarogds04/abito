@@ -141,7 +141,7 @@ function makeManager(root) {
 		helper: { command: process.execPath, args: [FIXTURE, "--accounts-root", accountsRoot], env: helperEnv(process.env, { home: root, tmp: root }) },
 	});
 }
-const tempRoot = () => mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-custom-test-"));
+const tempRoot = () => mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-custom-test-"));
 const read = (root, id, file) => readFileSync(path.join(root, "accounts", id, file), "utf8");
 
 test("createCustomAccount: public DTO has no URL/key; models.json is private; bad input creates nothing", async (t) => {

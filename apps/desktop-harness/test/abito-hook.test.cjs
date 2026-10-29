@@ -35,7 +35,8 @@ test('e2e allow / deny', async t => {
     const p = answer(rcv, v);
     const r = await run(['claude', 'permission-request'], permission, envOf(rcv));
     await p;
-    assert.equal(r.code, 0); assert.equal(r.stdout, exp); oneLineOrEmpty(r.stdout);
+    // CI diagnostics for the Windows pipe path (flaky once in 4 runs: empty stdout after ~0.5 s): what the child said and what the island saw
+    assert.equal(r.code, 0, `stderr=${r.stderr}`); assert.equal(r.stdout, exp, `${v}: stderr=${JSON.stringify(r.stderr)} frames=${rcv.frames.map(f => f.type)} t=${rcv.rawFrames.length}`); oneLineOrEmpty(r.stdout);
     const q = rcv.frames.find(f => f.type === 'question');
     assert.equal(q.expiresAt - q.at, 30000);
   }
