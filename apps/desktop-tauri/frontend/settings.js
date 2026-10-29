@@ -1164,6 +1164,25 @@
     };
     autoRow.append(autoOptions);
     isla.append(autoRow, autoIssue);
+    // HU-057 S9: «Tamaño de la isla» S / M / L / Auto — same segmented pattern; saved through the closed prefs verb set_island_size.
+    const sizeRow = el('div', 'srow');
+    sizeRow.append(el('span', 'srow-title', 'Tamaño de la isla'));
+    const sizeOptions = el('span', 'sseg'); sizeOptions.id = 'settings-island-size-options';
+    sizeOptions.setAttribute('role', 'radiogroup');
+    sizeOptions.setAttribute('aria-label', 'Tamaño de la isla');
+    for (const seg of V.islandSizeSegments(prefs && prefs.islandSize)) {
+      const b = el('button', 'sseg-btn');
+      b.type = 'button'; b.textContent = seg.label; b.id = `island-size-${seg.id}`;
+      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', seg.selected ? 'true' : 'false'); b.tabIndex = seg.selected ? 0 : -1;
+      b.addEventListener('click', e => {
+        if (e.isTrusted !== true || seg.selected || V.islandSizeProblem(seg.id)) return;
+        call('prefs_action', { action: 'set_island_size', island_size: seg.id }).then(p => { prefs = p; render(); say('Tamaño de la isla guardado.'); },
+          () => say('No se pudo guardar. El tamaño sigue sin cambios; probá de nuevo.'));
+      });
+      sizeOptions.append(b);
+    }
+    sizeRow.append(sizeOptions);
+    isla.append(sizeRow);
     isla.append(toggleRow('sw-island-hover', 'Abrir al pasar el mouse', island.openOnHover, () => {
       const payload = { action: 'set_island_interaction', auto_close_seconds: island.autoCloseSeconds, open_on_hover: !island.openOnHover };
       call('prefs_action', payload).then(

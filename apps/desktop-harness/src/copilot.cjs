@@ -35,7 +35,7 @@ async function handleCopilotHook({ event, input, env = {}, argv = [], now, clien
     if (!validCwd(cwd)) return none();
     if (event === 'stop') { // sessionEnd: one settled notice, never any output
       let cfg;
-      try { cfg = resolveConfig(env, process.getuid()); } catch { return none(); }
+      try { cfg = resolveConfig(env, process.getuid?.()); } catch { return none(); }
       if (!cfg.endpoint) return none();
       const c = clientFactory({ endpoint: cfg.endpoint, runtime: cfg.runtime, cwd, agent: 'copilot-cli', onDiagnostic: () => {}, sessionId: sessionToken(field(data, 'sessionId', 'session_id')) });
       await c.notify();
@@ -49,7 +49,7 @@ async function handleCopilotHook({ event, input, env = {}, argv = [], now, clien
     if (deadline.mode !== 'ask') return none('Abito island: hook timeout too short for a question. Answer in the terminal.\n');
 
     let config;
-    try { config = resolveConfig(env, process.getuid()); } catch { return none('Abito island: invalid configuration.\n'); }
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Abito island: invalid configuration.\n'); }
     if (!config.endpoint) return none('Abito island unavailable. Answer in the terminal.\n');
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd, agent: 'copilot-cli', onDiagnostic: () => {},
       sessionId: sessionToken(field(data, 'sessionId', 'session_id')) };

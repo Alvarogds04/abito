@@ -1250,6 +1250,7 @@ mod chosen_models {
             window_context: Some(true),
             live_context: None,
             desktop_character: Some(DesktopCharacter { on: true, spot: Some((5, -6)) }),
+            island_size: None,
         };
         let text = full.to_text();
         let re = Prefs::from_text(Some(&text));

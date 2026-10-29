@@ -61,8 +61,14 @@ fn executable(p: &std::path::Path) -> bool {
 /// Where a `codex` binary may live, best first: PATH, then the usual user installs, then nvm
 /// (newest Node first).
 pub fn candidates() -> Vec<PathBuf> {
+    candidates_in(std::env::var_os("PATH"))
+}
+
+/// [`candidates`] with an explicit PATH, so tests never mutate the process environment (other tests run in parallel
+/// and spawn `node` through it).
+pub(crate) fn candidates_in(path: Option<std::ffi::OsString>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    if let Some(path) = std::env::var_os("PATH") {
+    if let Some(path) = path {
         out.extend(std::env::split_paths(&path).map(|d| d.join("codex")));
     }
     #[cfg(unix)]
@@ -89,20 +95,25 @@ pub fn candidates() -> Vec<PathBuf> {
 /// The limits part of Codex's `account/rateLimits/read` answer, or `None` when Codex is not
 /// installed, not signed in, slow, or already being asked.
 pub fn read() -> Option<Value> {
+    read_with(std::env::var_os("PATH"))
+}
+
+/// [`read`] with an explicit PATH (used to find `codex` and handed to it); the process environment is never changed.
+pub(crate) fn read_with(path: Option<std::ffi::OsString>) -> Option<Value> {
     if BUSY.swap(true, atomic::Ordering::AcqRel) {
         return None;
     }
     let _busy = NotBusy;
 
-    let exe = candidates().into_iter().next()?;
+    let exe = candidates_in(path.clone()).into_iter().next()?;
     let mut cmd = Command::new(&exe);
     cmd.arg("app-server").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     // An npm install is a `#!/usr/bin/env node` script: its own folder first on PATH so it
     // finds its Node.
     if let Some(dir) = exe.parent() {
         let mut dirs = vec![dir.to_path_buf()];
-        if let Some(path) = std::env::var_os("PATH") {
-            dirs.extend(std::env::split_paths(&path));
+        if let Some(path) = &path {
+            dirs.extend(std::env::split_paths(path));
         }
         if let Ok(joined) = std::env::join_paths(dirs) {
             cmd.env("PATH", joined);

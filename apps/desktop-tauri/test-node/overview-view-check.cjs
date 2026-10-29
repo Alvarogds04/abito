@@ -570,7 +570,10 @@ test('R6 visible size: Coucou botDiameter 58 plain overview, 56 with a card (sca
 test('R6 margins: card box keeps >=20px from the island edge (reject shake ~2px), viewBox top air', () => {
   const [clay, clayX] = /OVERVIEW_CARD = \{ clay: (\d+), clayX: (\d+)/.exec(islandSrc).slice(1).map(Number);
   assert.ok(clayX - clay / 2 >= 20, `box left ${clayX - clay / 2}`);
-  assert.deepEqual([/OVERVIEW = \{[^}]*clayX: (\d+), cy: (\d+)/.exec(islandSrc).slice(1).map(Number), [clayX, /OVERVIEW_CARD = \{[^}]*cy: (\d+)/.exec(islandSrc)[1] * 1]], [[68, 113], [62, 113]], 'Coucou VIEW_LAYOUTS botX 68 / 62, cy 101');
+  // HU-057 (odd/tasks/isla-nusa.md): the plain overview is the Nusa notch (OVERVIEW {w:720,h:150,r:26,clay:64,clayX:598,cy:74}), no longer Coucou's
+  // botX 68 / cy 113. That half is asserted on the REAL rendered island in the browser block at the end of this file (not copied from island.js);
+  // the card variant (OVERVIEW_CARD clayX 62, cy 113) is unchanged and stays pinned here.
+  assert.deepEqual([clayX, /OVERVIEW_CARD = \{[^}]*cy: (\d+)/.exec(islandSrc)[1] * 1], [62, 113], 'Coucou VIEW_LAYOUTS botX 62, cy 101 (card variant)');
   const vb = /OVERVIEW_VB = \[(\d+), (\d+), (\d+), (\d+)\]/.exec(islandSrc).slice(1).map(Number);
   assert.deepEqual(vb, [36, 32, 128, 128]);
 });
@@ -821,7 +824,8 @@ test('L34 Coucou\'s bar: the collapsed island is 288x32 with corners 0 0 14 14 i
   const visible = clay * 112 / vbx[2];
   assert.ok(Math.abs(visible - 20) <= 1, `the visible character (${visible.toFixed(1)}px) is Coucou's 20px bot`);
   assert.ok(clayX - clay / 2 >= 0 && clay <= h, 'the character box sits inside the bar');
-  assert.match(islandSrc, /const rTop = lerp\(COMPACT\.r, OVERVIEW\.r, p\), rBottom = rTop;/);
+  // HU-057: the corner expression changed (rTop/rBottom now lerp separately: square top, rounded bottom); the corner contract is asserted on the
+  // rendered island (compact r16 below / expanded r26 below, square top) in the browser block at the end of this file.
 });
 
 test('L34 the bar keeps the badge/contour vocabulary: the sun badge rides the character, the contour is inside the bar (no window margin to draw outside)', () => {
@@ -850,7 +854,8 @@ test('L34 mini grid: up to four small characters on the bar, 13px cells 3px apar
 test('fixed-window gestures retain click reporting and character pick-up without frontend docking policy', () => {
   assert.doesNotMatch(islandSrc, /snap_to_edge|nearest_vertical_edge|anchor_toggle/);
   assert.match(islandSrc, /send\('drag_press'/); assert.match(islandSrc, /send\('drag_release'/);
-  assert.match(islandSrc, /put\(island, 'borderRadius', `\$\{rTop\}px \$\{rTop\}px \$\{rBottom\}px \$\{rBottom\}px`\)/, 'S10: square top corners (the notch meets the edge), r14 below');
+  // HU-057: the borderRadius source line is now `${rTopUsed}… ${rBottom}…`; «square top corners, rounded bottom» is asserted on the rendered island
+  // (browser block at the end of this file), compact and expanded.
 });
 
 test('CSS structure: braces balance (no stray «}» swallowing the next rule) and every critical top-level rule exists', () => {
@@ -1025,3 +1030,31 @@ test('T7.3 approval card markup: «Espera tu respuesta» caption, fold inside th
   assert.match(css, /#card-wait \{[^}]*font: 400 11px var\(--font\)/, 'caption is Coucou\'s 11 px');
   assert.match(fs.readFileSync(path.join(frontend, 'island.js'), 'utf8'), /card-wait/, 'island.js shows the caption only while the human may decide');
 });
+
+// HU-057 — the plain overview contract measured on the REAL island (real CSS + JS, headless Chromium via the shared harness), replacing the old
+// source-regex pin of OVERVIEW clayX 68 / cy 113: Nusa notch 720x150, square top / r26 bottom, Koda (64px, the only character) in the right column
+// and fully inside the notch. Fails if any of that regresses. SKIPPED loudly (never a silent pass) when Playwright is absent.
+(async () => {
+  const H = require('./island-geometry-harness.cjs');
+  if (!H.findPlaywright()) { console.log('SKIPPED overview-view-check (HU-057 real-layout block): no playwright — NOT a pass'); return; }
+  const ui = await H.open({ quick: true, sessions: [] });
+  try {
+    const [isl] = await ui.measure('#island');
+    const radii = await ui.page.evaluate(() => { const c = getComputedStyle(document.getElementById('island')); return [c.borderTopLeftRadius, c.borderTopRightRadius, c.borderBottomRightRadius, c.borderBottomLeftRadius].map(parseFloat); });
+    assert.deepEqual([Math.round(isl.w), Math.round(isl.h)], [720, 150], 'HU-057 plain overview is the 720x150 Nusa notch');
+    assert.deepEqual(radii, [0, 0, 26, 26], 'HU-057 notch: square top, r26 bottom');
+    // the same corner contract on the compact pill (hangs from the top edge: square top, r16 below = COMPACT.r)
+    await ui.page.evaluate(() => window.__islandSetState('compact')); await ui.page.waitForTimeout(1500);
+    const compactRadii = await ui.page.evaluate(() => { const c = getComputedStyle(document.getElementById('island')); return [c.borderTopLeftRadius, c.borderTopRightRadius, c.borderBottomRightRadius, c.borderBottomLeftRadius].map(parseFloat); });
+    assert.deepEqual(compactRadii, [0, 0, 16, 16], 'compact pill: square top, r16 below');
+    await ui.page.evaluate(() => window.__islandSetState('overview')); await ui.page.waitForTimeout(1500);
+    const kodas = (await ui.measure('.koda-sprite')).filter(b => b.shown);
+    assert.equal(kodas.length, 1, 'only Koda is drawn in the plain overview: ' + JSON.stringify(kodas));
+    const k = kodas[0], relX = k.left - isl.left, relY = k.top - isl.top;
+    assert.deepEqual([Math.round(k.w), Math.round(k.h)], [64, 64], 'Koda is 64px (OVERVIEW.clay)');
+    assert.ok(Math.abs(relX - 598) <= 2, 'Koda column: box left 598 from the island edge, measured ' + relX);
+    assert.ok(Math.abs(relY - 49) <= 2, 'Koda sits in the notch body (box top ~49), measured ' + relY);
+    assert.ok(relX + k.w <= isl.w - 20 && relY + k.h <= isl.h - 20, 'Koda keeps >=20px of air to the right/bottom edge of the notch');
+  } finally { await ui.close(); }
+  console.log('overview-view-check (HU-057 real layout): ok');
+})().catch(e => { console.error('FAIL', e.stack); process.exit(1); });
