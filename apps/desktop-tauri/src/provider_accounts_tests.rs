@@ -193,7 +193,7 @@ fn request(action: &str, provider: &str, url: &str) -> Value {
 #[test]
 fn account_commands_are_local_and_redacted() {
     for action in ["abito_account_create", "abito_account_save", "abito_account_endpoint_set"] {
-        let mut p = request(action, "custom", "https://api.nan.builders/v1");
+        let mut p = request(action, "openai", "https://api.nan.builders/v1");
         let secret: String = (65..95).filter_map(char::from_u32).collect();
         p["config"]["apiKey"] = json!(secret);
         let parsed = parse_ui_command(&p);
@@ -211,13 +211,13 @@ fn account_hostile_urls_and_invalid_payloads_are_rejected() {
         "https://exam ple.com/v1","https://éxample.com/v1","https://xn--xample-9ua.com/v1",
         "https://%65xample.com/v1","https://example.com./v1","https://example.com/v1?key=x",
         "https://example.com/#x","https://example.com:0/v1","http://api.nan.builders/v1"] {
-        assert!(parse_ui_command(&request("abito_account_save", "custom", url)).is_err());
+        assert!(parse_ui_command(&request("abito_account_save", "openai", url)).is_err());
     }
     for url in ["https://localhost:11434/v1","http://localhost.evil/v1","http://127.1/v1",
         "http://2130706433/v1","http://0x7f000001/v1","http://192.168.1.2/v1"] {
         assert!(parse_ui_command(&request("abito_account_create", "ollama", url)).is_err());
     }
-    let valid = request("abito_account_save", "custom", "https://example.com/v1");
+    let valid = request("abito_account_save", "openai", "https://example.com/v1");
     for field in ["nombre","baseUrl","api","compat","models","defaultModel"] {
         let mut bad = valid.clone(); bad["config"].as_object_mut().unwrap().remove(field);
         assert!(parse_ui_command(&bad).is_err());
@@ -231,7 +231,7 @@ fn account_local_loopback_and_remote_https_are_accepted() {
     for url in ["http://localhost:11434/v1","http://127.0.0.1:1234/v1","http://[::1]:11434/v1"] {
         assert!(parse_ui_command(&request("abito_account_create", "ollama", url)).is_ok());
     }
-    for provider in ["anthropic","google","openai","openrouter","custom"] {
+    for provider in ["anthropic","google","openai","openrouter"] {
         assert!(parse_ui_command(&request("abito_account_save", provider, "https://api.nan.builders/v1")).is_ok());
     }
 }
@@ -247,7 +247,7 @@ fn account_ipv4_mapped_loopback_and_unspecified_are_never_remote() {
         let mut store = load(dir.file()).unwrap();
         let before = store.view();
         let mut publications = 0;
-        let payload = request("abito_account_create", "custom", &format!("https://{host}/v1"));
+        let payload = request("abito_account_create", "openai", &format!("https://{host}/v1"));
         let rejected = parse_ui_command(&payload).is_err();
         let result = store.command(&payload, |_| publications += 1);
         if !rejected || !matches!(result, Err(ref e) if e.code == "invalid_account")
@@ -316,7 +316,7 @@ fn account_invalid_save_does_not_open_mutate_or_publish() {
     let before = store.view();
     let mut events = 0;
     for url in ["javascript:x", "file:///x", "data:x", "https://u:p@example.com", "https://a\\b", "https://éxample.com", "https://x y.com"] {
-        let p = request("abito_account_create", "custom", url);
+        let p = request("abito_account_create", "openai", url);
         let error = store.command(&p, |_| events += 1).unwrap_err();
         assert_eq!(error.code, "invalid_account");
         assert!(!error.message.contains(url));
@@ -327,7 +327,7 @@ fn account_invalid_save_does_not_open_mutate_or_publish() {
 #[test]
 fn account_failed_save_keeps_previous_disk_memory_and_events() {
     let dir = Sandbox::new(); let mut store = load(dir.file()).unwrap();
-    let mut p = request("abito_account_create", "custom", "https://example.com/v1");
+    let mut p = request("abito_account_create", "openai", "https://example.com/v1");
     assert!(store.command(&p, |_| {}).is_ok(), "seed must persist");
     let before = store.view(); let bytes = std::fs::read(dir.file()).unwrap();
     // A conflicting exclusive temporary file rejects the save before touching the target.
@@ -551,4 +551,18 @@ fn account_remove_commits_the_file_first_and_a_failed_key_delete_keeps_the_key()
     assert_eq!(store.view()["accounts"], json!([]), "removal stays committed; cleanup is journaled");
     assert_eq!(secrets.read(&reference).unwrap().as_deref(), Some("original-key"));
     assert_eq!(disk(&dir)["pendingCleanup"], json!([reference]));
+}
+
+// HU-041: the generic 'custom' provider is created and edited ONLY through the daemon's reviewed
+// custom_* gateway; the local keyring path refuses it for every account action.
+#[test]
+fn account_path_refuses_provider_custom_for_every_action() {
+    for action in ["abito_account_create", "abito_account_save", "abito_account_endpoint_set"] {
+        let p = request(action, "custom", "https://gateway.example/v1");
+        assert!(parse_ui_command(&p).is_err(), "{action} must refuse provider custom");
+        let dir = Sandbox::new(); let mut store = load(dir.file()).unwrap();
+        let before = store.view(); let mut events = 0;
+        assert_eq!(store.command(&p, |_| events += 1).unwrap_err().code, "invalid_account");
+        assert!(!dir.file().exists()); assert_eq!(store.view(), before); assert_eq!(events, 0);
+    }
 }

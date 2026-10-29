@@ -74,15 +74,19 @@ test('R13 g: ordinary allow/deny remain byte-identical even with suggestions', a
   for (const [v, out] of [['allow', ALLOW], ['deny', DENY], ['terminal', '']]) assert.equal((await run([rule()], v)).result.stdout, out);
 });
 test('R13 permitted setMode, exact file and directory entries echo unchanged', async () => {
-  const file = '/tmp/r13-example.txt';
+  // A canonical directory: macOS `/tmp` is a symlink to `/private/tmp` and the product refuses non-canonical paths (fail closed).
+  // Short on purpose: the product drops a suggestion whose description exceeds 160 characters, and macOS's per-user tmpdir
+  // (/private/var/folders/xx/.../T) pushes the third entry over that limit (run 40751626543). realpath('/tmp') is /private/tmp there.
+  const dir = require('node:fs').realpathSync('/tmp');
+  const file = `${dir}/r13-example.txt`;
   for (const entry of [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' },
     { type: 'addRules', rules: [{ toolName: 'Write', ruleContent: file }], behavior: 'allow', destination: 'session' },
     { type: 'addRules', rules: [{ toolName: 'Write', ruleContent: '/' + file }], behavior: 'allow', destination: 'localSettings' }]) {
-    const { question, result } = await run([entry], 'allow_suggestion_1', { cwd: '/tmp', tool_name: 'Write', tool_input: { file_path: file, content: 'hello' } });
+    const { question, result } = await run([entry], 'allow_suggestion_1', { cwd: dir, tool_name: 'Write', tool_input: { file_path: file, content: 'hello' } });
     assert.equal(question.options.length, 3); assert.deepEqual(decision(result).updatedPermissions, [entry]);
   }
-  const entry = { type: 'addDirectories', directories: ['/tmp'], destination: 'session' };
-  const r = await run([entry], 'allow_suggestion_1', { tool_input: { command: 'cd /tmp' } });
+  const entry = { type: 'addDirectories', directories: [dir], destination: 'session' };
+  const r = await run([entry], 'allow_suggestion_1', { tool_input: { command: `cd ${dir}` } });
   assert.deepEqual(decision(r.result).updatedPermissions, [entry]);
 });
 test('R13 wire exposes only derived options, fixed tokens; real QP/1 selection echoes original', async t => {
