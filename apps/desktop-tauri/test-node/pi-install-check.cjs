@@ -14,7 +14,7 @@ async function mount() {
   const { piInstallControl, missingPiece, PI_COMMAND } = await load('piinstall.js');
   const calls = [], listeners = {}; let doneCalls = 0;
   const host = { answer: { action: 'status', phase: 'idle' } };
-  const call = async (cmd, payload) => { calls.push([cmd, payload]); return payload.action === 'run' || payload.action === 'open_node' ? host.answer : { action: 'status', phase: 'idle' }; };
+  const call = async (cmd, payload) => { calls.push([cmd, payload]); return ['run', 'open_node', 'install_node', 'check_node'].includes(payload.action) ? host.answer : { action: 'status', phase: 'idle' }; };
   const watch = (name, fn) => { listeners[name] = fn; };
   const work = (fn, done = () => {}, failed = () => {}) => fn().then(done, failed);
   const control = piInstallControl({ call, watch, work, onDone: () => { doneCalls += 1; } });
@@ -95,7 +95,7 @@ async function mount() {
   const context = { window: { __TAURI__: { core: { invoke: async (...args) => sent.push(args) } } }, document: { getElementById: () => ({}) },
     setInvoke() {}, dictationPage() {}, flowSettingsPage() {}, dictionaryPage() {}, snippetsPage() {}, stylesPage() {}, insightsPage() {}, voicePage() {}, inactivePages: {}, startHub: async () => {}, TextEncoder };
   require('node:vm').runInNewContext(entry.replace(/^import .*;\n/gm, '') + '\nglobalThis.closedInvoke = invoke;', context);
-  for (const payload of [{ action: 'run' }, { action: 'status' }, { action: 'open_node' }]) {
+  for (const payload of [{ action: 'run' }, { action: 'status' }, { action: 'open_node' }, { action: 'install_node' }, { action: 'check_node' }]) {
     await context.closedInvoke('pi_install_action', { payload }); assert.deepEqual(sent.pop(), ['pi_install_action', { payload }]);
   }
   for (const payload of [{ action: 'install' }, { action: 'run', package: 'x' }, { action: 'run', url: 'https://x' }, {}, { action: ['run'] }, null]) {
@@ -103,5 +103,24 @@ async function mount() {
   }
   await assert.rejects(context.closedInvoke('pi_install_action', { payload: { action: 'run' }, extra: 1 }), /No disponible/, 'no extra top-level argument');
   assert.equal(sent.length, 0, 'nothing refused reached the host');
-  console.log('pi-install-check: 7 groups passed');
+  // 8) HU-069: one-click official Node install. Own closed actions; nothing runs without a trusted click; the page sends no URL.
+  const d = await mount(); await d.settle(); d.control.update(missing('node_missing'));
+  assert(text(d.control.element).includes('nodejs.org') && text(d.control.element).includes('SHA-256'), 'the plan says where it comes from and that it is verified');
+  d.calls.length = 0;
+  d.click('Descargar e instalar Node.js', false); await d.settle(); assert.deepEqual(d.calls, [], 'untrusted click does nothing');
+  d.host.answer = { action: 'status', phase: 'node_installer', say: 'Se abrió el instalador oficial de Node.js, ya verificado. Terminá la instalación y volvé a tocar «Ya lo instalé».' };
+  d.click('Descargar e instalar Node.js'); await d.settle();
+  assert.deepEqual(d.calls, [['pi_install_action', { action: 'install_node' }]]);
+  assert(d.buttons().some(b => b.textContent === 'Ya lo instalé') && !d.buttons().some(b => b.textContent === 'Descargar e instalar Node.js'));
+  d.calls.length = 0; d.host.answer = { action: 'status', phase: 'node_ready', say: 'Node.js quedó instalado. Tocá «Instalar Pi».' };
+  d.click('Ya lo instalé'); await d.settle();
+  assert.deepEqual(d.calls, [['pi_install_action', { action: 'check_node' }]]);
+  assert(d.buttons().some(b => b.textContent === 'Instalar Pi'), 'after Node is found the normal Pi install is offered; nothing was installed for Pi');
+  // 9) still missing after «Ya lo instalé»: the fixed sentence, and the human can retry
+  const e = await mount(); await e.settle(); e.control.update(missing('node_missing'));
+  e.host.answer = { action: 'status', phase: 'node_installer', say: 'x' }; e.click('Descargar e instalar Node.js'); await e.settle();
+  e.host.answer = { action: 'status', phase: 'failed', reason: 'node_missing', say: 'Falta Node.js. Instalalo desde nodejs.org y volvé a Abito.' };
+  e.click('Ya lo instalé'); await e.settle();
+  assert(text(e.control.element).includes('Falta Node.js') && e.buttons().some(b => b.textContent === 'Descargar e instalar Node.js'));
+  console.log('pi-install-check: 9 groups passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -6,6 +6,15 @@ import './pill-catalog.js';
 import './pills.js';
 import './specialists-view.js';
 import './theme.js';
+// HU-063 T1: additive «sidebar Koda» layer (classic UMD scripts, same pattern as theme.js; order matters; the hub's own script count stays 2).
+import './koda-catalog.js';
+import './koda-logic.js';
+import './settings-nusa.js';
+import './settings-nusa-mount.js';
+// HU-063 T2: additive «Isla» page (classic scripts; island-nusa.js is the island's own pure size model, no DOM at load).
+import './island-nusa.js';
+import './settings-isla.js';
+import './settings-isla-mount.js';
 import { renderAccounts, renderModels } from './vendor/coucou/hub/accounts.js';
 import { renderAgentSettings } from './vendor/coucou/hub/agents.js';
 import { renderChatSettings } from './vendor/coucou/hub/chat.js';
@@ -21,6 +30,7 @@ import { voicePage } from './vendor/coucou/hub/voice-page.js';
 import { privacyPage } from './vendor/coucou/hub/privacy-page.js';
 import { renderGeneral } from './vendor/coucou/hub/general.js';
 import { card, row } from './vendor/coucou/hub/ui.js';
+import { hero } from './vendor/coucou/hub/hero.js';
 const rawInvoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
 const allowed = new Set(['prefs_action', 'hotkey_action', 'settings_window_action', 'agent_action', 'secret_action', 'oauth_action', 'models_action', 'specialists_action', 'daemon_action', 'pi_install_action', 'plan_action', 'recap_action', 'monitor_action', 'sound_action', 'dictation_action', 'voice_action', 'failure_action']);
 // The host answers these commands through ONE shared limiter: 30 calls per fixed 1 s window (src/bridge.rs RATE_LIMIT_PER_WINDOW),
@@ -49,8 +59,8 @@ const invoke = (command, args) => {
   // Dormant until Product/Pestañas-activas is re-enabled; never alter the stored main pill from Settings.
   if (command === 'prefs_action' && args?.payload?.action === 'set_main_pill') return Promise.reject(new Error('No disponible'));
   if (command === 'daemon_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || args.payload.action !== 'restart')) return Promise.reject(new Error('No disponible'));
-  // HU-046: exactly {action:'run'|'status'|'open_node'}: no package, path or URL from the page
-  if (command === 'pi_install_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['run', 'status', 'open_node'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
+  // HU-046: exactly {action:'run'|'status'|'open_node'|'install_node'|'check_node'}: no package, path or URL from the page
+  if (command === 'pi_install_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['run', 'status', 'open_node', 'install_node', 'check_node'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
   if (command === 'plan_action' && (Object.keys(args || {}).length !== 1 || Object.keys(args?.payload || {}).length !== 1 || !['claude', 'codex'].includes(args.payload.action))) return Promise.reject(new Error('No disponible'));
   if (command === 'recap_action') {
     const p = args?.payload;
@@ -118,6 +128,8 @@ const options = { invoke, listen: window.__TAURI__?.event?.listen, V: window.Abi
   C: window.AbitoChatView, S: window.AbitoSpecialists, A: window.AbitoAvatarColors, P: window.AbitoPills };
 // Catalog and chat view have distinct roles; keep their injected interfaces explicit.
 const personal = { ...options, C: window.AbitoPillCatalog };
+// HU-063 T2: rail item + page «Isla» (additive; the vendor shell knows nothing of it). Arguments are not evaluated if the layer is absent.
+window.AbitoSettingsIslaMount?.mount({ doc: document, invoke, renderGeneral, renderPills, personal, V: window.AbitoSettings, hero });
 startHub(root, {
   // The page Rust chose when it opened this window (a closed list: the shell ignores anything else), e.g. «Configurar Pi…» -> chat.
   initialPage: window.__abitoHubPage,
@@ -128,8 +140,10 @@ startHub(root, {
         const general = await renderGeneral({ invoke, V: window.AbitoSettings, navigate });
         // 0.2.1 (L2 «General: A», S6): Abito's instructions and the identity colours live here now (same prefs, same commands).
         const personalization = await renderPills({ ...personal, part: 'abito' });
+        // HU-063 T2 (S2): the «Isla» card and «Colores de identidad» MOVED to the «Isla» page (same renderers, filtered there).
+        const stops = [window.AbitoSettingsIsla?.confine(general, window.AbitoSettingsIsla.KEEP.general), window.AbitoSettingsIsla?.confine(personalization, window.AbitoSettingsIsla.KEEP.abitoGeneral)];
         container.append(general, personalization);
-        return () => { general.dispose?.(); personalization.dispose?.(); };
+        return () => { for (const stop of stops) stop?.(); general.dispose?.(); personalization.dispose?.(); };
       }
       catch { container.append(card(row('No disponible', 'No se pudieron leer los ajustes. Vuelve a abrir esta página.'))); }
     } else {
