@@ -79,6 +79,9 @@ try {
   assert.equal(manifest.schema, 'abito-install/1');
   assert.deepEqual(Object.keys(manifest.files).sort(), ['abito-private-session.exe', ...files].sort());
   for (const f of files) assert.equal(manifest.files[f], require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(crate, '..', f))).digest('hex'));
+  // HU-061: the daemon ships its own byte-identical copy of the helper protocol module (the harness copy is the source of truth).
+  assert.ok(files.includes('desktop-daemon/src/win-fs.cjs'));
+  assert.deepEqual(fs.readFileSync(path.join(crate, '../desktop-daemon/src/win-fs.cjs')), fs.readFileSync(path.join(crate, '../desktop-harness/src/win-fs.cjs')), 'daemon win-fs.cjs must be byte-identical to the harness one');
   assert.ok(files.includes('desktop-harness/src/win-fs.cjs') && files.includes('desktop-harness/src/install-pi-win.cjs'));
   // Exercise receipt generation/check through its public CLI in an isolated source tree.
   const fixture = path.join(scratch, 'source');

@@ -24,6 +24,7 @@ const path = require("node:path");
 const { validateCustomBaseUrl, validateLocalBaseUrl, validateLocalModelIds } = require("./protocol.cjs");
 const { CustomProviderError, discoverModels } = require("./custom-provider.cjs");
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+const winfs = require("./win-fs.cjs");
 const { ENV_ALLOWLIST, assertSecurePath, ensurePrivateDir, writePrivateFile } = require("./isolation.cjs");
 
 const STRICT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -582,6 +583,9 @@ class AccountManager extends EventEmitter {
 	 * write. Symlinks and foreign owners are refused, never chmod-ed through.
 	 */
 	enforceCredentialPermissions(accountId) {
+		// HU-061: with the verified Windows helper the privacy is checked and repaired by the helper, never by chmod.
+		const w = winfs.active();
+		if (w) return this.enforceCredentialPermissionsWin(w, accountId);
 		const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 		const dir = assertSecurePath(this.accountDir(accountId));
 		const dirStat = lstatSync(dir);
@@ -600,6 +604,25 @@ class AccountManager extends EventEmitter {
 			if ((fileStat.mode & 0o777) !== 0o600) chmodSync(file, 0o600);
 		}
 		if ((dirStat.mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
+	}
+
+	/**
+	 * Windows twin of enforceCredentialPermissions (HU-061): the helper's facts decide. Reparse points (symlink/junction),
+	 * hard links, a non-file, a non-private account dir and a non-private auth.json are all refused (fail closed).
+	 */
+	enforceCredentialPermissionsWin(w, accountId) {
+		const dir = assertSecurePath(this.accountDir(accountId));
+		const dirFacts = w.checkPath(dir);
+		if (!dirFacts.exists || dirFacts.kind !== "dir" || dirFacts.reparse || !dirFacts.private || !dirFacts.parent_ok) {
+			throw fail("Account store is not a private directory");
+		}
+		const file = path.join(dir, "auth.json");
+		const facts = w.checkPath(file);
+		if (!facts.exists) return;
+		if (facts.reparse || facts.kind !== "file" || facts.nlink !== 1) throw fail("Account credentials are not a regular file");
+		// The helper has no operation that tightens an existing entry (delete/move/write all require a private source), so a
+		// credential file that is not private is REFUSED, never trusted and never loosely rewritten: sign in again after removing it.
+		if (!facts.private) throw fail("Account credentials are not private to this user");
 	}
 
 	// ----- helper child client -------------------------------------------

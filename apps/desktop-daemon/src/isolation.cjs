@@ -35,6 +35,10 @@ const {
 } = require("node:fs");
 const { homedir } = require("node:os");
 const path = require("node:path");
+// HU-061: on Windows (verified HU-047 helper) credential dirs/files are made and checked through the native helper.
+// Always reached as `winfs.active()`: null off Windows (Unix paths below stay byte-identical), a backend on a trusted
+// win32 install, and a THROW when the helper cannot be trusted — never a fall-back to loose Node writes.
+const winfs = require("./win-fs.cjs");
 
 /** Environment variable that moves the island root (used by tests and embeddings). */
 const ISLAND_ROOT_ENV = "ABITO_ISLAND_DIR";
@@ -192,6 +196,8 @@ function assertSecurePath(target, options = {}) {
 function ensurePrivateDir(dir, options = {}) {
 	const uid = options.uid ?? currentUid();
 	const absolute = assertSecurePath(dir, options);
+	const w = winfs.active();
+	if (w) return winEnsurePrivateDir(w, absolute);
 	let stats;
 	try {
 		stats = lstatSync(absolute);
@@ -206,6 +212,46 @@ function ensurePrivateDir(dir, options = {}) {
 	}
 	chmodSync(absolute, 0o700);
 	return absolute;
+}
+
+/**
+ * Windows: creates every missing component one level at a time (outermost first, below the deepest existing
+ * ancestor) with the helper, then requires the target to be a private, non-reparse directory under a private parent.
+ */
+function winEnsurePrivateDir(w, absolute) {
+	const missing = [];
+	let probe = absolute;
+	while (!w.checkPath(probe).exists) {
+		missing.unshift(probe);
+		const parent = path.dirname(probe);
+		if (parent === probe) throw new Error(`refusing island path, no existing ancestor: ${absolute}`);
+		probe = parent;
+	}
+	for (const part of missing) w.makeDir(part);
+	const facts = w.checkPath(absolute);
+	if (!facts.exists || facts.kind !== "dir") throw new Error(`refusing island path, not a directory: ${absolute}`);
+	if (facts.reparse) throw new Error(`refusing island path, reparse point: ${absolute}`);
+	if (!facts.private || !facts.parent_ok) throw new Error(`refusing island path, not private to this user: ${absolute}`);
+	return absolute;
+}
+
+/** Bounded retries when the helper reports that the file changed under us (expect-hash race). */
+const WIN_WRITE_ATTEMPTS = 4;
+
+/** Windows: read the current private bytes (throws on reparse / not private) and replace them against their hash. */
+function winWritePrivateFile(w, absolute, content) {
+	const buf = Buffer.isBuffer(content) ? content : Buffer.from(content);
+	if (buf.length > winfs.MAX_FILE) throw new winfs.WinFsError("too_large");
+	for (let attempt = 1; ; attempt++) {
+		const current = w.readPrivate(absolute);
+		try {
+			w.writePrivate(absolute, buf, current ? current.sha256 : null);
+			return absolute;
+		} catch (error) {
+			const retry = error && (error.reason === "mismatch" || error.reason === "exists" || error.reason === "missing");
+			if (!retry || attempt >= WIN_WRITE_ATTEMPTS) throw error;
+		}
+	}
 }
 
 /** O_NOFOLLOW when the platform has it; without it the O_EXCL temp name still races safely. */
@@ -228,6 +274,8 @@ function writePrivateFile(target, content, options = {}) {
 	const mode = options.mode ?? 0o600;
 	const absolute = path.resolve(target);
 	ensurePrivateDir(path.dirname(absolute), options);
+	const w = winfs.active();
+	if (w) return winWritePrivateFile(w, absolute, content);
 	let existing;
 	try {
 		existing = lstatSync(absolute);

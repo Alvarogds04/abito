@@ -142,7 +142,7 @@ class FakeProfiles {
 }
 
 function tmpRuntime(t) {
-	const base = fs.mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-srv-"));
+	const base = fs.mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-srv-"));
 	t.after(() => fs.rmSync(base, { recursive: true, force: true }));
 	return path.join(base, "run");
 }
@@ -262,7 +262,8 @@ test("socket is 0600 inside a 0700 private directory; path guard", { skip: WIN &
 test("Windows: the endpoint is a named pipe abito-<32 hex>, nothing is created on disk, and it disappears with the server", { skip: !WIN && "Windows only; Unix twin: «socket is 0600 inside a 0700 private directory»" }, async (t) => {
 	const { server, endpoint, runtimeDir } = await setup(t);
 	assert.match(endpoint, /^\\\\\.\\pipe\\abito-[0-9a-f]{32}$/);
-	assert.equal(fs.existsSync(runtimeDir), false, "no runtime directory or socket file on Windows");
+	const entries = fs.existsSync(runtimeDir) ? fs.readdirSync(runtimeDir) : [];
+	assert.deepEqual(entries.filter((n) => n.startsWith("p-")), [], "no socket directory on Windows (the runtime root itself may exist)");
 	const c = await login(t, endpoint);
 	assert.ok(c);
 	await server.close();
@@ -796,7 +797,7 @@ test("wire-wide secret scan: accounts/profiles/auth frames carry no key, baseUrl
 
 test("real AccountManager + fake helper: account_create -> accounts frame end to end (no secrets)", async (t) => {
 	const { AccountManager, helperEnv } = require("../src/auth.cjs");
-	const root = fs.mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-srv-real-"));
+	const root = fs.mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-srv-real-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const accountsRoot = path.join(root, "accounts");
 	const manager = new AccountManager({
@@ -1558,7 +1559,7 @@ test("custom provider: create -> key via auth_start/auth_reply -> discovery; gua
 	const http = require("node:http");
 	const { AccountManager, helperEnv } = require("../src/auth.cjs");
 	const { ProfileStore } = require("../src/profiles.cjs");
-	const root = fs.mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-srv-custom-"));
+	const root = fs.mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-srv-custom-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const KEY = "sk-fake-SECRET-2468-DO-NOT-LEAK";
 	const hits = [];

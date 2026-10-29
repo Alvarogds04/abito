@@ -12,10 +12,12 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const { assertPrivate } = require("./win-private.cjs");
+
 const { ProfileStore, THINKING_LEVELS, isStrictProfileId } = require("../src/profiles.cjs");
 
 function tempRoot() {
-	return mkdtempSync(path.join(require("node:fs").realpathSync(os.tmpdir()), "abito-profiles-test-"));
+	return mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-profiles-test-"));
 }
 
 function setup(root, { engine, restart, lockWaitMs } = {}) {
@@ -152,7 +154,8 @@ test("activation copies the account credential, private models.json, and setting
 		// Credential landed in the owned agent auth.json at 0600.
 		const agentAuth = JSON.parse(readFileSync(path.join(agentDir, "auth.json"), "utf8"));
 		if (!agentAuth.anthropic || agentAuth.anthropic.refresh !== "cloud-refresh") throw new Error("credential not activated");
-		if ((statSync(path.join(agentDir, "auth.json")).mode & 0o777) !== 0o600) throw new Error("agent auth.json must be 0600");
+		if (process.platform === "win32") assertPrivate(path.join(agentDir, "auth.json"));
+		else if ((statSync(path.join(agentDir, "auth.json")).mode & 0o777) !== 0o600) throw new Error("agent auth.json must be 0600");
 		// Local account models.json is copied so the custom provider is available; endpoint stays private.
 		const agentModels = JSON.parse(readFileSync(path.join(agentDir, "models.json"), "utf8"));
 		void agentModels;
@@ -709,7 +712,8 @@ test("a local account (created by AccountManager) saves, selects and copies its 
 		const models = JSON.parse(readFileSync(path.join(agentDir, "models.json"), "utf8"));
 		assert.equal(models.providers["local-ollama"].baseUrl, "http://127.0.0.1:11434/v1");
 		assert.deepEqual(JSON.parse(readFileSync(path.join(agentDir, "auth.json"), "utf8")), { "local-ollama": { type: "api_key", key: "abito-local-endpoint" } });
-		assert.equal(statSync(path.join(agentDir, "models.json")).mode & 0o777, 0o600);
+		if (process.platform === "win32") assertPrivate(path.join(agentDir, "models.json"));
+		else assert.equal(statSync(path.join(agentDir, "models.json")).mode & 0o777, 0o600);
 		assert.equal(JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8")).defaultProvider, "local-ollama");
 		assert.equal(JSON.stringify(store.list()).includes("11434"), false);
 		// A logged-out local account cannot be activated (existing check).
