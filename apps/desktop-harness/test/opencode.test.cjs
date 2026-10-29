@@ -3,13 +3,15 @@
 // {"status":"allow"|"deny"} into output.status. Anything else leaves output.status UNTOUCHED, so OpenCode shows its own prompt.
 // NOT verified against a real OpenCode (not installed here): payload fields and the permission.ask wiring are from its docs.
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { handleOpencodeHook, OC_ALLOW, OC_DENY } = require('../src/opencode.cjs');
+const { handleOpencodeHook: raw_handleOpencodeHook, OC_ALLOW, OC_DENY } = require('../src/opencode.cjs');
 const { renderPlugin } = require('../src/install-opencode.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleOpencodeHook = viaPipe(raw_handleOpencodeHook);
 
 const cwd = path.resolve(__dirname, '..');
 const perm = (over = {}) => JSON.stringify({ sessionID: 'ses_1', directory: cwd, type: 'bash', title: 'Run: ls', pattern: 'ls', metadata: { command: 'ls' }, ...over });
@@ -47,10 +49,10 @@ test('anything but a plain bash command is lossy: allow is not offered', async t
 });
 test('every non-answer outcome => EMPTY stdout', async () => {
   for (const s of ['expired', 'busy', 'cancelled', 'human_cancelled', 'unavailable', 'unsupported_receiver', 'protocol_error', 'invalid_request', 'weird']) {
-    const r = await call(perm(), { ABITO_DESKTOP_SOCKET: '/nope' }, { clientFactory: stub(s) });
+    const r = await call(perm(), stubEndpoint(), { clientFactory: stub(s) });
     assert.equal(r.stdout, '', s); assert.equal(r.exitCode, 0);
   }
-  assert.equal((await call(perm(), { ABITO_SOCKET_DIR: '/nonexistent-abito-test' })).stdout, '');
+  assert.equal((await call(perm(), offlineDir('nonexistent-abito-test'))).stdout, '');
   for (const input of ['garbage', '', perm({ directory: 'rel' }), perm({ sessionID: undefined, type: undefined })]) assert.equal((await call(input, {})).stdout, '');
 });
 
@@ -61,7 +63,7 @@ async function load(t, fakeBody, timeoutSec = 2) {
   fs.writeFileSync(bin, `let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{process.env.ECHO_IN&&0;${fakeBody}});`);
   const file = path.join(d, 'plugin.mjs');
   fs.writeFileSync(file, renderPlugin({ execPath: process.execPath, binPath: bin, timeoutSec }));
-  const mod = await import(file);
+  const mod = await import(require('node:url').pathToFileURL(file).href); // a bare Windows path (C:\...) is not a valid ESM specifier
   return (await mod.AbitoIslandPlugin({ directory: cwd }))['permission.ask'];
 }
 const ask = async (hook, over = {}) => { const output = { status: 'ask' }; await hook({ id: 'p1', sessionID: 'ses_1', type: 'bash', title: 'Run: ls', pattern: 'ls', metadata: { command: 'ls' }, ...over }, output); return output.status; };
@@ -83,7 +85,7 @@ test('plugin: empty output, garbage, a forged status, a crash and a hang all lea
 test('plugin: a throwing environment (no such binary) never throws into OpenCode', async t => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-oc-')); t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   const file = path.join(d, 'p.mjs'); fs.writeFileSync(file, renderPlugin({ execPath: '/nonexistent/node', binPath: '/nonexistent/bin.cjs', timeoutSec: 2 }));
-  const hook = (await (await import(file)).AbitoIslandPlugin({ directory: cwd }))['permission.ask'];
+  const hook = (await (await import(require('node:url').pathToFileURL(file).href)).AbitoIslandPlugin({ directory: cwd }))['permission.ask'];
   assert.equal(await ask(hook), 'ask');
 });
 test('plugin: session.idle runs the stop hook (a settled notice) and never touches output; other events do nothing', async t => {
@@ -91,7 +93,7 @@ test('plugin: session.idle runs the stop hook (a settled notice) and never touch
   const log = path.join(d, 'calls.log'), bin = path.join(d, 'fake.cjs');
   fs.writeFileSync(bin, `let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{require('fs').appendFileSync(${JSON.stringify(log)},process.argv.slice(2,4).join(' ')+' '+s+'\\n')})`);
   const file = path.join(d, 'p.mjs'); fs.writeFileSync(file, renderPlugin({ execPath: process.execPath, binPath: bin, timeoutSec: 2 }));
-  const hooks = await (await import(file)).AbitoIslandPlugin({ directory: cwd });
+  const hooks = await (await import(require('node:url').pathToFileURL(file).href)).AbitoIslandPlugin({ directory: cwd });
   await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'ses_1' } } } });
   await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'ses_1' } } });
   await hooks.event({ event: null });
@@ -101,7 +103,7 @@ test('plugin: session.idle runs the stop hook (a settled notice) and never touch
   assert.deepEqual(JSON.parse(lines[0].replace(/^opencode stop /, '')), { sessionID: 'ses_1', directory: cwd });
 });
 test('stop adapter: one settled notice naming opencode + project; no island => nothing', async t => {
-  const { handleOpencodeHook: h } = require('../src/opencode.cjs');
+  const h = handleOpencodeHook;
   const rcv = await fakeReceiver(t, {});
   const r = await h({ event: 'stop', input: JSON.stringify({ sessionID: 'ses_1', directory: cwd }), env: envOf(rcv), argv: [] });
   assert.deepEqual(r, { stdout: '', stderr: '', exitCode: 0 });
@@ -113,4 +115,18 @@ test('renderPlugin refuses paths that are not plain absolute', () => {
   for (const bad of [{ execPath: 'node' }, { binPath: 'x' }, { execPath: '/a\nb' }, { timeoutSec: 0 }, { timeoutSec: 5000 }]) {
     assert.throws(() => renderPlugin({ execPath: '/usr/bin/node', binPath: '/opt/x.cjs', timeoutSec: 35, ...bad }), /refused|timeout/);
   }
+});
+
+// HU-062 (found on Windows CI): opencode.cjs called process.getuid() unguarded (absent on Windows) => «invalid configuration» on every event.
+test('a Windows process (no getuid) reaches the island client: ask and stop both work', async t => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform'), getuid = process.getuid;
+  Object.defineProperty(process, 'platform', { value: 'win32' }); process.getuid = undefined;
+  t.after(() => { Object.defineProperty(process, 'platform', platform); process.getuid = getuid; });
+  const env = { ABITO_DESKTOP_SOCKET: 'C:\\opencode-win\\endpoint.json' };
+  let asked = 0, notified = 0;
+  const clientFactory = () => ({ ask: async () => { asked++; return { status: 'answered', answer: { type: 'option', value: 'allow' } }; }, notify: async () => { notified++; return { status: 'sent' }; } });
+  const r = await handleOpencodeHook({ event: 'permission-request', input: perm(), env, argv: [], clientFactory });
+  assert.equal(r.stdout, OC_ALLOW); assert.equal(asked, 1);
+  await handleOpencodeHook({ event: 'stop', input: JSON.stringify({ sessionID: 'ses_1', directory: cwd }), env, argv: [], clientFactory });
+  assert.equal(notified, 1);
 });

@@ -36,12 +36,21 @@ const CLAUDE_PROFILE = {
     if (event === 'SessionStart') return { type: 'command', command: execPath, args: [binPath, 'claude', 'session-start'], timeout: SESSION_START_TIMEOUT_SEC };
     return { type: 'command', command: execPath, args: [binPath, 'claude', 'permission-request', '--timeout-sec', String(timeoutSec)], timeout: timeoutSec };
   },
-  isOurs: (h, binPath) => isObjF(h) && h.type === 'command' && Array.isArray(h.args) && h.args.includes(binPath) && h.args.includes('claude'),
+  // HU-068: ours = the current script OR the same Abito script from a FORMER location (AppTranslocation, Downloads, an old install
+  // dir), anchored on the exact file name as args[0] and the `claude` subcommand as args[1]. A look-alike name is foreign.
+  isOurs: (h, binPath) => isObjF(h) && h.type === 'command' && Array.isArray(h.args) && h.args.includes('claude')
+    && (h.args.includes(binPath) || (h.args[1] === 'claude' && isFormerScript(h.args[0], 'abito-hook.cjs'))),
   previewNotes: plan => (plan.actions.some(a => a.migrated && a.action !== 'unchanged')
     ? ['Migration: the Abito-owned PreToolUse (AskUserQuestion) entry is removed; AskUserQuestion is answered under PermissionRequest now, next to the terminal dialog.']
     : []),
   postNotes: () => [],
 };
+/** True when `p` is a path (either separator style) whose last component is exactly `name`. */
+function isFormerScript(p, name) {
+  if (typeof p !== 'string' || p.includes('\0')) return false;
+  const parts = p.split(/[\\/]/);
+  return parts.length > 1 && parts[parts.length - 1] === name;
+}
 function isObjF(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
 const USAGE = 'usage: abito-hook install claude (--settings <abs path> | --user) [--timeout-sec N] [--remove] [--apply]\n';
 
@@ -51,6 +60,14 @@ class InstallError extends Error {
   constructor(exitCode, message) { super(message); this.exitCode = exitCode; }
 }
 const refuse = m => new InstallError(65, 'refused: ' + m);
+// HU-047: a folder that is the problem (another user/group can change it, it is not ours, its Windows ACL is not private).
+// Carries the exact folder and a reason so every surface can name it; never used for links (those keep the generic refusal).
+function unsafeFolder(dir, reason) {
+  const WHY = { foreign_owner: 'settings directory is not owned by the current user', writable: 'settings directory is writable by other users', acl: 'settings directory is not private to the current user' };
+  const e = refuse(WHY[reason] || 'settings directory is unsafe');
+  e.unsafeFolder = { dir, reason };
+  return e;
+}
 const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const shq = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
@@ -85,8 +102,8 @@ function checkParent(settingsPath, uid) {
   try { st = fs.lstatSync(dir); real = fs.realpathSync(dir); } catch { throw refuse('settings directory does not exist'); }
   if (st.isSymbolicLink() || real !== dir) throw refuse('settings directory path contains a symlink');
   if (!st.isDirectory()) throw refuse('settings directory is not a directory');
-  if (st.uid !== uid) throw refuse('settings directory is not owned by the current user');
-  if (st.mode & 0o002) throw refuse('settings directory is world-writable');
+  if (st.uid !== uid) throw unsafeFolder(dir, 'foreign_owner');
+  if (st.mode & 0o002) throw unsafeFolder(dir, 'writable');
 }
 
 // ---- Windows (HU-047): the native helper decides owner/DACL/reparse; Node only reads and refuses ----
@@ -102,7 +119,7 @@ function winRefuse(e, what) {
 function winCheckParent(w, settingsPath) {
   let f;
   try { f = w.checkPath(settingsPath); } catch (e) { throw winRefuse(e, 'settings directory'); }
-  if (!f.parent_ok) { const err = refuse('settings directory does not exist or is not private to the current user'); err.reason = 'not_private'; throw err; }
+  if (!f.parent_ok) { const err = unsafeFolder(path.dirname(settingsPath), 'acl'); err.reason = 'not_private'; throw err; }
 }
 function winReadTarget(w, settingsPath) {
   let got;
@@ -608,4 +625,4 @@ async function runInstall(argv, opts = {}) {
   }
 }
 
-module.exports = { winRefuse, numberIsLossless, readTarget, checkParent, detectStyle, sameSig, DIFF_LINES, diffLines, changedOutsidePatch, checkTimeout, CLAUDE_PROFILE, InstallErrorRefuse: refuse, shq, isObj, askLine, promptTimeoutFromEnv, scanSettings, defaultVerify, BIN_PATH, USAGE, InstallError, planClaudeSettings, renderPreview, runInstall, applyPlan, resolveUserSettings, checkSettingsSyntax, parseInstallArgs, backupPathFor, MAX_BYTES };
+module.exports = { isFormerScript, winRefuse, numberIsLossless, readTarget, checkParent, detectStyle, sameSig, DIFF_LINES, diffLines, changedOutsidePatch, checkTimeout, CLAUDE_PROFILE, InstallErrorRefuse: refuse, unsafeFolder, shq, isObj, askLine, promptTimeoutFromEnv, scanSettings, defaultVerify, BIN_PATH, USAGE, InstallError, planClaudeSettings, renderPreview, runInstall, applyPlan, resolveUserSettings, checkSettingsSyntax, parseInstallArgs, backupPathFor, MAX_BYTES };

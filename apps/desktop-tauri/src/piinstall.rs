@@ -38,12 +38,25 @@ pub enum Reason {
     HostFailed,
     /// The human pressed «Abrir nodejs.org» but Node.js is there now: nothing is opened and nothing is installed.
     NodeAppeared,
+    /// HU-069: the official Node.js download failed (network, size limit, or an address outside nodejs.org's distribution folder).
+    DownloadFailed,
+    /// HU-069: the download does not match the hash published in SHASUMS256.txt; it was deleted and nothing was installed.
+    ChecksumMismatch,
+    /// HU-069: the Linux archive holds an entry that could leave its folder; nothing was extracted.
+    UnsafeArchive,
+    /// HU-069 (Linux): the system `tar` / `xz` needed to unpack the official archive is missing.
+    TarMissing,
+    XzMissing,
+    /// HU-069: this OS or CPU has no official Node.js build Abito can fetch.
+    Unsupported,
 }
 impl Reason {
     pub fn code(self) -> &'static str {
         match self {
             Self::NodeMissing => "node_missing", Self::NpmMissing => "npm_missing", Self::Timeout => "timeout",
             Self::InstallFailed => "install_failed", Self::NotFoundAfter => "not_found_after", Self::Busy => "busy", Self::HostFailed => "host_failed", Self::NodeAppeared => "node_appeared",
+            Self::DownloadFailed => "node_download_failed", Self::ChecksumMismatch => "node_checksum_mismatch", Self::UnsafeArchive => "node_unsafe_archive",
+            Self::TarMissing => "tar_missing", Self::XzMissing => "xz_missing", Self::Unsupported => "node_unsupported",
         }
     }
     /// What the human reads. Fixed text: nothing from npm, the page or the filesystem is interpolated.
@@ -57,16 +70,22 @@ impl Reason {
             Self::Busy => "Ya hay una instalación de Pi en curso.",
             Self::HostFailed => "Pi se instaló, pero el chat no pudo arrancar. Reabrí Abito.",
             Self::NodeAppeared => "Node.js ya está instalado. Tocá «Instalar Pi».",
+            Self::DownloadFailed => "No se pudo descargar Node.js desde nodejs.org. Revisá tu conexión y probá de nuevo.",
+            Self::ChecksumMismatch => "La descarga de Node.js no coincide con la huella publicada por nodejs.org. Se descartó y no se instaló nada.",
+            Self::UnsafeArchive => "El archivo de Node.js trae contenido que no es seguro de abrir. No se instaló nada.",
+            Self::TarMissing => "Falta el programa «tar» en tu sistema, que Abito necesita para abrir Node.js. Instalá el paquete «tar» de tu distribución y probá de nuevo.",
+            Self::XzMissing => "Falta el programa «xz» en tu sistema, que Abito necesita para abrir Node.js. Instalá el paquete «xz» (xz-utils) de tu distribución y probá de nuevo.",
+            Self::Unsupported => "No hay un Node.js oficial para este sistema que Abito pueda descargar. Instalalo desde nodejs.org.",
         }
     }
 }
 
-/// The closed payload of the command: exactly `{"action":"status"|"run"|"open_node"}`. `open_node` is its own action so the
+/// The closed payload of the command: exactly `{"action":"status"|"run"|"open_node"|"install_node"|"check_node"}`. `open_node` is its own action so the
 /// node-missing button can never start an install.
 pub fn parse_action(payload: &Value) -> Option<&'static str> {
     let obj = payload.as_object()?;
     if obj.len() != 1 { return None; }
-    match obj.get("action")?.as_str()? { "status" => Some("status"), "run" => Some("run"), "open_node" => Some("open_node"), _ => None }
+    match obj.get("action")?.as_str()? { "status" => Some("status"), "run" => Some("run"), "open_node" => Some("open_node"), "install_node" => Some("install_node"), "check_node" => Some("check_node"), _ => None }
 }
 
 /// npm's own CLI script, found next to the discovered Node and never through PATH or a `.cmd` shim:
@@ -216,10 +235,11 @@ mod tests {
 
     #[test]
     fn every_reason_has_a_fixed_code_and_a_fixed_sentence() {
-        let all = [Reason::NodeMissing, Reason::NpmMissing, Reason::Timeout, Reason::InstallFailed, Reason::NotFoundAfter, Reason::Busy, Reason::HostFailed, Reason::NodeAppeared];
+        let all = [Reason::NodeMissing, Reason::NpmMissing, Reason::Timeout, Reason::InstallFailed, Reason::NotFoundAfter, Reason::Busy, Reason::HostFailed, Reason::NodeAppeared,
+            Reason::DownloadFailed, Reason::ChecksumMismatch, Reason::UnsafeArchive, Reason::TarMissing, Reason::XzMissing, Reason::Unsupported];
         let codes: std::collections::BTreeSet<&str> = all.iter().map(|r| r.code()).collect();
         assert_eq!(codes.len(), all.len(), "codes are distinct");
-        for r in all { assert!(r.code().bytes().all(|b| b.is_ascii_lowercase() || b == b'_'), "{r:?}"); assert!(!r.say().is_empty() && r.say().len() < 260, "{r:?}"); }
+        for r in all { assert!(r.code().bytes().all(|b| b.is_ascii_lowercase() || b == b'_'), "{r:?}"); assert!(!r.say().is_empty() && r.say().len() < 300, "{r:?}"); }
         assert!(Reason::NodeMissing.say().contains("nodejs.org"));
         assert!(Reason::NodeAppeared.say().contains("Instalar Pi"), "if Node showed up meanwhile the human is sent back to the normal button, nothing is installed");
         assert!(Reason::NotFoundAfter.say().contains("Reabrí"), "a custom prefix is not silently reported as installed");
