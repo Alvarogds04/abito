@@ -256,11 +256,14 @@ pub(crate) const OK_WORDS: &[&str] = &[
 /// Longest first, so «okey» is not read as «ok» + «ey».
 const OK_PREFIXES: &[&str] = &["okey", "okay", "okei", "okai", "oka", "oca", "ok"];
 /// Spellings the recognizer is known to give; they never need tolerance.
-pub(crate) const NAMES: &[&str] = &[
-    "abito", "habito", "avito", "abbito", "abeto", "habbito", "abitto", "yavito",
-];
+pub(crate) const NAMES: &[&str] = &["koda", "kodá", "qoda", "kouda", "kodda"];
+/// Spellings that are not words but are too ambiguous to wake on their own: only the vocative reading counts (the FIRST word, a comma
+/// right after it and a command following). «coda» is NOT here on purpose: it is a real word («coda, la sección final…») and the old
+/// «Habito,» trick would wake the app by mistake; a person whose recogniser writes «coda» for «Koda» teaches it in Entrenamiento de voz
+/// (`Learned.names`), which is already supported. Measured in `koda_word_tests`.
+pub(crate) const NAMES_VOCATIVE_ONLY: &[&str] = &["kota", "cota"];
 /// Mishearings seen from Parakeet. Only accepted right after an «ok» word, never alone.
-const NAMES_AFTER_OK: &[&str] = &["vito", "cavito", "kavito", "cabito", "gavito"];
+const NAMES_AFTER_OK: &[&str] = &["kota", "goda"];
 
 pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
@@ -287,19 +290,13 @@ pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
-fn is_name(s: &str, tolerance: usize, learned: &Learned) -> bool {
-    if NAMES.contains(&s) || learned.names.iter().any(|n| n == s) {
-        return true;
-    }
-    let core = s.strip_prefix('h').unwrap_or(s);
-    // Fuzzy only for words that look like it: same first letter and ending as «abito».
-    s.chars().count() >= 4
-        && core.starts_with('a')
-        && s.ends_with('o')
-        && levenshtein(core, "abito") <= tolerance
+fn is_name(s: &str, _tolerance: usize, learned: &Learned) -> bool {
+    // «Koda» is a four-letter word with many real neighbours (toda, soda, moda, boda, cola…): NO edit distance here, only the
+    // exact spellings the recogniser is known to give plus what this person trained (human 30-oct: «solo koda»).
+    NAMES.contains(&s) || learned.names.iter().any(|n| n == s)
 }
 
-/// «Habito, ¿qué hora es?»: Parakeet sometimes drops the «OK» (or hears it as a separate
+/// «Koda, ¿qué hora es?»: Parakeet sometimes drops the «OK» (or hears it as a separate
 /// «Yes.» segment). The name then still counts as a wake, but only when it is a KNOWN spelling,
 /// the FIRST word, written with a comma right after it, and followed by a command.
 fn vocative_end(words: &[&str], learned: &Learned) -> Option<usize> {
@@ -308,7 +305,7 @@ fn vocative_end(words: &[&str], learned: &Learned) -> Option<usize> {
         return None;
     }
     let first = normalise(first);
-    (NAMES.contains(&first.as_str()) || learned.names.contains(&first)).then_some(1)
+    (NAMES.contains(&first.as_str()) || NAMES_VOCATIVE_ONLY.contains(&first.as_str()) || learned.names.contains(&first)).then_some(1)
 }
 
 /// Finds «ok abito» (or «hey/oye abito») in `raw` and returns what follows the LAST

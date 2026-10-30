@@ -13,7 +13,7 @@ import { t } from "../i18n/i18n.js";
 const T = {
   get title() { return t("Weekly recap"); },
   get noActivity() { return t("No activity last week"); },
-  get noActivitySub() { return t("Abito counts your agent sessions as they happen — check back next Monday."); },
+  get noActivitySub() { return t("Koda counts your agent sessions as they happen — check back next Monday."); },
   get coding() { return t("coding"); },
   get session() { return t("session"); },
   get sessions() { return t("sessions"); },
@@ -29,7 +29,7 @@ const T = {
   allowedDenied: (allowed: number, denied: number) => t("{allowed} allowed, {denied} denied", { allowed, denied }),
   get questions() { return t("Questions"); },
   get shareImage() { return t("Share image"); },
-  get shareUnavailable() { return t("The share image is not available in Abito yet."); },
+  get shareUnavailable() { return t("The share image is not available in Koda yet."); },
   get ok() { return t("OK"); },
 };
 

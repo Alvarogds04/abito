@@ -63,8 +63,8 @@ function hashTree() {
   assert.deepEqual(keys.effective(shortcut), { keys: shortcut.defaultKeys, enabled: shortcut.enabledByDefault });
   assert.deepEqual(keys.effective(shortcut, { [shortcut.id]: { keys: '', enabled: false } }), { keys: '', enabled: false });
   assert(!/Coucou|Mochi/i.test(JSON.stringify(keys.SHORTCUT_TEXT)));
-  assert.equal(keys.SHORTCUT_TEXT.muteToggle, 'Mute or unmute Abito');
-  assert.equal(keys.SHORTCUT_TEXT.desktopToggle, 'Send Abito to the desktop');
+  assert.equal(keys.SHORTCUT_TEXT.muteToggle, 'Mute or unmute Koda');
+  assert.equal(keys.SHORTCUT_TEXT.desktopToggle, 'Send Koda to the desktop');
   for (const [raw, expected] of [
     ['', 'local'], ['localhost:11434', 'local'], ['http://127.1.2.3', 'local'], ['http://[::1]', 'local'],
     ['https://example.org', 'remote'], ['example.org:8080', 'remote-http'],

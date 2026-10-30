@@ -1,6 +1,6 @@
 //! #315 — the tray host: the real TrayIcon wiring (F098/T01, GD026/GD028).
 //!
-//! Menu: Mostrar Abito / Ocultar / Arrancar al iniciar sesión (the #315
+//! Menu: Mostrar Koda / Ocultar / Arrancar al iniciar sesión (the #315
 //! autostart toggle; the file system is its state) / Salir. The icon state is
 //! recomputed on every publish tick (`refresh`) from the same snapshot facts
 //! the page sees, plus the agent connection view; the question-pending fact

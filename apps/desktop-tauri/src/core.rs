@@ -225,7 +225,7 @@ mod tests {
         assert!(open.chat && core.expanded); assert_eq!(open.visible, (720, 240));
         assert_eq!(core.plan_view(&io, area(), true), None);
         let back = core.plan_view(&io, area(), false).unwrap(); assert!(!back.chat);
-        assert_eq!(back.visible, (720, 184)); assert_eq!(back.rect, open.rect);
+        assert_eq!(back.visible, (720, 150)); assert_eq!(back.rect, open.rect);
     }
     #[test]
     fn the_chat_fits_the_work_area_height() {

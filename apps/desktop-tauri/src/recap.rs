@@ -4,7 +4,7 @@
 //! (port of RecapStore.swift). What Abito changed: no relay and no Tauri glue (the closed
 //! `recap_action` host in `recaphost.rs` owns the store and feeds it from Abito's own events),
 //! the hook-payload agent tag is `abito_agent`, UTC file stamps instead of a platform clock,
-//! Spanish error text, and the image goes to the user's pictures folder as "Abito weekly recap".
+//! Spanish error text, and the image goes to the user's pictures folder as "Koda weekly recap".
 //!
 //! A "turn" runs from a prompt (or the first tool call) to Stop; only its counts and two names
 //! are kept: the agent's pill id and the project folder's last path component. The history
@@ -739,9 +739,9 @@ pub fn save_png(dirs: &[PathBuf], data: &str, week: &str) -> Result<PathBuf, Str
         .find(|d| d.is_dir())
         .ok_or_else(|| "No hay carpeta Imágenes ni Descargas donde guardar.".to_string())?;
     let stem = if is_week_key(week) {
-        format!("Abito weekly recap {week}")
+        format!("Koda weekly recap {week}")
     } else {
-        "Abito weekly recap".to_string()
+        "Koda weekly recap".to_string()
     };
     write_unique(dir, &stem, &bytes)
         .map_err(|_| "No se pudo guardar la imagen.".to_string())

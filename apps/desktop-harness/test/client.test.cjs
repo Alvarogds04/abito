@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { IslandClient, formatNoDecision, createFrameGate, normalizeRequest } = require('../src/client.cjs');
 const { projectId, sessionToken } = require('../src/identity.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, transportOf } = require('./fake-receiver.cjs');
 
 const cwd = path.resolve(__dirname, '..');
 const OPTS = [{ value: 'yes', label: 'SECRETLABEL yes', description: '' }, { value: 'no', label: 'No', description: 'd' }];
@@ -26,7 +26,7 @@ async function setup(t, rcv = { questions: true }, extra = {}) {
   const diagnostics = [];
   const clk = clock();
   const client = new IslandClient({ endpoint: receiver.endpoint, runtime: receiver.runtime, cwd,
-    sessionId: 'sess 1', onDiagnostic: d => diagnostics.push(d), clock: clk, ...extra });
+    sessionId: 'sess 1', onDiagnostic: d => diagnostics.push(d), clock: clk, ...transportOf(receiver), ...extra });
   return { receiver, client, diagnostics, clk };
 }
 const scopeOf = () => ({ project: projectId(cwd), sessionId: sessionToken('sess 1') });
@@ -142,7 +142,7 @@ test('invalid receiver frames => protocol_error and never an answer', async t =>
     foreignSession: q => reply(q, { sessionId: 'other' }),
     foreignProject: q => reply(q, { project: 'a'.repeat(64) }),
     extraKeys: q => reply(q, { extra: 1 }),
-    staleAt: q => reply(q, { at: q.at - 1 }),
+    staleAt: q => reply(q, { at: q.at - 5000 }),
     oldAt: q => reply(q, { at: Date.now() - 20000 }),
     futureAt: q => reply(q, { at: Date.now() + 60000 }),
     notOffered: q => reply(q, { answer: { type: 'option', value: 'maybe' } }),
@@ -159,6 +159,13 @@ test('invalid receiver frames => protocol_error and never an answer', async t =>
     assert.equal(r.answer, undefined, name);
     assert.equal((await s.receiver.seen('question_cancel')).reason, 'cancelled', name);
     noLeak(s.diagnostics);
+  }
+});
+test('answer stamped a few ms off this process clock (cross-process skew, Windows) is still an answer', async t => {
+  for (const skew of [-20, 20]) {
+    const s = await asking(t);
+    s.receiver.send(reply(s.q, { at: skew < 0 ? s.q.at + skew : Date.now() + 200 }));
+    assert.equal((await s.result).status, 'answered', String(skew));
   }
 });
 test('kind approval or anything else rejected at API boundary; nothing sent', async t => {
@@ -213,14 +220,23 @@ test('oversize inbound buffer and frame floods drop the connection', async t => 
 });
 test('bad ready handshake => unavailable', async t => {
   const { receiver } = await setup(t, {});
-  const dir = fs.mkdtempSync(path.join(receiver.runtime, 'p-'));
-  fs.chmodSync(dir, 0o700);
-  const endpoint = path.join(dir, 's');
+  let endpoint, listenOn, extra = {}, runtime = receiver.runtime;
+  if (process.platform === 'win32') { // Windows twin: the same misbehaving server on a named pipe + endpoint metadata
+    listenOn = `\\\\.\\pipe\\abito-test-bad-${process.pid}-${Date.now()}`;
+    runtime = fs.mkdtempSync(path.join(receiver.runtime, 'bad-'));
+    endpoint = path.win32.join(runtime, 'endpoint.json');
+    fs.writeFileSync(endpoint, JSON.stringify({ v: 1, pipe: listenOn }));
+    extra = { platform: 'win32', open: () => net.createConnection(listenOn) };
+  } else {
+    const dir = fs.mkdtempSync(path.join(receiver.runtime, 'p-'));
+    fs.chmodSync(dir, 0o700);
+    endpoint = listenOn = path.join(dir, 's');
+  }
   const server = net.createServer(sock => { sock.on('error', () => {}); sock.on('data', () => sock.write('{"v":1,"type":"ready","extra":1}\n')); });
-  await new Promise(r => server.listen(endpoint, r));
-  fs.chmodSync(endpoint, 0o600);
+  await new Promise(r => server.listen(listenOn, r));
+  if (process.platform !== 'win32') fs.chmodSync(endpoint, 0o600);
   t.after(() => server.close());
-  const c = new IslandClient({ endpoint, runtime: receiver.runtime, cwd, sessionId: 'x' });
+  const c = new IslandClient({ endpoint, runtime, cwd, sessionId: 'x', ...extra });
   assert.equal((await c.notify()).status, 'unavailable');
   assert.equal((await c.ask(REQ)).status, 'unavailable');
 });
@@ -236,7 +252,7 @@ test('diagnostics and results never leak question text or labels', async t => {
   const r = await result;
   noLeak(diagnostics);
   const msg = formatNoDecision({ status: 'expired', id: q.id, answer: undefined });
-  assert.match(msg, /^Abito island: no answer \(expired\)\. Answer in the terminal\./);
+  assert.match(msg, /^Koda island: no answer \(expired\)\. Answer in the terminal\./);
   assert.doesNotMatch(msg, /SECRET|yes|[0-9a-f]{8}-/);
   assert.match(formatNoDecision({ status: 'weird' }), /\(error\)/);
   assert.doesNotMatch(JSON.stringify(r.status), /SECRET/);
@@ -247,13 +263,14 @@ test('child process using the client exits on its own (no timers or sockets left
   const script = `
     const { IslandClient } = require(${JSON.stringify(path.resolve(__dirname, '../src/client.cjs'))});
     (async () => {
-      const c = new IslandClient({ endpoint: process.env.EP, runtime: process.env.RT, cwd: process.env.CWD, sessionId: 'sess 1' });
+      const seam = process.env.PIPE ? { platform: 'win32', open: () => require('node:net').createConnection(process.env.PIPE) } : {};
+      const c = new IslandClient({ endpoint: process.env.EP, runtime: process.env.RT, cwd: process.env.CWD, sessionId: 'sess 1', ...seam });
       const a = await c.notify();
       const b = await c.ask({ text: 'q?', options: JSON.parse(process.env.OPTS), timeoutMs: 30000 });
       const d = await new IslandClient({ endpoint: undefined, runtime: process.env.RT, cwd: process.env.CWD, sessionId: 'x' }).notify();
       console.log(a.status, b.status, d.status);
     })();`;
-  const child = spawn(process.execPath, ['-e', script], { env: { PATH: process.env.PATH, EP: receiver.endpoint, RT: receiver.runtime, CWD: cwd, OPTS: JSON.stringify(OPTS) } });
+  const child = spawn(process.execPath, ['-e', script], { env: { PATH: process.env.PATH, EP: receiver.endpoint, ...(receiver.pipe ? { PIPE: receiver.pipe } : {}), RT: receiver.runtime, CWD: cwd, OPTS: JSON.stringify(OPTS) } });
   let out = '';
   child.stdout.on('data', d => { out += d; });
   const kill = setTimeout(() => child.kill('SIGKILL'), 10000);
@@ -268,12 +285,12 @@ test('formatNoDecision: every status generic, unknown => generic, never leaks', 
     'protocol_error', 'invalid_request', 'disconnected', 'session_changed'];
   for (const status of statuses) {
     const msg = formatNoDecision({ status, id: 'abc-123', text: 'SECRETQUESTION', options: OPTS, path: '/etc/passwd' });
-    assert.equal(msg, `Abito island: no answer (${status}). Answer in the terminal.`);
+    assert.equal(msg, `Koda island: no answer (${status}). Answer in the terminal.`);
     assert.doesNotMatch(msg, /SECRET|yes|abc-123|\/etc/);
   }
   for (const r of [{ status: 'weird SECRETQUESTION' }, { status: 'answered' }, null, undefined, 'x', {}]) {
     const msg = formatNoDecision(r);
-    assert.equal(msg, 'Abito island: no answer (error). Answer in the terminal.');
+    assert.equal(msg, 'Koda island: no answer (error). Answer in the terminal.');
   }
 });
 test('normalizeRequest reads each field once; emitted frame equals validated snapshot', async () => {
@@ -370,7 +387,7 @@ test('attention: invalid title/detail are refused before any connection', async 
 test('attention: a pathological session id shrinks the middle, keeps the tail and stays inside 512 bytes', async t => {
   const { receiver } = await setup(t, {}, { agent: 'codex' });
   const client = new IslandClient({ endpoint: receiver.endpoint, runtime: receiver.runtime, cwd,
-    sessionId: 's'.repeat(128), agent: 'codex' });
+    sessionId: 's'.repeat(128), agent: 'codex', ...transportOf(receiver) });
   const detail = 'Bash: ' + 'x'.repeat(166) + ' · Respondé en la terminal'; // 199 chars
   assert.deepEqual(await client.attention({ title: 'Codex te pide permiso', detail }), { status: 'sent' });
   const a = await receiver.seen('attention');

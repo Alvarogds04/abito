@@ -8,7 +8,7 @@ import { glowCard, emptyState } from './hero.js';
 import { mount, modelsControl } from './dictation-pages.js';
 import type { FlowPageRenderer, PageId } from './shell.js';
 const definitions: Record<string, [string, string | null, string]> = {
-  voice: ['OK Abito', 'Say « OK Abito », then ask anything: add a pill, play music, the weather, an email to prepare.', 'Enable'],
+  voice: ['OK Koda', 'Say « OK Koda », then ask anything: add a pill, play music, the weather, an email to prepare.', 'Enable'],
 };
 export function renderUnavailable(page: string): HTMLElement {
   if (page === 'phone') {
@@ -23,8 +23,8 @@ export function renderUnavailable(page: string): HTMLElement {
       notchHint(t('Allow on the phone asks for the fingerprint or the screen lock. Deny does not.')),
       notchHint('Solo escucha en tu red local.'));
     const steps = h('ol', { id: 'phone-steps', class: 'phone-steps' },
-      h('li', { text: 'Abrí Abito en el teléfono.' }), h('li', { text: 'Cuando esté disponible, escaneá el código con el teléfono.' }),
-      h('li', { text: 'Confirmá en el teléfono el código que te mostrará Abito.' }));
+      h('li', { text: 'Abrí Koda en el teléfono.' }), h('li', { text: 'Cuando esté disponible, escaneá el código con el teléfono.' }),
+      h('li', { text: 'Confirmá en el teléfono el código que te mostrará Koda.' }));
     const code = h('div', { id: 'phone-code', class: 'hint', text: 'El código de verificación aparecerá aquí cuando el enlace esté disponible.' });
     const noQr = h('div', { id: 'phone-no-qr', class: 'hint', text: 'El emparejamiento con código QR no está disponible en la versión 0.2.' });
     const unlink = inert(button('Desvincular', () => {}, 'danger', true));
@@ -34,7 +34,7 @@ export function renderUnavailable(page: string): HTMLElement {
     const devices = h('div', { id: 'phone-devices', class: 'phone-devices' }, h('strong', { text: 'Dispositivos' }), h('span', { class: 'hint', text: 'Ninguno vinculado.' }), unlink, confirm);
     return notchSection(t('Android phone'),
       status, security,
-      notchHint(t("Send your agents' sessions to Abito for Android and answer permission requests from the phone. Off by default; it only listens on your local network.")),
+      notchHint(t("Send your agents' sessions to Koda for Android and answer permission requests from the phone. Off by default; it only listens on your local network.")),
       notchRow(t('Phone link'), sw), steps, code, noQr, devices);
   }
   const control = button(t(page === 'phone' ? 'Connect' : 'Enable'), () => {});
@@ -65,14 +65,14 @@ export const inactivePages: Partial<Record<PageId, FlowPageRenderer>> = Object.f
       const download = modelControl(container, ctx);
       const output = segmented([['system', t('System voice')], ['elevenlabs', 'ElevenLabs'], ['off', t('Text only')]], 'system', () => {});
       for (const b of output.querySelectorAll('button')) (b as HTMLButtonElement).disabled = true;
-      container.append(ctx.hero('voice', 'OK Abito', t(subtitle!)),
+      container.append(ctx.hero('voice', 'OK Koda', t(subtitle!)),
         label(t('Listening')),
-        card(row(t('Listen for « OK Abito »'), t('The microphone stays open; only what follows « OK Abito » goes further.'), off), divider(),
-          row(t('Parakeet, on your computer'), t('Hears « OK Abito » here, without the internet.'), download)),
-        label(t('Answers')), card(row(t('Abito answers out loud'), null, output)),
+        card(row(t('Listen for « OK Koda »'), t('The microphone stays open; only what follows « OK Koda » goes further.'), off), divider(),
+          row(t('Parakeet, on your computer'), t('Hears « OK Koda » here, without the internet.'), download)),
+        label(t('Answers')), card(row(t('Koda answers out loud'), null, output)),
         label(t('Privacy')), card(
-          h('div', {class:'hub-note',text:t('Your voice never leaves this computer: Parakeet turns it into text here. Only the words after « OK Abito » go to Anthropic with your Claude key, and to ElevenLabs if you picked it for the answers.')}), divider(),
-          h('div', {class:'hub-note',text:t('An email is never sent by Abito: your mail app opens with it written, and you send it.')})),
+          h('div', {class:'hub-note',text:t('Your voice never leaves this computer: Parakeet turns it into text here. Only the words after « OK Koda » go to Anthropic with your Claude key, and to ElevenLabs if you picked it for the answers.')}), divider(),
+          h('div', {class:'hub-note',text:t('An email is never sent by Koda: your mail app opens with it written, and you send it.')})),
         h('div', {class:'hub-note',text:'pendiente de conectar'}));
       return;
     }

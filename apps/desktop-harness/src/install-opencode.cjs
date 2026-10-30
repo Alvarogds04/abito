@@ -66,7 +66,7 @@ const OPENCODE_PROFILE = {
   name: 'opencode', defaultFile: ['.config', 'opencode', 'plugins', 'abito-island.js'], events: ['permission.ask', 'event'], defaultTimeoutSec: 35, usage: USAGE,
   rawText: true, isOurs: () => false,
   checkPaths: (binPath, execPath) => { if (!isAbsPlain(binPath) || !isAbsPlain(execPath)) throw refuse('hook script and node paths must be absolute'); },
-  previewNotes: plan => plan.remove ? ['Remove leaves an inert stub plugin; delete the file by hand to drop it entirely.'] : [`Plugin file (Abito owns it): ${plan.settingsPath}`,
+  previewNotes: plan => plan.remove ? ['Remove leaves an inert stub plugin; delete the file by hand to drop it entirely.'] : [`Plugin file (Koda owns it): ${plan.settingsPath}`,
     'OpenCode loads it at startup. permission.ask is wired per OpenCode version: if yours ignores it, its own prompt keeps working. Questions from the question tool are not covered.'],
   postNotes: () => [],
   verify: plan => (_parsed, _p, text) => text === plan.after,
@@ -80,7 +80,7 @@ function planOpencodePlugin({ settingsPath, timeoutSec, remove = false, binPath 
   core.checkParent(settingsPath, uid);
   const cur = core.readTarget(settingsPath, uid);
   const before = cur ? cur.buf.toString('utf8') : '';
-  if (cur && !before.startsWith(MARKER)) throw refuse('the plugin file exists and is not managed by Abito');
+  if (cur && !before.startsWith(MARKER)) throw refuse('the plugin file exists and is not managed by Koda');
   const after = remove ? STUB : renderPlugin({ execPath, binPath, timeoutSec });
   const changed = cur ? before !== after : !remove;
   const action = !changed ? 'unchanged' : remove ? 'remove' : cur ? 'replace' : 'add';

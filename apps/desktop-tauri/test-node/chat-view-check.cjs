@@ -93,7 +93,7 @@ test('announcements are per state change and completed turn, never per token', (
   const v = turn => ({ active_turn: turn.state === 'completed' || turn.state === 'error' ? null : 't-1', turns: [turn] });
   assert.equal(V.announcement(v(t('queued')), v(t('thinking'))), 'Pensando…');
   assert.equal(V.announcement(v(t('streaming', 'Ho')), v(t('streaming', 'Hola'))), null);
-  assert.equal(V.announcement(v(t('streaming', 'Hola')), v(t('completed', 'Hola'))), 'Abito respondió: Hola');
+  assert.equal(V.announcement(v(t('streaming', 'Hola')), v(t('completed', 'Hola'))), 'Koda respondió: Hola'); // Koda 0.1 T2 // Koda 0.1 T2
   assert.equal(
     V.announcement(v(t('thinking')), v(t('error', '', { error: { safe_message: 'El modelo local no responde.' } }))),
     'El modelo local no responde.');
@@ -330,7 +330,7 @@ test('UI.3: «Respuesta nueva» is hidden whenever the conversation is empty (fo
 test('gate state labels distinguish ready, queue, needs_load, unknown, unavailable', () => {
   assert.equal(V.gateLabel('ready'), 'Listo');
   assert.equal(V.gateLabel('queue'), 'En cola');
-  assert.equal(V.gateLabel('needs_load'), 'Requiere cargarlo (Abito no lo hace)');
+  assert.equal(V.gateLabel('needs_load'), 'Requiere cargarlo (Koda no lo hace)');
   assert.equal(V.gateLabel('unknown'), 'Desconocido');
   assert.equal(V.gateLabel('unavailable'), 'No disponible');
 });
@@ -533,7 +533,7 @@ test('reconcile: rows that did not change are kept as they are', () => {
   const row = (kind, text) => ({ kind, text });
   const before = [row('user', 'hola'), row('assistant', 'Hola, soy')];
   assert.deepEqual(V.reconcileRows(before, before), { keep: 2, patch: [], append: [], remove: 0 }, 'identical = nothing to do');
-  const grown = [row('user', 'hola'), row('assistant', 'Hola, soy Abito'), row('user', 'otra')];
+  const grown = [row('user', 'hola'), row('assistant', 'Hola, soy Koda'), row('user', 'otra')];
   const plan = V.reconcileRows(before, grown);
   assert.equal(plan.keep, 1, 'the unchanged first row is untouched');
   assert.deepEqual(plan.patch, [{ index: 1, row: grown[1] }], 'a streaming answer is patched in place');
@@ -567,17 +567,17 @@ test('flicker: renderLog uses the reconciler and never empties the log while tur
 
 // ---- F027 / TaskView342: the personalized empty-chat greeting -----------------
 // The neutral sentence is shipped copy: it may not drift when a name is absent.
-const NEUTRAL_EMPTY_ARIA = 'Escribile a Abito. Responde el modelo local de esta máquina; no ve tu pantalla ni ejecuta nada.';
+const NEUTRAL_EMPTY_ARIA = 'Escribile a Koda. Responde el modelo local de esta máquina; no ve tu pantalla ni ejecuta nada.';
 
 test('greeting: an explicit name yields «Hola, <nombre>.», absent or blank keeps the shipped neutral sentence', () => {
   const named = V.emptyGreeting({ display_name: 'Ana' });
   assert.equal(named.greeting, 'Hola, Ana.');
   assert.equal(named.aria, `Hola, Ana. ${NEUTRAL_EMPTY_ARIA}`);
   assert.deepEqual(named.icons, [], 'T7.3 design isla-chat-empty: no lock/eye-off icons (was [lock, eye-off])');
-  assert.equal(named.line, 'Escribile a Abito', 'the one visible line of the empty state');
+  assert.equal(named.line, 'Escribile a Koda', 'the one visible line of the empty state');
   for (const view of [undefined, null, {}, { display_name: null }, { display_name: '' },
     { display_name: '   ' }, { display_name: '\n\t ' }, { display_name: '\u0000\u001f' }]) {
-    assert.deepEqual(V.emptyGreeting(view), { greeting: '', aria: NEUTRAL_EMPTY_ARIA, icons: [], line: 'Escribile a Abito' },
+    assert.deepEqual(V.emptyGreeting(view), { greeting: '', aria: NEUTRAL_EMPTY_ARIA, icons: [], line: 'Escribile a Koda' },
       JSON.stringify(view));
   }
 });
@@ -721,15 +721,15 @@ test('S3 (#503): a turn that carried live context gets a «Contexto» disclosure
 });
 
 test('S6 (#503): the specialist picker lists Abito first, then each specialist, and marks the active one', () => {
-  assert.deepEqual(V.specialistRows(null), [{ id: null, text: 'Abito', aria: 'Hablar con Abito', current: true }]);
+  assert.deepEqual(V.specialistRows(null), [{ id: null, text: 'Koda', aria: 'Hablar con Koda', current: true }]);
   const sv = { active: 'esp-2', specialists: [{ id: 'esp-1', name: 'Revisor' }, { id: 'esp-2', name: 'Redactor' }, { id: 5, name: 'x' }, { id: 'esp-3', name: '' }] };
   const rows = V.specialistRows(sv);
-  assert.deepEqual(rows.map(r => r.id), [null, 'esp-1', 'esp-2'], 'Abito + valid specialists only');
+  assert.deepEqual(rows.map(r => r.id), [null, 'esp-1', 'esp-2'], 'Koda + valid specialists only');
   assert.deepEqual(rows.map(r => r.current), [false, false, true]);
   assert.equal(rows[1].text, 'Revisor');
   assert.equal(rows[1].aria, 'Hablar con Revisor');
   assert.equal(V.specialistRows({ active: null, specialists: [] })[0].current, true);
-  assert.equal(V.specialistRows({ active: 'esp-9', specialists: [] })[0].current, true, 'an unknown active id means Abito');
+  assert.equal(V.specialistRows({ active: 'esp-9', specialists: [] })[0].current, true, 'an unknown active id means Koda');
 });
 
 console.log(`chat-view-check: ${passed} passed`);

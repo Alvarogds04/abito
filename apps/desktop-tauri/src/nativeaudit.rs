@@ -88,7 +88,7 @@ pub(crate) fn sample(
         widgets(gtk.upcast_ref(), 0, &mut tree);
         let wa = abito_island::workarea::current(&win);
         let rect = |r: abito_island::geometry::Rect| [r.x, r.y, r.w, r.h];
-        let own = abito_island::workarea::x11_find_own_window("Abito").ok();
+        let own = abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE).ok();
         let row = json!({
             "pid": std::process::id(), "time_ms": super::now_ms(),
             "stage": stage, "attempt": attempt, "view": view,

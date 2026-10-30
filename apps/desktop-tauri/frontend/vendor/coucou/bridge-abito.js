@@ -8,7 +8,7 @@ const equal = (a, b) => {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every(k => Object.hasOwn(b, k) && equal(a[k], b[k]));
 };
-const check = (ok, field) => { if (!ok) throw new Error(`${field}: valor inválido en Abito`); };
+const check = (ok, field) => { if (!ok) throw new Error(`${field}: valor inválido en Koda`); };
 function project(p) {
   check(p && typeof p.sound === 'boolean' && typeof p.gain === 'number' && Array.isArray(p.declaredPills) && p.pillColors && typeof p.pillColors === 'object', 'prefs_action/view');
   return { ...structuredClone(DEFAULT_SETTINGS), soundEnabled: p.sound, soundVolume: p.gain,
@@ -28,7 +28,7 @@ export function createBridge(invoke) {
     if (!current) await boot();
     // Preflight the ENTIRE object before the first write, including unknown fields.
     for (const key of new Set([...Object.keys(current), ...Object.keys(next)])) {
-      if (!writable.has(key) && !equal(current[key], next[key])) throw new Error(`${key}: no disponible en Abito`);
+      if (!writable.has(key) && !equal(current[key], next[key])) throw new Error(`${key}: no disponible en Koda`);
     }
     check(typeof next.soundEnabled === 'boolean', 'soundEnabled');
     check(typeof next.soundVolume === 'number' && Number.isFinite(next.soundVolume) && next.soundVolume >= 0 && next.soundVolume <= 0.2, 'soundVolume');
@@ -58,7 +58,7 @@ export function createBridge(invoke) {
     try {
       for (const action of actions) current = project(await send(action));
     } catch (error) {
-      try { await boot(); } catch (resyncError) { throw new AggregateError([error, resyncError], 'Abito: guardado y resincronización fallaron'); }
+      try { await boot(); } catch (resyncError) { throw new AggregateError([error, resyncError], 'Koda: guardado y resincronización fallaron'); }
       throw error;
     }
     return structuredClone(current);

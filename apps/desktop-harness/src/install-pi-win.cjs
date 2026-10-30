@@ -16,7 +16,7 @@ const refuse = () => core.InstallErrorRefuse('Pi extension ownership or path cou
 const listing = files => JSON.stringify(files);
 // HU-052: a folder that is there WITHOUT our manifest is somebody else's (a hand copy, another tool): refused with its own code so the
 // human is told what to do. Never adopted, never touched. A folder WITH a manifest that does not verify keeps the generic refusal.
-const foreign = () => Object.assign(core.InstallErrorRefuse('Pi extension folder is not an Abito install'), { foreignExtension: true });
+const foreign = () => Object.assign(core.InstallErrorRefuse('Pi extension folder is not a Koda install'), { foreignExtension: true });
 const sourceRel = name => `desktop-pi/${name === 'index.ts' ? 'pi-extension.ts' : name}`;
 const drive = p => p.slice(0, 2).toLowerCase();
 const rand = () => crypto.randomBytes(6).toString('hex');
@@ -24,17 +24,18 @@ const rand = () => crypto.randomBytes(6).toString('hex');
 function dirFact(w, dir) {
   const f = w.checkPath(dir);
   if (!f.exists) return null;
-  if (f.reparse || f.kind !== 'dir' || !f.private) throw refuse();
+  if (f.reparse || f.kind !== 'dir') throw refuse();
+  if (!f.private) throw Object.assign(core.unsafeFolder(dir, 'acl'), { reason: 'not_private' });
   return f;
 }
-function parents(w, home, create = false) {
+function parents(w, home, create = false, made = []) {
   const h = w.checkPath(path.join(home, '.pi'));
-  if (!h.parent_ok) throw refuse();
+  if (!h.parent_ok) throw Object.assign(core.unsafeFolder(home, 'acl'), { reason: 'not_private' });
   let dir = home, missing = false;
   for (const part of ['.pi', 'agent', 'extensions']) {
     dir = path.join(dir, part);
     if (missing && !create) continue;
-    if (dirFact(w, dir) === null) { if (create) w.makeDir(dir); else missing = true; }
+    if (dirFact(w, dir) === null) { if (create) { if (w.makeDir(dir).created) made.push(dir); } else missing = true; }
   }
   return dir;
 }
@@ -64,11 +65,11 @@ function payload() {
   data[MANIFEST] = Buffer.from(JSON.stringify({ schema: SCHEMA, files }) + '\n');
   return { data, files };
 }
-function backupRoot(w, home, create = false) {
+function backupRoot(w, home, create = false, made = []) {
   const root = path.join(home, '.pi', 'agent', 'abito-backups');
   if (dirFact(w, root) === null) {
     if (!create) return root;
-    w.makeDir(root);
+    if (w.makeDir(root).created) made.push(root);
   }
   return root;
 }
@@ -110,11 +111,12 @@ function same(w, plan) {
 }
 async function applyPi(plan, { backupPath, out, err }) {
   const w = winfs.active();
-  let stage = null, saved = false, published = false;
+  let stage = null, saved = false, published = false, done = false;
+  const made = [];
   try {
     if (!same(w, plan)) { err('changed since the preview'); return 70; }
-    const parent = parents(w, plan.home, true);
-    const root = backupRoot(w, plan.home, true);
+    const parent = parents(w, plan.home, true, made);
+    const root = backupRoot(w, plan.home, true, made);
     // Never copy across volumes: a cross-volume publication is refused outright.
     if (root !== plan.backupRoot || drive(root) !== drive(parent) || drive(backupPath || root) !== drive(parent)) throw refuse();
     if (!plan.remove) {
@@ -131,6 +133,7 @@ async function applyPi(plan, { backupPath, out, err }) {
     }
     if (saved) pruneBackups(w, root, backupPath);
     out('Done. Pi extension updated.\n');
+    done = true;
     return 0;
   } catch {
     const verificationFailed = published;
@@ -140,6 +143,6 @@ async function applyPi(plan, { backupPath, out, err }) {
     } catch { err('could not restore'); return 70; }
     err(verificationFailed ? 'verification failed; previous state restored' : 'could not apply Pi extension');
     return 70;
-  } finally { cleanStage(w, stage); }
+  } finally { cleanStage(w, stage); if (!done) require('./install-pi.cjs').removeMade(made, d => w.remove(d)); }
 }
 module.exports = { planPi, applyPi, FILES, MANIFEST, SCHEMA };

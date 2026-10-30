@@ -9,7 +9,11 @@ const { resolveConfig, resolveEndpoint } = require('../config.cjs');
 const adapter = require('../adapter.cjs');
 const { fakeReceiver, harness } = require('./fake-receiver.cjs');
 
-const owner = process.getuid();
+const owner = process.getuid?.();
+// The handoff checks below are Unix mechanisms (uid owner, 0600 mode, symlink refusal, pid probe). Windows twin: the
+// final test of this file, which proves the same behaviour (an island published after Pi started is found, a restart is
+// followed, an absent file means no connection) over the Windows metadata handoff and named pipe.
+const unix = process.platform === 'win32' ? () => {} : test;
 
 function put(rcv, over = {}, mode = 0o600) {
   const file = path.join(rcv.runtime, 'endpoint.json');
@@ -19,11 +23,13 @@ function put(rcv, over = {}, mode = 0o600) {
 }
 const resolve = (rcv, options, uid = owner) => resolveConfig({ ABITO_SOCKET_DIR: rcv.runtime }, uid, options);
 function ownStart() {
+  // macOS has no /proc: the pid start identity comes from the same `ps` probe production uses
+  if (process.platform === 'darwin') return require('../config.cjs').darwinProc.start(process.pid);
   const stat = fs.readFileSync('/proc/self/stat', 'utf8');
   return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[22 - 3];
 }
 
-test('absent ABITO_DESKTOP_SOCKET: a valid handoff endpoint is resolved', async t => {
+unix('absent ABITO_DESKTOP_SOCKET: a valid handoff endpoint is resolved', async t => {
   const rcv = await fakeReceiver(t);
   put(rcv);
   assert.deepEqual(resolve(rcv), { runtime: rcv.runtime, endpoint: rcv.endpoint, source: 'handoff' });
@@ -39,7 +45,7 @@ test('absent ABITO_DESKTOP_SOCKET: a valid handoff endpoint is resolved', async 
   assert.equal(resolveEndpoint({ ABITO_SOCKET_DIR: rcv.runtime }, owner), rcv.endpoint);
 });
 
-test('explicit ABITO_DESKTOP_SOCKET still wins and the handoff is never read', async t => {
+unix('explicit ABITO_DESKTOP_SOCKET still wins and the handoff is never read', async t => {
   const rcv = await fakeReceiver(t);
   put(rcv);
   const originalOpen = fs.openSync;
@@ -54,7 +60,7 @@ test('explicit ABITO_DESKTOP_SOCKET still wins and the handoff is never read', a
     /Unexpected endpoint/);
 });
 
-test('stale, foreign or malformed handoffs yield no connection', async t => {
+unix('stale, foreign or malformed handoffs yield no connection', async t => {
   const rcv = await fakeReceiver(t);
   const file = path.join(rcv.runtime, 'endpoint.json');
   const reset = () => fs.rmSync(file, { force: true });
@@ -91,7 +97,7 @@ test('stale, foreign or malformed handoffs yield no connection', async t => {
   assert.equal(resolveEndpoint({ ABITO_SOCKET_DIR: 'relative' }, owner), undefined);
 });
 
-test('an ordinary Pi session reaches an island it did not know at start, and a restarted one', async t => {
+unix('an ordinary Pi session reaches an island it did not know at start, and a restarted one', async t => {
   const first = await fakeReceiver(t);
   const runtime = first.runtime;
   // no endpoint.json yet: the island is not up when Pi starts, so nothing connects
@@ -113,5 +119,41 @@ test('an ordinary Pi session reaches an island it did not know at start, and a r
   await second.next('hello');
   await second.next('heartbeat');
   handlers.get('agent_settled')({}, ctx);
+  assert.equal(typeof (await second.next('settled')).id, 'string');
+});
+
+test('Windows twin: metadata handoff is found after Pi started, followed across an island restart, and absent means no connection', {
+  skip: process.platform !== 'win32' && 'Windows-only mechanism; the Unix tests above cover the same behaviour' }, async t => {
+  const local = fs.mkdtempSync(path.join(path.resolve(__dirname, '..'), '.test-local-'));
+  const notices = path.join(local, 'Abito', 'notices');
+  fs.mkdirSync(notices, { recursive: true });
+  t.after(() => fs.rmSync(local, { recursive: true, force: true }));
+  const first = await fakeReceiver(t, { runtime: notices });
+  const meta = path.join(notices, 'endpoint.json');
+  const published = fs.readFileSync(meta);
+  fs.rmSync(meta);
+  const env = { LOCALAPPDATA: local };
+  assert.equal(resolveEndpoint(env, undefined), undefined, 'no metadata published: no connection');
+  const { handlers, ctx } = harness(adapter.registerAdapter, {
+    runtime: notices, platform: 'win32', open: first.open, resolveEndpoint: () => resolveEndpoint(env, undefined) });
+  t.after(() => handlers.get('session_shutdown')());
+  handlers.get('session_start')({}, ctx);
+  assert.equal(first.frames.length, 0);
+  fs.writeFileSync(meta, published);
+  await first.next('hello');
+  await first.next('heartbeat');
+  handlers.get('agent_settled')({}, ctx);
+  assert.equal(typeof (await first.next('settled')).id, 'string');
+  // island restart: a new pipe is published under the same metadata file
+  await first.close();
+  const second = await fakeReceiver(t, { runtime: notices });
+  handlers.get('session_shutdown')();
+  const reopened = harness(adapter.registerAdapter, {
+    runtime: notices, platform: 'win32', open: second.open, resolveEndpoint: () => resolveEndpoint(env, undefined) });
+  t.after(() => reopened.handlers.get('session_shutdown')());
+  reopened.handlers.get('session_start')({}, reopened.ctx);
+  await second.next('hello');
+  await second.next('heartbeat');
+  reopened.handlers.get('agent_settled')({}, reopened.ctx);
   assert.equal(typeof (await second.next('settled')).id, 'string');
 });

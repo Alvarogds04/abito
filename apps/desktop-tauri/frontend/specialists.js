@@ -232,7 +232,7 @@
     const choices = V.roleChoices(view);
     const choose = (choice, focusId) => {
       if (busy || form.state.pending || store?.load_error === true || choice.checked) return;
-      send({ action: 'select', id: choice.id }, choice.id === null ? 'Volviste a Abito, el principal.' : `Ahora responde ${choice.label}.`, focusId);
+      send({ action: 'select', id: choice.id }, choice.id === null ? 'Volviste a Koda, el principal.' : `Ahora responde ${choice.label}.`, focusId);
     };
     for (const choice of choices) {
       const rowEl = el('div', 'srole');

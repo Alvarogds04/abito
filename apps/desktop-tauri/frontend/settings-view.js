@@ -17,7 +17,7 @@
   const TABS = Object.freeze([
     Object.freeze({ id: 'general', title: 'General', icon: 'gear', label: 'General', hint: '' }),
     Object.freeze({ id: 'accounts', title: 'Conexiones', icon: 'plug', label: 'Conexiones', hint: '' }),
-    Object.freeze({ id: 'models', title: 'Modelos', icon: 'chip', label: 'Modelos', hint: 'Modelos que usa Abito' }),
+    Object.freeze({ id: 'models', title: 'Modelos', icon: 'chip', label: 'Modelos', hint: 'Modelos que usa Koda' }),
     Object.freeze({ id: 'pills', title: 'Blobs', icon: 'ring', label: 'Blobs', hint: '' }),
     Object.freeze({ id: 'appearance', title: 'Apariencia', icon: 'eye', label: 'Apariencia', hint: '' }),
 
@@ -283,6 +283,14 @@
     return segments;
   }
 
+  // HU-057 S9: «Tamaño de la isla» — closed set S/M/L/Auto on the prefs wire (island_size); a foreign stored value reads as Auto.
+  const ISLAND_SIZES = Object.freeze([{ id: 's', label: 'S' }, { id: 'm', label: 'M' }, { id: 'l', label: 'L' }, { id: 'auto', label: 'Auto' }]);
+  function islandSizeSegments(size) {
+    const valid = ISLAND_SIZES.some(x => x.id === size) ? size : 'auto';
+    return ISLAND_SIZES.map(x => ({ id: x.id, label: x.label, selected: x.id === valid }));
+  }
+  function islandSizeProblem(size) { return ISLAND_SIZES.some(x => x.id === size) ? '' : 'Elegí S, M, L o Auto.'; }
+
   // ---- hotkey capture (a pressed combination -> canonical text) -------------------------------------------------------
   const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta', 'AltGraph', 'OS', 'Super']);
   function captureCombo(event) {
@@ -500,7 +508,7 @@
     return { action, key, value };
   }
   const KEY_ERRORS = Object.freeze({
-    unavailable: 'El llavero del sistema (Secret Service) no está disponible. La clave no se guardó y Abito no la guarda en ningún otro lado.',
+    unavailable: 'El llavero del sistema (Secret Service) no está disponible. La clave no se guardó y Koda no la guarda en ningún otro lado.',
     save_failed: 'No se pudo guardar el cambio en el llavero del sistema.',
     invalid_schema: 'La clave o el valor no son válidos. No se cambió nada.',
   });
@@ -571,10 +579,19 @@
     audit_unavailable: 'No se pudo abrir el registro de cambios, así que no se tocó nada.',
     install_failed: 'No se pudo completar; no se tocó nada.',
     unsafe_target: 'La carpeta o el archivo de configuración no es privado de tu usuario o pasa por un enlace; no se tocó nada.',
-    install_unverified: 'No se pudieron verificar los archivos instalados de Abito; no se tocó nada. Reinstalá Abito.',
-    foreign_extension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.',
+    install_unverified: 'No se pudieron verificar los archivos instalados de Koda; no se tocó nada. Reinstalá Koda.',
+    foreign_extension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Koda no instaló: borrala o renombrala y volvé a conectar.',
   });
-  const PLAN_FALLBACK = 'Se van a agregar los hooks de Abito. Antes se hace un respaldo.';
+  // HU-047: the refused folder is named exactly (the daemon forwards it with a closed reason); chmod only where chmod can fix it.
+  const FOLDER_OK = (f, r) => typeof f === 'string' && f !== '' && f.length <= 400 && !/[\u0000-\u001f\u007f]/.test(f) && (r === 'writable' || r === 'foreign_owner' || r === 'acl');
+  const shellArg = d => /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(d) ? d : `'${d.replace(/'/g, `'\\''`)}'`;
+  function unsafeFolderNote(folder, reason) {
+    if (!FOLDER_OK(folder, reason)) return AGENT_ERRORS.unsafe_target;
+    if (reason === 'writable') return `La carpeta ${folder} la puede modificar otro usuario o grupo; quitale el permiso de escritura (chmod g-w,o-w ${shellArg(folder)}) y volvé a intentar.`;
+    if (reason === 'foreign_owner') return `La carpeta ${folder} pertenece a otro usuario y Koda solo escribe en carpetas tuyas; cambiale el dueño a tu usuario (con permisos de administrador) y volvé a intentar.`;
+    return `La carpeta ${folder} tiene permisos de Windows (ACL) que dan acceso a otros usuarios o no es tuya; dejala accesible solo para tu usuario (Propiedades > Seguridad) y volvé a intentar.`;
+  }
+  const PLAN_FALLBACK = 'Se van a agregar los hooks de Koda. Antes se hace un respaldo.';
   const PLAN_HASH = /^[0-9a-f]{64}$/;
   // The engine prints a CLOSED English template for the plan. The page never shows engine text: it recognises
   // the template and says the same thing in Spanish; anything else becomes one generic, true sentence.
@@ -583,7 +600,7 @@
   // sentences (optionally followed by the one large-change line) are shown, in Spanish. Anything else falls back.
   const NOTIFY_PLANS = Object.freeze({
     'Installs the Abito Pi extension in the default ~/.pi/agent directory. A backup is made first.':
-      'Instala la extensión de Abito en ~/.pi/agent. Antes se hace un respaldo. Reiniciá Pi para cargarla.',
+      'Instala la extensión de Koda en ~/.pi/agent. Antes se hace un respaldo. Reiniciá Pi para cargarla.',
     'Adds notify-only hooks that only count activity for the weekly recap. No command text, path or prompt is kept. A backup is made first.':
       'Agrega ganchos que solo cuentan tu actividad para el resumen semanal; no guardan comandos, rutas ni prompts. Antes se hace un respaldo.',
     'Adds the status-line relay in ~/.claude/settings.json. An existing status line keeps working (the relay prints it). A backup is made first.':
@@ -597,7 +614,7 @@
     }
     const m = typeof text === 'string' && text.length <= 400 ? PLAN_RE.exec(text) : null;
     if (!m) return PLAN_FALLBACK;
-    const noun = m[2] === 'plugin' ? 'el plugin de Abito' : 'los hooks de Abito';
+    const noun = m[2] === 'plugin' ? 'el plugin de Koda' : 'los hooks de Koda';
     const verb = (m[1] === 'Adds' ? 'Agrega ' : 'Actualiza ') + noun;
     const joiner = m[1] === 'Adds' ? 'a' : 'en';
     const withNames = m[3] && m[1] === 'Adds' ? ` ${m[3]}` : '';
@@ -674,7 +691,8 @@
       if (st === 'unavailable') note = platformUnavailable ? 'La instalación automática todavía no está disponible en Windows.' : 'No está instalado en esta computadora.';
       if (st === 'error') {
         primary = { label: 'Reintentar', command: hash ? connectCmd() : cmd('agent_connect') };
-        note = Object.prototype.hasOwnProperty.call(AGENT_ERRORS, a.detail) ? AGENT_ERRORS[a.detail] : 'No se pudo completar; no se tocó nada.';
+        note = a.detail === 'unsafe_folder' ? unsafeFolderNote(a.folder, a.folder_reason)
+          : Object.prototype.hasOwnProperty.call(AGENT_ERRORS, a.detail) ? AGENT_ERRORS[a.detail] : 'No se pudo completar; no se tocó nada.';
       }
       if (a.id === 'pi' && !platformUnavailable) note += `${note ? ' ' : ''}Solo ~/.pi/agent. Si usás otro PI_CODING_AGENT_DIR, esa sesión no carga esta instalación. Reiniciá Pi después de cambiar los hooks.`;
       const trust = a.trust_review === true;
@@ -708,11 +726,12 @@
   const ENGINE_ERRORS = Object.freeze({
     failed: ['No se pudo', 'triangle', 'red'], busy: ['Motor ocupado', 'lock', 'sun'],
     bad_request: ['Pedido no válido', 'triangle', 'red'], rate_limited: ['Demasiados pedidos', 'clock', 'sun'],
+    store_not_private: ['Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.', 'lock', 'red'],
     unavailable: ['No disponible', 'plug-off', 'faint'], not_busy: ['Nada en curso', 'info', 'faint'], unknown_ask: ['Pedido desconocido', 'info', 'faint'],
   });
   const errorSeq = st => (st && st.last_error && Number.isInteger(st.last_error.n) ? st.last_error.n : 0);
   function commandOutcome(before, after, okSay) {
-    const failure = (word, icon, tone) => ({ ok: false, word, icon, tone, say: `${word}.` });
+    const failure = (word, icon, tone) => ({ ok: false, word, icon, tone, say: /[.!?]$/.test(word) ? word : `${word}.` });
     if (!after || typeof after !== 'object') return failure('No se pudo', 'triangle', 'red');
     if (after.connection && after.connection !== 'connected') {
       const cv = connectionView(after);
@@ -854,7 +873,7 @@
     return '';
   }
 
-  return { PI_SECTIONS, KEY_IDS, keyRows, keyPayload, keyError, ownedAccounts, colorRows, soundGainProblem, gainPercent, autoCloseSegments, isSettingsWindow, settingsWindowView, quickPanelView, displayNameProblem, islandInteractionView, autoCloseProblem, commandOutcome, hotkeySetOutcome, makeDrafts, providerRows, cancelPlan, TABS, tabById, tabAlias, servicesGroupVisible, tabKeyTarget, METHOD_CARDS, providerList, loginPlan, pendingLogin, pendingLoginReady, connectedAccounts, AGENT_IDS, agentsView, directOutcome, agentActionFailure, planSummary, AGENTS_WAIT_MS, CONNECT_WAIT_MS, LOGOUT_WORD, SOUND_DEFAULT: false, connectionView, accountRows, loginMethods, createValidity,
+  return { PI_SECTIONS, KEY_IDS, keyRows, keyPayload, keyError, ownedAccounts, colorRows, soundGainProblem, gainPercent, autoCloseSegments, islandSizeSegments, islandSizeProblem, isSettingsWindow, settingsWindowView, quickPanelView, displayNameProblem, islandInteractionView, autoCloseProblem, commandOutcome, hotkeySetOutcome, makeDrafts, providerRows, cancelPlan, TABS, tabById, tabAlias, servicesGroupVisible, tabKeyTarget, METHOD_CARDS, providerList, loginPlan, pendingLogin, pendingLoginReady, connectedAccounts, AGENT_IDS, agentsView, directOutcome, agentActionFailure, planSummary, AGENTS_WAIT_MS, CONNECT_WAIT_MS, LOGOUT_WORD, SOUND_DEFAULT: false, connectionView, accountRows, loginMethods, createValidity,
     modelsTabView, chosenToggle, chosenModelsPayload,
     maskInput, promptView, replyValid, eventView, safeWebUrl, flowOutcome, connectorsView, soundDefault, generalView, captureCombo,
     maskInput, promptView, replyValid, eventView, safeWebUrl, flowOutcome, connectorsView, soundDefault, generalView, captureCombo,

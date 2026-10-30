@@ -106,7 +106,7 @@ async function dictionaryPage(page, ctx) {
   const drawWords = () => {
     clear(chips);
     if (!words.length) {
-      chips.append(h("div", { class: "hub-note", text: t("No word yet. Add the names, brands and jargon Abito gets wrong.") }));
+      chips.append(h("div", { class: "hub-note", text: t("No word yet. Add the names, brands and jargon Koda gets wrong.") }));
       return;
     }
     for (const w of words) {
@@ -119,9 +119,9 @@ async function dictionaryPage(page, ctx) {
     }
   };
   wordInput.style.flex = "1";
-  page.append(h("div", { class: "hub-row" }, label("Palabras"), infoTip(t("Names and words Abito must always spell right.") + " Ej.: Supabase.", "Más información: Palabras")), card(h("div", { class: "hub-row" }, wordInput, life.live(button(t("Add"), addWord, "primary"))), chips));
+  page.append(h("div", { class: "hub-row" }, label("Palabras"), infoTip(t("Names and words Koda must always spell right.") + " Ej.: Supabase.", "Más información: Palabras")), card(h("div", { class: "hub-row" }, wordInput, life.live(button(t("Add"), addWord, "primary"))), chips));
   drawWords();
-  page.append(h("div", { class: "hub-row" }, label(t("Replacements")), infoTip(t("When Abito hears the words on the left, it writes the ones on the right."), "Más información: Reemplazos")));
+  page.append(h("div", { class: "hub-row" }, label(t("Replacements")), infoTip(t("When Koda hears the words on the left, it writes the ones on the right."), "Más información: Reemplazos")));
   const list = h("div", {}), from = life.live(input("Se escucha")), to = life.live(input("Se escribe", () => addReplacement()));
   const addReplacement = () => {
     const f = from.value.trim(), w = to.value.trim();
@@ -184,7 +184,7 @@ async function snippetsPage(page, ctx) {
     edit(null, true);
     trigger.focus();
   }, "primary"));
-  page.append(h("div", { class: "hub-row" }, label(t("Snippets")), infoTip(t("Say the trigger while dictating: Abito pastes the whole text in its place.") + " Ej.: tu firma o tu dirección.", "Más información: Fragmentos"), h("span", { class: "spacer", style: "flex:1" }), create), form);
+  page.append(h("div", { class: "hub-row" }, label(t("Snippets")), infoTip(t("Say the trigger while dictating: Koda pastes the whole text in its place.") + " Ej.: tu firma o tu dirección.", "Más información: Fragmentos"), h("span", { class: "spacer", style: "flex:1" }), create), form);
   const list = h("div", {});
   page.append(card(list));
   function draw() {

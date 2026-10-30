@@ -45,7 +45,7 @@ test('B1 reproduction: expand then collapse settles the visible island and input
 
 test('B1 click: a named header fold control collapses through the guarded host verb, never an arbitrary control press', async () => {
   const html = fs.readFileSync(path.join(frontend, 'index.html'), 'utf8');
-  assert.match(html, /id="header-fold"[^>]*aria-label="Minimizar Abito"/);
+  assert.match(html, /id="header-fold"[^>]*aria-label="Minimizar Koda"/); // Koda 0.1 T2
   const source = fs.readFileSync(path.join(frontend, 'island.js'), 'utf8');
   const start = source.indexOf('  for (const foldButton of');
   const end = source.indexOf('\n  });', start) + '\n  });'.length;

@@ -8,7 +8,7 @@ const { parseArgs, watchdogMs, startWatchdog, none, isObject, validCwd, toolDesc
   MAX_STDIN_BYTES, MAX_ISLAND_WAIT_MS, formatNoDecision, resolveConfig, computeDeadline, sessionToken } = require('./hook-common.cjs');
 
 const COPILOT_ALLOW = '{"behavior":"allow"}\n';
-const COPILOT_DENY = JSON.stringify({ behavior: 'deny', message: 'Denied from the Abito island by the user.' }) + '\n';
+const COPILOT_DENY = JSON.stringify({ behavior: 'deny', message: 'Denied from the Koda island by the user.' }) + '\n';
 const { OPTIONS, LOSSY_OPTIONS } = optionSets('Copilot CLI', 'Copilot');
 const EVENTS = { 'permission-request': 'PermissionRequest', stop: 'SessionEnd' };
 // Copilot's runtime tool names -> the names the shared projection knows. Everything else keeps its name and is lossy.
@@ -35,7 +35,7 @@ async function handleCopilotHook({ event, input, env = {}, argv = [], now, clien
     if (!validCwd(cwd)) return none();
     if (event === 'stop') { // sessionEnd: one settled notice, never any output
       let cfg;
-      try { cfg = resolveConfig(env, process.getuid()); } catch { return none(); }
+      try { cfg = resolveConfig(env, process.getuid?.()); } catch { return none(); }
       if (!cfg.endpoint) return none();
       const c = clientFactory({ endpoint: cfg.endpoint, runtime: cfg.runtime, cwd, agent: 'copilot-cli', onDiagnostic: () => {}, sessionId: sessionToken(field(data, 'sessionId', 'session_id')) });
       await c.notify();
@@ -46,11 +46,11 @@ async function handleCopilotHook({ event, input, env = {}, argv = [], now, clien
     const toolInput = parseToolInput(field(data, 'toolInput', 'tool_input'));
 
     const deadline = computeDeadline({ cliTimeoutMs: args.timeoutSec * 1000, maxMs: MAX_ISLAND_WAIT_MS });
-    if (deadline.mode !== 'ask') return none('Abito island: hook timeout too short for a question. Answer in the terminal.\n');
+    if (deadline.mode !== 'ask') return none('Koda island: hook timeout too short for a question. Answer in the terminal.\n');
 
     let config;
-    try { config = resolveConfig(env, process.getuid()); } catch { return none('Abito island: invalid configuration.\n'); }
-    if (!config.endpoint) return none('Abito island unavailable. Answer in the terminal.\n');
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Koda island: invalid configuration.\n'); }
+    if (!config.endpoint) return none('Koda island unavailable. Answer in the terminal.\n');
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd, agent: 'copilot-cli', onDiagnostic: () => {},
       sessionId: sessionToken(field(data, 'sessionId', 'session_id')) };
     if (typeof now === 'function') options.clock = { now, setTimer: setTimeout, clearTimer: clearTimeout };
@@ -65,7 +65,7 @@ async function handleCopilotHook({ event, input, env = {}, argv = [], now, clien
       if (result.answer.value === 'allow' && !lossy) return { stdout: COPILOT_ALLOW, stderr: '', exitCode: 0 };
       if (result.answer.value === 'deny') return { stdout: COPILOT_DENY, stderr: '', exitCode: 0 };
     }
-    if (result && result.status === 'unavailable') return none('Abito island unavailable. Answer in the terminal.\n');
+    if (result && result.status === 'unavailable') return none('Koda island unavailable. Answer in the terminal.\n');
     return none(formatNoDecision(result) + '\n');
   } catch {
     return none();

@@ -23,7 +23,7 @@ pub const SETTINGS_LABEL: &str = "settings";
 /// T6.2 (D2, design §3): the own window's contract sizes, in LOGICAL px — the
 /// unit `inner_size`/`min_inner_size` take. The default is the design size; the
 /// minimum matches `prefs::SETTINGS_WINDOW_SIZE_MIN`.
-pub(crate) const DEFAULT_INNER_SIZE: (f64, f64) = (960.0, 640.0);
+pub(crate) const DEFAULT_INNER_SIZE: (f64, f64) = (760.0, 560.0);
 pub(crate) const MIN_INNER_SIZE: (f64, f64) = (720.0, 480.0);
 
 /// T6.2 (pure): the inner size the own Ajustes window opens at, in logical px.
@@ -184,7 +184,18 @@ pub(crate) fn parse_settings_window_action(payload: &Value) -> Option<&'static s
 pub(crate) fn page_script(page: &str) -> String { format!("window.__abitoHubPage=\"{page}\";") }
 /// HU-045: handed to every NEW settings window: the version of the package it was built from (Cargo.toml, the same value as
 /// tauri.conf.json). One source of truth; the page never writes a version itself.
-pub(crate) fn version_script() -> String { format!("window.__abitoVersion=\"{}\";", env!("CARGO_PKG_VERSION")) }
+pub(crate) fn version_script() -> String { format!("window.__abitoVersion=\"{}\";", display_version()) }
+/// Rule 13: the release channel this build belongs to (`apps/desktop-tauri/RELEASE_CHANNEL`): `preview.N` for a preview, empty for a
+/// stable release. Bumped together with Cargo.toml/tauri.conf.json every time a version is published.
+pub(crate) const RELEASE_CHANNEL: &str = include_str!("../RELEASE_CHANNEL");
+/// What Ajustes shows: «0.3.0 (preview 4)» for a preview, «0.3.0» for a stable build.
+pub(crate) fn display_version() -> String { display_version_of(env!("CARGO_PKG_VERSION"), RELEASE_CHANNEL) }
+pub(crate) fn display_version_of(version: &str, channel: &str) -> String {
+    match channel.trim().strip_prefix("preview.") {
+        Some(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => format!("{version} (preview {n})"),
+        _ => version.to_owned(),
+    }
+}
 /// Sent to a window that already exists. The shell listens for it and shows that page (anything off its own list is ignored).
 pub(crate) fn select_script(page: &str) -> String {
     format!("document.dispatchEvent(new CustomEvent('abito:hub-select',{{detail:\"{page}\"}}));")
@@ -342,10 +353,32 @@ mod tests {
     /// built from, one source of truth (Cargo.toml = tauri.conf.json), handed to the window as one inert assignment.
     #[test]
     fn hu045_the_settings_window_is_told_the_package_version() {
-        assert_eq!(super::version_script(), format!("window.__abitoVersion=\"{}\";", env!("CARGO_PKG_VERSION")));
+        assert!(super::version_script().starts_with(&format!("window.__abitoVersion=\"{}", env!("CARGO_PKG_VERSION"))));
         let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(conf["version"], env!("CARGO_PKG_VERSION"), "tauri.conf.json and Cargo.toml agree");
         assert!(env!("CARGO_PKG_VERSION").bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'), "inert in a script");
+    }
+
+    /// Rule 13 (human, 29-oct: «me sale en ajustes 0.1.2 creoque eso no cambia, es importanet que cambie» / «esto ponlo como
+    /// requisito que siempre poner si se cambia de version»): Ajustes shows the version AND the preview it belongs to, from one
+    /// source (Cargo.toml + RELEASE_CHANNEL), e.g. «0.3.0 (preview 4)»; a stable build shows «0.3.0».
+    #[test]
+    fn rule13_settings_shows_the_version_with_its_preview_label() {
+        assert_eq!(super::display_version_of("0.3.0", "preview.4"), "0.3.0 (preview 4)");
+        assert_eq!(super::display_version_of("0.3.0", ""), "0.3.0");
+        assert_eq!(super::display_version_of("0.3.0", "preview.4\n"), "0.3.0 (preview 4)", "a trailing newline in the file is not part of it");
+        assert_eq!(super::version_script(), format!("window.__abitoVersion=\"{}\";", super::display_version()));
+        let channel = super::RELEASE_CHANNEL.trim();
+        assert!(channel.is_empty() || (channel.starts_with("preview.") && channel["preview.".len()..].parse::<u32>().is_ok_and(|n| n > 0)), "{channel:?}");
+        assert_ne!(env!("CARGO_PKG_VERSION"), "0.1.2", "never the stale 0.1.2 label");
+    }
+
+    /// Koda 0.1 — Human 30-oct («Vamosa a cerrar esta version cambiar el nombre del repo por Koda y apartir de aqui empezaremos esta sera la version 0.1» → «Todo se llama Koda, repo nuevo desde 0.1» + «Solo lo visible»): the first Koda release is 0.1.0 stable (no preview label).
+    #[test]
+    fn koda_first_release_is_0_1_0_stable() {
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
+        assert_eq!(super::RELEASE_CHANNEL.trim(), "", "a stable release has no preview label");
+        assert_eq!(super::display_version(), "0.1.0");
     }
 
     /// #366 F093: island-window commands refuse every label but the exact `main`.
@@ -480,14 +513,14 @@ mod tests {
 
     use super::{opening_size, save_due, DEFAULT_INNER_SIZE, MIN_INNER_SIZE};
 
-    /// T6.2 (D2, design §3): the own window is 960x640 with min 720x480, both
+    /// T6.2 (D2, design §3): the own window is 760x560 (HU-063 S1: the Sidebar-Koda design size; was 960x640) with min 720x480, both
     /// in logical px — the unit `inner_size`/`min_inner_size` take.
     #[test]
     fn t62_the_window_opens_at_the_design_size_and_honors_the_minimum() {
-        assert_eq!(DEFAULT_INNER_SIZE, (960.0, 640.0));
+        assert_eq!(DEFAULT_INNER_SIZE, (760.0, 560.0));
         assert_eq!(MIN_INNER_SIZE, (720.0, 480.0));
-        assert_eq!(opening_size(None, (1920, 1080)), (960.0, 640.0));
-        assert_eq!(opening_size(None, (7680, 4320)), (960.0, 640.0));
+        assert_eq!(opening_size(None, (1920, 1080)), (760.0, 560.0));
+        assert_eq!(opening_size(None, (7680, 4320)), (760.0, 560.0));
     }
 
     /// T6.2: a remembered size is used only when it is within the stored bounds
@@ -507,24 +540,24 @@ mod tests {
         // outside the current screen (either axis): the default, not a clamp
         assert_eq!(
             opening_size(Some((2200, 1400)), (1920, 1080)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
         assert_eq!(
             opening_size(Some((1100, 1400)), (1920, 1080)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
         assert_eq!(
             opening_size(Some((1921, 1080)), (1920, 1080)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
         // hostile stored values (already dropped at load; re-checked here because
         // this function is pure) fall back to the default too
-        assert_eq!(opening_size(Some((100, 700)), (1920, 1080)), (960.0, 640.0));
+        assert_eq!(opening_size(Some((100, 700)), (1920, 1080)), (760.0, 560.0));
         assert_eq!(
             opening_size(Some((5000, 700)), (8000, 4000)),
-            (960.0, 640.0)
+            (760.0, 560.0)
         );
-        assert_eq!(opening_size(Some((960, 100)), (8000, 4000)), (960.0, 640.0));
+        assert_eq!(opening_size(Some((960, 100)), (8000, 4000)), (760.0, 560.0));
     }
 
     /// T6.2: whatever size was chosen (default or remembered) is clamped into
@@ -534,17 +567,17 @@ mod tests {
     #[test]
     fn t62_the_opening_size_is_clamped_to_the_work_area_never_below_the_minimum() {
         // the default fits: untouched
-        assert_eq!(opening_size(None, (1920, 1080)), (960.0, 640.0));
-        // work area shorter than the default: clamped down on that axis only
-        assert_eq!(opening_size(None, (900, 700)), (900.0, 640.0));
+        assert_eq!(opening_size(None, (1920, 1080)), (760.0, 560.0));
+        // work area narrower or shorter than the default: clamped down on that axis only
+        assert_eq!(opening_size(None, (740, 700)), (740.0, 560.0));
         assert_eq!(
             opening_size(None, (1920, 500)),
-            (960.0, 500.0),
+            (760.0, 500.0),
             "clamped to the area, still above the minimum"
         );
         assert_eq!(
             opening_size(None, (1920, 470)),
-            (960.0, 480.0),
+            (760.0, 480.0),
             "the minimum floors the clamp"
         );
         // work area smaller than the minimum: the minimum wins on both axes

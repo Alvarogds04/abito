@@ -1092,7 +1092,7 @@ pub fn plan(intent: &Intent, w: &World, lang: Lang) -> Plan {
             let url = format!("https://www.google.com/search?q={}", encode(q));
             ok(lang, &format!("Buscando {q}."), &format!("Searching for {q}."), vec![Effect::OpenUrl(url)])
         }
-        Intent::AskAbito(text) => ok(lang, "Se lo pregunto a Abito.", "Asking Abito.", vec![Effect::AskChat(text.clone())]),
+        Intent::AskAbito(text) => ok(lang, "Se lo pregunto a Koda.", "Asking Abito.", vec![Effect::AskChat(text.clone())]),
         Intent::Unknown => fail(lang, "No te he entendido.", "I didn't get that."),
     }
 }

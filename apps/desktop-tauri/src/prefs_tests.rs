@@ -1250,6 +1250,7 @@ mod chosen_models {
             window_context: Some(true),
             live_context: None,
             desktop_character: Some(DesktopCharacter { on: true, spot: Some((5, -6)) }),
+            island_size: None,
         };
         let text = full.to_text();
         let re = Prefs::from_text(Some(&text));
@@ -1477,6 +1478,9 @@ fn create_blob_refusals_leave_the_store_byte_identical() {
     refused(json!({"action":"create_blob","name":"  Abito GitHub  "})); // untrimmed names never parse
     refused(json!({"action":"create_blob","name":"Abito"})); // the main blob is not creatable
     refused(json!({"action":"create_blob","name":"ABITO"}));
+    // Koda 0.1 T2: the principal is shown as «Koda», so that name is not creatable either.
+    refused(json!({"action":"create_blob","name":"Koda"}));
+    refused(json!({"action":"create_blob","name":"koda"}));
     refused(json!({"action":"create_blob","name":""}));
     refused(json!({"action":"create_blob","name":"   "}));
     refused(json!({"action":"create_blob","name":"Abito\u{0007}"})); // control character

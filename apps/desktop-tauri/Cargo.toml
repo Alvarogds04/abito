@@ -1,6 +1,6 @@
 [package]
 name = "abito-island"
-version = "0.1.2"
+version = "0.1.0"
 edition = "2021"
 description = "Abito island — Electron to Rust+Tauri migration, unit M2 (host/bridge + Pi transport receiver)"
 publish = false

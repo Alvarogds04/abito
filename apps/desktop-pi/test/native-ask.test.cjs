@@ -341,14 +341,14 @@ test('structured shapes: limits, five questions, sensitive text anywhere, duplic
 test('the terminal says who answered and what: one info notification per decision, before the call returns', async () => {
   let r = rig(); let run = handler(r)(choiceEvent(), r.ctx); await tick();
   r.abito.resolvers[0]({ status: 'answered', answer: { type: 'option', value: 'o2' } }); await run;
-  assert.deepEqual(r.term.notes, [['Respondido en Abito: Beta', 'info']]);
+  assert.deepEqual(r.term.notes, [['Respondido en Koda: Beta', 'info']]);
   r = rig(); run = handler(r)(choiceEvent(), r.ctx); await tick();
   r.term.selectResolvers[0]('Alpha — First one'); await run;
   assert.deepEqual(r.term.notes, [['Respondido en la terminal: Alpha', 'info']]);
   // free text, from either side
   r = rig(); run = handler(r)(choiceEvent({ allowCustomResponse: true }), r.ctx); await tick();
   r.abito.resolvers[0]({ status: 'answered', answer: { type: 'text', text: 'desde Abito' } }); await run;
-  assert.deepEqual(r.term.notes, [['Respondido en Abito: desde Abito', 'info']]);
+  assert.deepEqual(r.term.notes, [['Respondido en Koda: desde Abito', 'info']]);
   r = rig(); run = handler(r)(choiceEvent({ allowCustomResponse: true }), r.ctx); await tick();
   r.term.selectResolvers[0]('Other…'); await tick(); r.term.inputResolvers[0]('mi respuesta'); await run;
   assert.deepEqual(r.term.notes, [['Respondido en la terminal: mi respuesta', 'info']]);
@@ -357,7 +357,7 @@ test('the terminal says who answered and what: one info notification per decisio
 test('cancelling is told too, naming the side', async () => {
   let r = rig(); let run = handler(r)(choiceEvent(), r.ctx); await tick();
   r.abito.resolvers[0]({ status: 'human_cancelled' }); await run;
-  assert.deepEqual(r.term.notes, [['Cancelado en Abito', 'info']]);
+  assert.deepEqual(r.term.notes, [['Cancelado en Koda', 'info']]);
   r = rig(); run = handler(r)(choiceEvent(), r.ctx); await tick();
   r.term.selectResolvers[0](undefined); await run;
   assert.deepEqual(r.term.notes, [['Cancelado en la terminal', 'info']]);
@@ -366,10 +366,10 @@ test('cancelling is told too, naming the side', async () => {
 test('multiSelect and questionnaires are summarised per question', async () => {
   let r = rig({ structured: true }); let run = handler(r)(formEvent(route(), q2()), r.ctx); await tick();
   r.abito.resolvers[0]({ status: 'answered', answer: { type: 'form', answers: [{ type: 'option', value: 'o2' }, { type: 'options', values: ['o1', 'o3'], text: 'más' }] } }); await run;
-  assert.deepEqual(r.term.notes, [['Respondido en Abito: Route: Beta · Extras: One, Three, más', 'info']]);
+  assert.deepEqual(r.term.notes, [['Respondido en Koda: Route: Beta · Extras: One, Three, más', 'info']]);
   r = rig({ structured: true }); run = handler(r)(formEvent(q2()), r.ctx); await tick();
   r.abito.resolvers[0]({ status: 'answered', answer: { type: 'options', values: ['o2'] } }); await run;
-  assert.deepEqual(r.term.notes, [['Respondido en Abito: Two', 'info']]);
+  assert.deepEqual(r.term.notes, [['Respondido en Koda: Two', 'info']]);
 });
 
 test('no notification when nothing was decided or the call was not intercepted; a long answer is cut; a broken notify never changes the result', async () => {
