@@ -95,7 +95,7 @@ test('multibyte answer within 2000 characters can exceed 4096 BYTES and is rejec
 // between questions_hello and questions_ready, the adapter marked the root «unsupported» and never reconnected, so
 // questions stopped reaching the NEW island until Pi was restarted. A NEW endpoint (a restarted island binds a new
 // p-XXXXXX/s) is a different receiver and is tried; the SAME endpoint dropping the opt-in stays unsupported (test above).
-test('after an unsupported drop, a NEW island endpoint is tried again and questions work', { skip: process.platform === 'win32' && 'Unix endpoint paths; the Windows pipe twin uses the same resolveEndpoint rule' }, async t => {
+test('after an unsupported drop, a NEW island endpoint is tried again and questions work', { skip: process.platform === 'win32' && 'Unix endpoint paths; Windows twin: «a restarted island (same endpoint.json path, new pipe inside)»' }, async t => {
   const old = await fakeReceiver(t);
   let current = old.endpoint, report;
   const reported = new Promise(resolve => { report = resolve; });
