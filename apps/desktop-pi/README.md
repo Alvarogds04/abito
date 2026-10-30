@@ -23,8 +23,8 @@ Other opt-in loading mechanisms (not managed by the Settings installer):
 Pi loads TypeScript directly (jiti), so no build step is needed. Only the Pi API and Node builtins are imported; there
 are no npm dependencies. The managed installer uses an exact eight-file manifest, refuses foreign/modified/unlisted files and symlinks, binds the shown hash to the current and bundled bytes, and makes a directory backup before replacement/removal. It never recursively removes unrelated files. See [the installer contract](../desktop-harness/docs/PI-INSTALL.md).
 
-The level switch matters more than the loading mechanism: with the default `ABITO_QUESTIONS` value, the island shows
-notices but `abito_ask` answers `unavailable`. Set `ABITO_QUESTIONS=1` (or `3`) in the environment Pi runs in.
+Questions are ON by default (level 3): Pi's `ask_user_choice` / `ask_user_question` and `abito_ask` reach the island
+with no environment variable. Set `ABITO_QUESTIONS=0` in the environment Pi runs in to keep the island notice-only.
 
 ## Quick path — a new receiver only
 
@@ -75,7 +75,7 @@ custom installation directories are not discovered automatically.
 | --- | --- |
 | `ABITO_DESKTOP_SOCKET` | Optional explicit endpoint `<root>/p-XXXXXX/s`. When set it wins and `endpoint.json` is never read. Absent: the endpoint published by the running island is used (see *Stable endpoint handoff*). Absent **and** no valid handoff: no connection, no fallback, no scanning. |
 | `ABITO_SOCKET_DIR` | Allowed runtime root, and the root the handoff file is read from. Default `$XDG_RUNTIME_DIR/abito-island` (falling back to `/run/user/<uid>/abito-island`): the Tauri island's own leaf, exactly where it binds. The Electron production root `abito-desktop` and the Preview root `abito-desktop-preview` are NOT defaults: set them explicitly. |
-| `ABITO_QUESTIONS` | Absent or `0`: notice-only. `1`: minimal QP/1. `2`: QP/1 plus negotiated native-transition busy reasons. `3`: level 2 plus the negotiated `structured` capability (multiSelect, questionnaires, larger limits; see *Structured questions*). All other values are invalid; there is no second boolean flag. Claude Code has **no** equivalent switch: its hooks always ask once installed, so `0` here is a Pi-only default and an open product decision (see the parity audit). |
+| `ABITO_QUESTIONS` | Absent: level 3 (default). `0`: notice-only. `1`: minimal QP/1. `2`: QP/1 plus negotiated native-transition busy reasons. `3`: level 2 plus the negotiated `structured` capability (multiSelect, questionnaires, larger limits; see *Structured questions*). All other values are invalid; there is no second boolean flag. Claude Code has **no** equivalent switch: its hooks always ask once installed, so `0` here is a Pi-only default and an open product decision (see the parity audit). |
 | `ABITO_QUESTION_TIMEOUT_MS` | Default deadline duration `300000` ms. Integer decimal `30000..900000`; a call's `timeoutMs` overrides it within the same bounds. |
 | `PI_CODING_AGENT_ROOT` | Tests only: installed Pi package directory for offline real-loader verification when the `pi` launcher cannot be found on PATH. |
 

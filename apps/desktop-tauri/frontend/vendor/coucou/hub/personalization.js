@@ -3,7 +3,7 @@ import { h, clear } from "../views/dom.js";
 import { pillDefinition } from "../core/pills.js";
 import { t } from "./i18n-es.js";
 import { notchSection, notchRow, notchTipRow, notchTipSection, infoTip } from "./notch.js";
-import { card, row, select, toggle } from "./ui.js";
+import { row, select, toggle } from "./ui.js";
 import { action, note, section, trusted, session, preserveFocus } from "./runtime.js";
 function colors(V, A, prefs, identities, save) {
   const rows = [];
@@ -71,7 +71,6 @@ async function renderAppearance({ invoke, listen, V, S, A }) {
 async function renderPills({ invoke, listen, V, S, A, P, C, part = "tools" }) {
   const s = session(invoke, listen), { root, call, work, watch, message } = s;
   if (part === "tools") {
-    root.append(card(row("Herramienta principal: No disponible todavía", null)));
     return s.finish();
   }
   let prefs = {}, store = null, saving = false;

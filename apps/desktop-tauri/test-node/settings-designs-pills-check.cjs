@@ -29,9 +29,9 @@ test('S6 Agentes: no «IA para el chat» group, no pill rows, no repeated Claude
   assert.equal(all(ui).filter(e => e.tagName === 'select').length, 0, 'the main tool is unavailable, not selectable');
 });
 
-test('main-tool slot explicitly says it is not available yet', async () => {
+test('HU-076: the unavailable main-tool slot is hidden, not announced', async () => {
   const { ui } = await mount();
-  assert(text(ui).includes('Herramienta principal: No disponible todavía'));
+  assert(!text(ui).includes('Herramienta principal'));
   ui.dispose();
 });
 

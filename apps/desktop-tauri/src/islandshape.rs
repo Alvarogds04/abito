@@ -31,7 +31,8 @@ fn input_rect(report: Report, window: (i32, i32), protected: bool) -> (i32,i32,i
     abito_island::geometry::island_shape_rect((report.w,report.h), window)
 }
 
-/// S29: the island is a rounded box (compact pill r16, expanded r22, all four corners), so the transparent corner pixels inside the
+/// S29 + HU-057: the compact pill is a rounded box (r16, all four corners); the expanded island is the Nusa notch (square top corners,
+/// bottom corners r26: island.js rTop 0 / rBottom OVERVIEW.r). So the transparent corner pixels inside the
 /// reported rectangle must pass clicks. The input region is that box as horizontal bands: per pixel row the corner arc's inset
 /// is rounded UP, so no pixel outside the drawn shell ever takes a click (at most one drawn pixel per side per row is given up).
 /// Only a settled report that IS one island box is rounded: a transition (union of two endpoints plus spring air) and the question
@@ -41,16 +42,16 @@ pub(crate) fn input_rects(report: Report, window: (i32, i32), protected: bool) -
     let (x, y, w, h) = input_rect(report, window, protected);
     let compact = COMPACT_WIDTHS.contains(&report.w);
     // (radius, box top): the hidden strip shows only the bottom `h` px of a 32 px pill that sits 32-h px above the window
-    let (radius, top) = if report.settled && compact && report.h <= COMPACT_BAR.1 {
-        (16.0, if protected || report.h >= COMPACT_BAR.1 || h >= COMPACT_BAR.1 { 0 } else { report.h - COMPACT_BAR.1 })
+    let (radius_top, radius_bottom, top) = if report.settled && compact && report.h <= COMPACT_BAR.1 {
+        (16.0, 16.0, if protected || report.h >= COMPACT_BAR.1 || h >= COMPACT_BAR.1 { 0 } else { report.h - COMPACT_BAR.1 })
     } else if report.settled && report.w >= 640 && h == report.h.clamp(COMPACT_BAR.1, window.1.max(0)) {
-        (22.0, 0)
+        (0.0, 26.0, 0)
     } else { return vec![(x, y, w, h)] };
     let box_h = if top < 0 { COMPACT_BAR.1 } else { h };
     let mut rects: Vec<(i32, i32, i32, i32)> = Vec::new();
     for row in y.max(0)..(y + h) {
         let centre = f64::from(row - top) + 0.5;                    // the row's centre, in the box
-        let edge = centre.min(f64::from(box_h) - centre);           // distance to the nearer of the top and bottom edges
+        let (edge, radius) = if centre <= f64::from(box_h) / 2.0 { (centre, radius_top) } else { (f64::from(box_h) - centre, radius_bottom) };
         let inset = if edge >= radius { 0 } else {
             let dy = radius - edge;
             (radius - (radius * radius - dy * dy).max(0.0).sqrt()).ceil() as i32
@@ -208,7 +209,7 @@ fn the_input_region_covers_exactly_what_is_drawn_for_every_native_size_of_the_is
         let (_, y, _, h) = input_rect(Report { w, h: 8, settled: true }, window, false);
         assert!(8 >= y + h, "y=8 is below the {w} strip's zone");
     }
-    for (w, h) in [(720, 184), (720, 220), (720, 224), (720, 208), (720, 240), (720, 270), (720, 300)] {
+    for (w, h) in [(720, 150), (720, 220), (720, 224), (720, 208), (720, 240), (720, 270), (720, 300)] {
         assert_eq!(input_rect(Report { w, h, settled: true }, window, false), (centred(w), 0, w, h), "expanded {w}x{h} is fully clickable and nothing more");
         assert_eq!(input_rect(Report { w, h, settled: true }, window, true), (centred(w), 0, w, h), "a protected ask changes nothing for a drawn card");
     }
@@ -229,23 +230,26 @@ mod corners {
     use super::*;
     const W: (i32, i32) = (752, 340);
     fn covers(rects: &[(i32, i32, i32, i32)], x: i32, y: i32) -> bool { rects.iter().any(|&(rx, ry, rw, rh)| x >= rx && x < rx + rw && y >= ry && y < ry + rh) }
-    /// Is the CENTRE of pixel (x, y) inside the rounded box (bx, by, bw, bh) with radius r on all four corners?
-    fn inside(x: i32, y: i32, (bx, by, bw, bh): (i32, i32, i32, i32), r: f64) -> bool {
+    /// Is the CENTRE of pixel (x, y) inside the box (bx, by, bw, bh) with radius rt on the top corners and rb on the bottom ones?
+    fn inside(x: i32, y: i32, (bx, by, bw, bh): (i32, i32, i32, i32), (rt_r, rb_r): (f64, f64)) -> bool {
         let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
         let (l, t, rt, b) = (bx as f64, by as f64, (bx + bw) as f64, (by + bh) as f64);
         if px < l || px > rt || py < t || py > b { return false; }
+        let top_half = py < (t + b) / 2.0;
+        let r = if top_half { rt_r } else { rb_r };
+        if r <= 0.0 { return true; }
         let cx = if px < l + r { l + r } else if px > rt - r { rt - r } else { return true };
-        let cy = if py < t + r { t + r } else if py > b - r { b - r } else { return true };
+        let cy = if top_half { if py < t + r { t + r } else { return true } } else if py > b - r { b - r } else { return true };
         (px - cx).powi(2) + (py - cy).powi(2) <= r * r
     }
     /// (report, the drawn box in window px, its radius): what the page draws for each size of the island.
-    fn sizes() -> Vec<(Report, (i32, i32, i32, i32), f64)> {
+    fn sizes() -> Vec<(Report, (i32, i32, i32, i32), (f64, f64))> {
         let centred = |w: i32| (W.0 - w) / 2;
         let mut out = vec![];
-        for w in abito_island::geometry::COMPACT_WIDTHS { out.push((Report { w, h: 32, settled: true }, (centred(w), 0, w, 32), 16.0)); }
-        for (w, h) in [(720, 184), (720, 220), (720, 208), (720, 224), (720, 240), (720, 300)] { out.push((Report { w, h, settled: true }, (centred(w), 0, w, h), 22.0)); }
+        for w in abito_island::geometry::COMPACT_WIDTHS { out.push((Report { w, h: 32, settled: true }, (centred(w), 0, w, 32), (16.0, 16.0))); }
+        for (w, h) in [(720, 150), (720, 220), (720, 208), (720, 224), (720, 240), (720, 300)] { out.push((Report { w, h, settled: true }, (centred(w), 0, w, h), (0.0, 26.0))); }
         // hidden: the pill (32 tall) sits 24 px up, so only its bottom 8 px (with its rounded bottom corners) show
-        for w in abito_island::geometry::COMPACT_WIDTHS { out.push((Report { w, h: 8, settled: true }, (centred(w), -24, w, 32), 16.0)); }
+        for w in abito_island::geometry::COMPACT_WIDTHS { out.push((Report { w, h: 8, settled: true }, (centred(w), -24, w, 32), (16.0, 16.0))); }
         out
     }
 
@@ -267,12 +271,15 @@ mod corners {
         }
     }
 
+    /// The expanded notch is square on top (HU-057): only the pill's top corners are rounded.
+    fn h_top_round(report: &Report) -> bool { report.h <= 32 }
+
     #[test]
     fn the_four_corners_of_every_size_pass_clicks_and_the_middle_does_not() {
         for (report, (bx, by, bw, bh), _) in sizes() {
             let rects = input_rects(report, W, false);
             let (top, bottom) = (by.max(0), by + bh - 1);
-            if by >= 0 { for (x, y) in [(bx, top), (bx + bw - 1, top)] { assert!(!covers(&rects, x, y), "{report:?}: top corner ({x},{y}) must pass clicks"); } }
+            if by >= 0 && h_top_round(&report) { for (x, y) in [(bx, top), (bx + bw - 1, top)] { assert!(!covers(&rects, x, y), "{report:?}: top corner ({x},{y}) must pass clicks"); } }
             for (x, y) in [(bx, bottom), (bx + bw - 1, bottom)] { assert!(!covers(&rects, x, y), "{report:?}: bottom corner ({x},{y}) must pass clicks"); }
             let (mx, my) = (bx + bw / 2, (top + bottom) / 2);
             assert!(covers(&rects, mx, my), "{report:?}: the middle takes clicks");
@@ -290,7 +297,7 @@ mod corners {
         // a question toast under the compact pill (350 or 440/560 wide, 128 tall) is not a single rounded box: rectangular
         for w in [350, 440, 560] { assert_eq!(input_rects(Report { w, h: 128, settled: true }, window, false).len(), 1, "toast shape {w}x128"); }
         // the bounding rectangle is what it always was
-        assert_eq!(input_rect(Report { w: 720, h: 184, settled: true }, window, false), (16, 0, 720, 184));
+        assert_eq!(input_rect(Report { w: 720, h: 150, settled: true }, window, false), (16, 0, 720, 150));
     }
 
     #[test]
@@ -303,8 +310,8 @@ mod corners {
     #[test]
     fn the_shape_is_the_same_logical_one_at_any_scale_because_gdk_scales_the_region_with_the_window() {
         // the region is in LOGICAL px (GDK applies the window scale), so the numbers do not depend on the scale
-        let a = input_rects(Report { w: 720, h: 184, settled: true }, W, false);
-        assert_eq!(a, input_rects(Report { w: 720, h: 184, settled: true }, W, false));
+        let a = input_rects(Report { w: 720, h: 150, settled: true }, W, false);
+        assert_eq!(a, input_rects(Report { w: 720, h: 150, settled: true }, W, false));
         assert!(a.len() < 120, "a handful of row bands, not a pixel list ({})", a.len());
     }
 }
@@ -330,7 +337,7 @@ mod shared_rects {
         let start = ((288, 32), Report { w: 288, h: 32, settled: true });
         let sequence = [
             (Some(Report { w: 288, h: 32, settled: true }), false), (Some(Report { w: 440, h: 32, settled: true }), false),
-            (Some(Report { w: 640, h: 160, settled: false }), false), (Some(Report { w: 720, h: 184, settled: true }), false),
+            (Some(Report { w: 640, h: 160, settled: false }), false), (Some(Report { w: 720, h: 150, settled: true }), false),
             (None, false), (Some(Report { w: 288, h: 8, settled: true }), false), (Some(Report { w: 288, h: 8, settled: true }), true),
             (Some(Report { w: 560, h: 128, settled: false }), true), (Some(Report { w: 10_000, h: 10_000, settled: true }), false), (None, true),
         ];
