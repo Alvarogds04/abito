@@ -42,6 +42,11 @@ pub const FRAME_BYTES: usize = 512;
 pub const ATTENTION_TITLE_MAX: usize = 64;
 pub const ATTENTION_DETAIL_MAX: usize = 200;
 pub const FRESH_MS: u64 = 15_000;
+/// Two processes never read the same clock: the hook stamps `at`, the island compares it with its own `now` (and the other way
+/// round). On Windows `Date.now()`/`GetSystemTime` of two processes differ by a few milliseconds, so an honest frame could land
+/// "in the future" or "before the question" and be refused. A skew this small is tolerated on those bounds; staleness
+/// (`FRESH_MS`) and a far-future stamp stay rejected. Mirrors CLOCK_SKEW_MS (1000) in desktop-harness/src/client.cjs and desktop-pi.
+pub const CLOCK_SKEW_MS: u64 = 1_000;
 pub const EXPIRY_MS: u64 = 60_000;
 pub const QUEUE: usize = 8;
 pub const DEDUPE: usize = 256;

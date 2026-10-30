@@ -2116,6 +2116,10 @@ fn main() {
                 .store(load_motion_override(&handle), Ordering::SeqCst);
             spawn_workarea_watcher(handle.clone());
             spawn_publish_ticker(handle.clone());
+            #[cfg(target_os = "macos")] { // HU-065: «Ver» activates the terminal app on the main thread
+                let main = handle.clone();
+                abito_island::sessionterm_mac::set_main_runner(move |job| { let _ = main.run_on_main_thread(job); });
+            }
             hotkeyhost::start(&handle); // #305: global show/hide shortcut (config + X11 grab)
             // #306 settings prefs: `settingshost::start` runs before the island is placed (#264)
             specialistshost::start(&handle); // #327: the manual specialists (empty = the principal)

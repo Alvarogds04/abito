@@ -33,6 +33,12 @@ pub const WRITE_PROC_START: bool = true;
 const MAX_FILE: u64 = 4096;
 
 /// `<runtime>/endpoint.json`.
+/// Longest socket path the kernel accepts (sockaddr_un.sun_path minus the NUL): 107 on Linux, 103 on macOS.
+#[cfg(target_os = "linux")]
+const SUN_PATH_MAX: usize = 107;
+#[cfg(not(target_os = "linux"))]
+const SUN_PATH_MAX: usize = 103;
+
 pub fn path(runtime: &Path) -> PathBuf {
     runtime.join(FILE_NAME)
 }
@@ -40,6 +46,7 @@ pub fn path(runtime: &Path) -> PathBuf {
 /// Field 22 of `/proc/<pid>/stat` (the process start time in clock ticks since boot) as a decimal string, or
 /// `None` when the process does not exist or `/proc` cannot be read. `comm` may contain spaces and parentheses, so
 /// the fields are parsed after the LAST `)`. Mirrors the engine daemon's `procStartTicks`.
+#[cfg(target_os = "linux")]
 pub fn proc_start(pid: u32) -> Option<String> {
     if pid == 0 {
         return None;
@@ -48,6 +55,44 @@ pub fn proc_start(pid: u32) -> Option<String> {
     let rest = stat.get(stat.rfind(')')? + 2..)?;
     let ticks = rest.split(' ').nth(22 - 3)?;
     (!ticks.is_empty() && ticks.bytes().all(|b| b.is_ascii_digit())).then(|| ticks.to_string())
+}
+
+/// macOS (HU-068): the process start in whole seconds since the epoch from `proc_pidinfo(PROC_PIDTBSDINFO)`, the
+/// SAME value the engine's darwin reader derives from `ps -o lstart=` (1-second resolution, documented residual
+/// in HU-054). No `/proc`, no shell.
+#[cfg(target_os = "macos")]
+pub fn proc_start(pid: u32) -> Option<String> {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return None;
+    }
+    // SAFETY: zeroed POD out-buffer of the exact size the call is told; the return value is checked.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let got = unsafe { libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTBSDINFO, 0, &mut info as *mut _ as *mut libc::c_void, size) };
+    (got == size && info.pbi_start_tvsec > 0).then(|| info.pbi_start_tvsec.to_string())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn proc_start(_pid: u32) -> Option<String> {
+    None
+}
+
+/// Is `pid` a live process? Linux reads `/proc/<pid>`; other Unix asks the kernel with signal 0 (EPERM = it exists
+/// but belongs to someone else, which still means alive).
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        if pid == 0 || pid > i32::MAX as u32 {
+            return false;
+        }
+        // SAFETY: kill with signal 0 sends nothing; it only checks existence/permission.
+        let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
 }
 
 /// `<runtime>/p-<6 alphanumerics>/s`, absolute and normalized, exactly one level below `runtime`.
@@ -60,7 +105,7 @@ fn endpoint_shape_ok(endpoint: &Path, runtime: &Path) -> bool {
     let name = name.as_bytes();
     leaf.as_bytes() == b"s"
         && parent == runtime
-        && endpoint.as_os_str().as_bytes().len() <= 107
+        && endpoint.as_os_str().as_bytes().len() <= SUN_PATH_MAX
         && name.len() == 8
         && name.starts_with(b"p-")
         && name[2..].iter().all(u8::is_ascii_alphanumeric)
@@ -127,7 +172,7 @@ fn parse(runtime: &Path, text: &str) -> Option<PathBuf> {
     // the island that wrote it must still be alive: a SIGKILL leaves the file (and the socket
     // inode) behind, and a recycled path must not be believed
     let pid = map.get("pid")?.as_u64().filter(|p| *p > 0 && *p <= i32::MAX as u64)? as u32;
-    if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+    if !pid_alive(pid) {
         return None;
     }
     // ...and it must be the SAME life of that pid: a recycled pid has another start time

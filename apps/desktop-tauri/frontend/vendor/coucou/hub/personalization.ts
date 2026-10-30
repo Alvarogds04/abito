@@ -54,7 +54,7 @@ export async function renderPills({ invoke, listen, V, S, A, P, C, part = 'tools
   // Product/Pestañas-activas: keep the selector below for a future release, unreachable for now.
   if (part === 'tools') {
     // Same non-interactive card/row pattern and wording as Notetaker in pages.ts.
-    root.append(card(row('Herramienta principal: No disponible todavía', null)));
+    // HU-076: the main-tool selector is not available in this version, so nothing is shown (it used to say so in a card).
     return s.finish();
   }
   let prefs: any = {}, store: any = null, saving = false;

@@ -37,7 +37,7 @@ test('S20 Agentes: the table has the four columns and the rows in the wireframe 
   const table = all(ui).find(e => e.attrs.role === 'table'); assert(table, 'a real table role');
   assert.deepEqual(all(table).filter(e => e.attrs.role === 'columnheader').map(e => e.textContent), ['Agente', 'Estado', 'En isla', 'Acciones']);
   const list = all(ui).find(e => e.attrs.id === 'agent-hook-list');
-  assert.deepEqual(list.children.map(e => e.attrs.id), ['agent-row-pi', 'agent-row-hermes', 'agent-row-claude-code', 'agent-row-codex', 'agent-row-gemini-cli', 'agent-row-copilot-cli', 'agent-row-muse', 'agent-row-antigravity', 'agent-row-cursor', 'agent-row-opencode', 'agent-row-amp'], '0.2.1 S2: the five CLIs, then the not-in-this-version rows');
+  assert.deepEqual(list.children.map(e => e.attrs.id), ['agent-row-pi', 'agent-row-claude-code', 'agent-row-codex', 'agent-row-gemini-cli', 'agent-row-copilot-cli', 'agent-row-opencode'], '0.2.1 S2: the five CLIs, then the not-in-this-version rows');
   assert(ui.children[0].children.indexOf(table) < ui.children.length, 'table first');
 });
 

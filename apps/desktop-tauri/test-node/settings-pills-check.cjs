@@ -73,7 +73,7 @@ const {all, text, dom, Element} = require('./settings-accounts-check.cjs');
     prefs.mainPill = mainPill;
     const before = structuredClone(prefs); calls.length = 0;
     ui=await renderPills({...options,part:'tools'}); await ui.settled();
-    assert(text(ui).includes('Herramienta principal: No disponible todavía'));
+    assert(!text(ui).includes('Herramienta principal'), 'HU-076: the unavailable main tool is hidden');
     assert(!all(ui).some(e=>['select','button','input','textarea'].includes(e.tagName)));
     assert.deepEqual(calls,[], 'the dormant tools slot neither reads nor writes preferences');
     assert.deepEqual(prefs,before, 'stored main pill and all other preferences are unchanged');
