@@ -12,7 +12,7 @@ const tests = []; const test = (name, fn) => tests.push([name, fn]);
 // from the single source of truth (hub/shell.js PAUSED_PAGES, pinned by paused-features-check); a page's own layout test runs again
 // by itself the day its page is active again, and until then it checks that the page is not in the menu.
 const PAGE_IDS = { Dictado: 'dictation', Notetaker: 'notes', 'Estadísticas': 'insights', Diccionario: 'dictionary', Fragmentos: 'snippets', Estilos: 'styles', Ajustes: 'flowsettings',
-  General: 'general', Integraciones: 'integrations', Agentes: 'agents', Chat: 'chat', 'OK Abito': 'voice', 'Teléfono': 'phone', 'Teléfono Android': 'phone', Atajos: 'shortcuts', Privacidad: 'privacy' };
+  General: 'general', Integraciones: 'integrations', Agentes: 'agents', Chat: 'chat', 'OK Koda': 'voice', 'Teléfono': 'phone', 'Teléfono Android': 'phone', Atajos: 'shortcuts', Privacidad: 'privacy' };
 let PAUSED = null;
 const isPaused = title => { assert(PAGE_IDS[title], title); return PAUSED.includes(PAGE_IDS[title]); };
 const navTitles = page => page.evaluate(() => [...document.querySelectorAll('.hub-side .hub-item')].map(e => e.textContent.trim()));
@@ -46,7 +46,7 @@ test('S18 General: «Atajo del sistema» is not a loose label: it is a value row
 });
 
 test('S19 Pills: no card of the page is an empty box (the «Colores de identidad» section drew an empty field over the Abito row)', async r => {
-  await r.go('General'); // 0.2.1: Instrucciones and Colores de identidad live in General
+  await r.go('Isla'); // HU-063 S2: «Colores de identidad» moved from General to the Isla page (0.2.1 had it in General)
   const empty = await r.page.evaluate(() => [...document.querySelectorAll('.hub-card')].filter(c => !c.children.length && !c.textContent.trim()).map(c => c.parentElement && c.parentElement.querySelector('.hub-label') ? c.parentElement.querySelector('.hub-label').textContent : c.className));
   assert.deepEqual(empty, [], `empty cards: ${JSON.stringify(empty)}`);
   const rows = await r.page.evaluate(() => { const sec = [...document.querySelectorAll('section')].find(s => /colores de identidad/i.test((s.querySelector('.hub-label') || {}).textContent || '')); const card = sec.querySelector('.hub-card'); return { rowInsideCard: !!card && !!card.querySelector('.hub-row'), rows: sec.querySelectorAll('.hub-row').length }; });
@@ -227,7 +227,7 @@ test('HU-045: the sidebar shows the real package version (tauri.conf.json), neve
   try { want = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '../tauri.conf.json'), 'utf8')).version; }
   catch (error) { assert.fail(`cannot read the package version from tauri.conf.json: ${error.message}`); }
   assert.equal(typeof want, 'string', 'tauri.conf.json has a version');
-  assert.equal((await r.page.locator('.hub-version').textContent()).trim(), `Abito ${want}`);
+  assert.equal((await r.page.locator('.hub-version').textContent()).trim(), `Koda ${want}`);
 });
 
 // HU-046 (human, verbatim option chosen: «Botón «Instalar Pi» (recomendado)»): when the chat engine has no Pi, the Chat page AND the Pi row of
@@ -275,7 +275,7 @@ test('HU-046: with Pi present (engine connected) neither page shows the control'
 
 test('0.1.2 paused pages are hidden: the sidebar lists exactly the active pages, no grey «En pausa» row (visual check: hub-side screenshot)', async r => {
   const items = await navTitles(r.page);
-  const want = Object.keys(PAGE_IDS).filter(t => !['Teléfono', 'Ajustes'].includes(t) && !isPaused(t));
+  const want = Object.keys(PAGE_IDS).filter(t => !['Teléfono', 'Ajustes'].includes(t) && !isPaused(t)).concat('Isla'); // HU-063 S2: the new additive «Isla» page
   assert.deepEqual([...items].sort(), [...want].sort(), JSON.stringify(items));
   assert.equal(await r.page.locator('.hub-side .hub-paused, .hub-side .hub-item.paused, .hub-side [disabled]').count(), 0, 'nothing greyed out');
   if (process.env.ABITO_SHOT_DIR) await r.page.locator('.hub-side').screenshot({ path: require('node:path').join(process.env.ABITO_SHOT_DIR, 'hub-side.png') });
@@ -325,16 +325,17 @@ test('0.2.4 Agentes: unavailable main tool, CLI table and island switches; no AI
     buttons: [...root.querySelectorAll('button')].map(b => b.textContent.trim()), instructions: !!root.querySelector('#abito-instructions') }; });
   assert(!page.instructions, 'Abito instructions moved to General');
   assert.deepEqual(page.mainOptions, [], 'the main tool selector is unreachable');
-  assert.match(page.text, /Herramienta principal: No disponible todavía/);
-  assert.equal(page.agentRows, 11, `Pi + Hermes + Claude Code + Codex + Gemini CLI + six not-in-this-version rows (${page.agentRows})`);
+  assert.doesNotMatch(page.text, /Herramienta principal/, 'HU-076: the unavailable main tool is hidden');
+  assert.equal(page.agentRows, 6, `HU-076: Pi + Claude Code + Codex + Gemini CLI + Copilot CLI + OpenCode (${page.agentRows})`);
   assert.equal(page.serviceCards, 0, 'services live on Integraciones');
   for (const gone of ['Nuevo agente', 'Convertir en agente', 'Editar', 'Eliminar', 'Subir', 'Bajar']) assert(!page.buttons.includes(gone), `${gone} is gone`);
-  const order = ['Herramienta principal', 'Agentes', 'Uso del plan', 'Especialistas'].map(h => page.heads.findIndex(x => x.toLowerCase().includes(h.toLowerCase())));
+  const order = ['Agentes', 'Uso del plan', 'Especialistas'].map(h => page.heads.findIndex(x => x.toLowerCase().includes(h.toLowerCase())));
   assert(order.every(i => i >= 0), `sections present: ${JSON.stringify(page.heads)}`);
   assert.deepEqual(order, [...order].sort((a, b) => a - b), `sections in order: ${JSON.stringify(order)}`);
   assert.doesNotMatch(page.text, /IA para el chat|\d\/4|hasta 4|Pestañas activas|Vista previa|Codex · uso del plan/);
   assert.match(page.text, /Claude Code · uso del plan/);
-  assert.match(page.text, /No disponible en esta versión/);
+  assert.doesNotMatch(page.text, /No disponible en esta versión/, 'HU-076: no greyed rows');
+  assert.doesNotMatch(await r.page.evaluate(() => document.querySelector('.hub-page').innerText), /Koda agrega un relay/, 'HU-076: long explanations stay in the ⓘ, not visible at rest');
 });
 
 pageTest('Integraciones', '0.2.1 Integraciones: the services only, with the keychain explanation in an ⓘ', async r => {
@@ -354,11 +355,17 @@ test('0.2.1 ⓘ tip: hidden at rest, shown on hover AND on keyboard focus, hidde
   assert.equal(await tip.getAttribute('aria-describedby'), await box.getAttribute('id'));
 });
 
-test('0.2.1 General (L2 A, S6): holds recap on/off + clear, Instrucciones, Colores, manual-open; the shortcut is only a value + link; no plan switch here', async r => {
-  await r.go('General');
-  const page = await r.page.evaluate(() => { const root = document.querySelector('.hub-page'); return { text: root.textContent.replace(/\s+/g, ' '), ids: ['hub-recap', 'hub-recap-clear', 'abito-instructions', 'hub-open-at-launch'].map(id => !!root.querySelector('#' + id)),
+test('0.2.1 General (L2 A, S6) + HU-063 S2: General keeps Instrucciones + manual-open; recap on/off + clear, Colores and the «Ir a Atajos» link live in Isla; no plan switch here', async r => {
+  const read = () => r.page.evaluate(() => { const root = document.querySelector('.hub-page'); return { text: root.textContent.replace(/\s+/g, ' '), ids: ['hub-recap', 'hub-recap-clear', 'abito-instructions', 'hub-open-at-launch'].map(id => !!root.querySelector('#' + id)),
     colors: root.querySelectorAll('[id^="identity-"]').length, editor: [...root.querySelectorAll('button')].some(b => b.textContent === 'Cambiar' || b.textContent === 'Original'), link: [...root.querySelectorAll('button')].some(b => b.textContent === 'Ir a Atajos') }; });
-  assert.deepEqual(page.ids, [true, true, true, true]); assert(page.colors > 0, 'identity colours'); assert(!page.editor && page.link, 'shortcut: value and link only');
+  await r.go('General');
+  const general = await read();
+  assert.deepEqual(general.ids, [false, false, true, true], 'General: Instrucciones + manual-open stay; recap moved to Isla');
+  assert.equal(general.colors, 0, 'General: identity colours moved to Isla'); assert(!general.link, 'General: the shortcut link moved to Isla');
+  await r.go('Isla');
+  const page = await read();
+  assert.deepEqual(page.ids.slice(0, 2), [true, true], 'Isla: recap on/off + clear');
+  assert(page.colors > 0, 'Isla: identity colours'); assert(!page.editor && page.link, 'Isla: shortcut is only a value and a link');
   assert.doesNotMatch(page.text, /Mostrar plan|uso del plan|Modelo principal/);
 });
 
@@ -416,8 +423,8 @@ test('0.2.1 Chat (L2 A) → HU-044: provider cards fold from their title row; th
   await fold.click(); assert.equal(await field.isVisible(), false);
 });
 
-pageTest('OK Abito', '0.2.1 OK Abito (L2 A): the shared model, language and training are inside the Avanzado fold', async r => {
-  await r.go('OK Abito');
+pageTest('OK Koda', '0.2.1 OK Koda (L2 A): the shared model, language and training are inside the Avanzado fold', async r => {
+  await r.go('OK Koda');
   const adv = r.page.locator('#voice-advanced'); assert.equal(await adv.count(), 1);
   assert.equal(await adv.evaluate(d => d.open), false, 'closed by default');
   assert.equal(await r.page.evaluate(() => [...document.querySelectorAll('.hub-page .hub-label')].map(e => e.textContent).slice(0, 2).join('|')), 'Activación|Respuestas');
@@ -473,7 +480,7 @@ test('S26 deep link: an unknown or hostile page name falls back to the default p
 // Every Ajustes page, as the sidebar lists them. A card or input-looking box with nothing in it is a defect wherever it appears: the
 // human found it three times (Pills, Integraciones, Conexiones), each time by eye, each time the same pattern (a card created before
 // its children exist, then left empty by the state).
-const PAGES = ['Dictado', 'Notetaker', 'Estadísticas', 'Diccionario', 'Fragmentos', 'Estilos', 'Ajustes', 'General', 'Integraciones', 'Agentes', 'Chat', 'OK Abito', 'Teléfono Android', 'Atajos'];
+const PAGES = ['Dictado', 'Notetaker', 'Estadísticas', 'Diccionario', 'Fragmentos', 'Estilos', 'Ajustes', 'General', 'Integraciones', 'Agentes', 'Chat', 'OK Koda', 'Teléfono Android', 'Atajos'];
 const EMPTY_BOXES = () => [...document.querySelectorAll('.hub-page .hub-card, .hub-page section, .hub-page .abito-card, .hub-page .hub-row, .hub-page .row')].filter(el => {
   const b = el.getBoundingClientRect(); if (b.width < 40 || b.height < 8) return false;               // not drawn
   if (el.querySelector('input, select, textarea, button, a, svg, canvas, img, .switch, .keycap, .swatch, .hub-segmented')) return false;

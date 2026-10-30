@@ -1,4 +1,5 @@
 'use strict';
+const { tmpBase, assertMode, unixOnly } = require('./platform-env.cjs');
 // End-to-end tests of `abito-hook install <claude|codex> ... --json / --apply-plan` through REAL child processes.
 // The CLI is started by a wrapper node process, so its parent executable is node (ABITO_ISLAND_EXE = realpath(node)).
 // Temp dirs only; the real ~/.claude and ~/.codex are never touched.
@@ -18,14 +19,14 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'PI_SESSION_ID', 'PI_SESSION_FILE', 'AI_AGENT', 'GENTLE_PI_SESSION'];
 
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instuicli-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instuicli-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
 }
 const ls = d => fs.readdirSync(d).sort();
 function cleanEnv(home, extra = {}) {
-  const env = { ...process.env, HOME: home, ABITO_ISLAND_EXE: NODE_REAL, ...extra };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ABITO_ISLAND_EXE: NODE_REAL, ...extra }; // Windows os.homedir() reads USERPROFILE
   for (const k of Object.keys(env)) if (MARKERS.includes(k) || k === 'OPENCODE' || k.startsWith('OPENCODE_')) delete env[k];
   for (const [k, v] of Object.entries(extra)) if (v === undefined) delete env[k]; else env[k] = v;
   return env;
@@ -56,15 +57,24 @@ test('Windows UI install with an unverifiable install manifest refuses before re
   const settings = path.join(dir, 'settings.json');
   fs.writeFileSync(settings, '{"keep":true}\n');
   const before = fs.readFileSync(settings);
+  // On a real Windows runner the checkout has a valid manifest and helper (win-fixture.test.cjs), so the untrusted layout is built here:
+  // the CLI copied next to NO abito-install.json (its install root is two levels above src/).
+  let bin = BIN;
+  if (process.platform === 'win32') {
+    const root = path.join(dir, 'untrusted-install', 'desktop-harness');
+    const pkg = path.resolve(path.dirname(BIN), '..');
+    for (const sub of ['bin', 'src']) fs.cpSync(path.join(pkg, sub), path.join(root, sub), { recursive: true });
+    bin = path.join(root, 'bin', 'abito-hook.cjs');
+  }
   for (const harness of ['claude', 'codex', 'copilot', 'opencode', 'recap', 'statusline']) {
     for (const extra of [[], ['--apply-plan', 'a'.repeat(64), '--audit-dir', path.join(dir, 'audit')]]) {
       const args = ['install', harness, '--settings', settings, '--json', ...extra];
       const script = "Object.defineProperty(process,'platform',{value:'win32'}); process.getuid=undefined; process.argv=[process.execPath,...JSON.parse(process.argv[1])]; require(process.argv[1]);";
-      const result = spawnSync(process.execPath, ['-e', script, JSON.stringify([BIN, ...args])], {encoding:'utf8', timeout:5000});
+      const result = spawnSync(process.execPath, ['-e', script, JSON.stringify([bin, ...args])], {encoding:'utf8', timeout:5000});
       assert.equal(result.status, 65, result.stdout + result.stderr);
       assert.equal(result.stderr, '');
-      assert.equal(result.stdout, JSON.stringify({schema:'abito-hook-install/1',ok:false,code:'install_unverified',message:'the installed Abito files could not be verified; nothing was written'}) + '\n');
-      assert.deepEqual(fs.readdirSync(dir), ['settings.json']);
+      assert.equal(result.stdout, JSON.stringify({schema:'abito-hook-install/1',ok:false,code:'install_unverified',message:'the installed Koda files could not be verified; nothing was written'}) + '\n');
+      assert.deepEqual(fs.readdirSync(dir).filter(n => n !== 'untrusted-install'), ['settings.json']);
       assert.deepEqual(fs.readFileSync(settings), before);
     }
   }
@@ -111,11 +121,11 @@ for (const harness of ['claude', 'codex']) {
     assert.equal(j.requires_trust_review, harness === 'codex'); assert.deepEqual(j.entries, p.entries);
     assert.equal(fs.readFileSync(w.settings, 'utf8'), want);
     assert.ok(path.isAbsolute(j.backup) && j.backup.startsWith(w.settings + '.abito-backup-'));
-    assert.equal(fs.statSync(j.backup).mode & 0o777, 0o600);
+    assertMode(j.backup, 0o600);
     assert.ok(fs.readFileSync(j.backup).equals(orig));
     // audit: intent + result, metadata only
     const af = path.join(w.audit, 'hook-installs.jsonl');
-    assert.equal(fs.statSync(w.audit).mode & 0o777, 0o700); assert.equal(fs.statSync(af).mode & 0o777, 0o600);
+    assertMode(w.audit, 0o700); assertMode(af, 0o600);
     const raw = fs.readFileSync(af, 'utf8'); const lines = raw.trim().split('\n').map(l => JSON.parse(l));
     assert.equal(lines.length, 2);
     assert.deepEqual(Object.keys(lines[0]).sort(), ['action', 'event', 'harness', 'plan_hash', 'target', 'ts']);
@@ -123,11 +133,13 @@ for (const harness of ['claude', 'codex']) {
     assert.deepEqual(Object.keys(lines[1]).sort(), ['backup', 'code', 'event', 'ok', 'plan_hash', 'ts']);
     assert.equal(lines[1].event, 'result'); assert.equal(lines[1].ok, true); assert.equal(lines[1].backup, j.backup);
     assert.ok(Number.isInteger(lines[0].ts));
-    assert.ok(!raw.includes(BIN) && !raw.includes('command') && !raw.includes('keep'));
+    assert.ok(!raw.includes(JSON.stringify(BIN).slice(1, -1)) && !raw.includes('command') && !raw.includes('keep'));
     // rollback string restores the original
-    const sh = spawnSync('sh', ['-c', j.rollback], { encoding: 'utf8' });
-    assert.equal(sh.status, 0);
-    assert.ok(fs.readFileSync(w.settings).equals(orig));
+    if (process.platform !== 'win32') { // the rollback hint is a POSIX command line (cp/mv/rm); the Windows hint is covered by win-install-fake.test.cjs
+      const sh = spawnSync('sh', ['-c', j.rollback], { encoding: 'utf8' });
+      assert.equal(sh.status, 0);
+      assert.ok(fs.readFileSync(w.settings).equals(orig));
+    }
   });
 
   test(`${harness}: new file => backup null, rollback deletes the file`, t => {
@@ -135,11 +147,13 @@ for (const harness of ['claude', 'codex']) {
     const p = previewOf(w, harness).json; assert.equal(p.exists, false);
     const r = cli(applyArgs(w, harness, p.plan_hash), w.env);
     assert.equal(r.code, 0, r.raw); assert.equal(r.json.backup, null);
-    assert.ok(fs.readFileSync(w.settings, 'utf8').includes(BIN));
-    assert.equal(fs.statSync(w.settings).mode & 0o777, 0o600);
-    assert.ok(r.json.rollback.startsWith('rm -- '));
-    assert.equal(spawnSync('sh', ['-c', r.json.rollback]).status, 0);
-    assert.equal(fs.existsSync(w.settings), false);
+    assert.ok(fs.readFileSync(w.settings, 'utf8').includes(JSON.stringify(BIN).slice(1, -1)));
+    assertMode(w.settings, 0o600);
+    if (process.platform !== 'win32') { // the rollback hint is a POSIX `rm --` command line; the Windows hint is covered by win-install-fake.test.cjs
+      assert.ok(r.json.rollback.startsWith('rm -- '));
+      assert.equal(spawnSync('sh', ['-c', r.json.rollback]).status, 0);
+      assert.equal(fs.existsSync(w.settings), false);
+    }
   });
 
   test(`${harness}: --remove is symmetric; re-apply is an idempotent no-op without a new backup`, t => {
@@ -158,7 +172,7 @@ for (const harness of ['claude', 'codex']) {
     const rr = cli(applyArgs(w, harness, p.plan_hash, ['--remove']), w.env);
     assert.equal(rr.code, 0, rr.raw); assert.equal(rr.json.action, 'remove'); assert.equal(rr.json.requires_trust_review, false);
     assert.deepEqual(JSON.parse(fs.readFileSync(w.settings, 'utf8')), { keep: true });
-    assert.ok(!fs.readFileSync(w.settings, 'utf8').includes(BIN));
+    assert.ok(!fs.readFileSync(w.settings, 'utf8').includes(JSON.stringify(BIN).slice(1, -1)));
   });
 }
 
@@ -169,7 +183,7 @@ test('--user with a temp HOME works for codex and claude', t => {
     const p = cli([harness, '--user', '--json'], w.env);
     assert.equal(p.code, 0, p.raw); assert.equal(p.json.target, target);
     const r = cli([harness, '--user', '--apply-plan', p.json.plan_hash, '--audit-dir', w.audit, '--json'], w.env);
-    assert.equal(r.code, 0, r.raw); assert.ok(fs.readFileSync(target, 'utf8').includes(BIN));
+    assert.equal(r.code, 0, r.raw); assert.ok(fs.readFileSync(target, 'utf8').includes(JSON.stringify(BIN).slice(1, -1)));
   }
 });
 
@@ -190,7 +204,7 @@ function refusal(name, { harness = 'claude', code, jcode, setup, env, content, a
   });
 }
 refusal('no ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: undefined }) });
-refusal('wrong ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: fs.realpathSync('/bin/sh') }) });
+refusal('wrong ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: fs.realpathSync(process.platform === 'win32' ? process.env.ComSpec : '/bin/sh') }) });
 refusal('relative ABITO_ISLAND_EXE', { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { ABITO_ISLAND_EXE: 'node' }) });
 for (const m of [...MARKERS, 'OPENCODE', 'OPENCODE_FOO']) {
   refusal('agent marker ' + m, { code: 77, jcode: 'not_island', env: w => cleanEnv(w.home, { [m]: '1' }) });
@@ -212,13 +226,13 @@ refusal('--audit-dir on a preview', { code: 64, jcode: 'usage', args: w => [...b
 refusal('duplicate --apply-plan', { code: 64, jcode: 'usage', args: (w, h) => [...applyArgs(w, 'claude', h), '--apply-plan', h] });
 refusal('relative --audit-dir', { code: 73, jcode: 'audit_unavailable', args: (w, h) => [...base(w, 'claude'), '--apply-plan', h, '--audit-dir', 'rel/audit', '--json'] });
 refusal('symlinked settings', {
-  code: 65, jcode: 'refused', content: null,
+  code: 65, jcode: process.platform === 'win32' ? 'unsafe_target' : 'refused', content: null, // Windows: the helper reports the link as an unsafe target
   setup: w => { fs.writeFileSync(path.join(w.d, 'real.json'), '{}\n'); fs.symlinkSync(path.join(w.d, 'real.json'), w.settings); },
 });
 refusal('bad UTF-8 settings', { code: 65, jcode: 'refused', content: '{}\n', setup: w => { fs.writeFileSync(w.settings, Buffer.from([0x7b, 0x22, 0xe9, 0x22, 0x3a, 0x31, 0x7d])); } });
 
-const auditCase = (name, prep) => test('audit unavailable => 73 and settings untouched: ' + name, t => {
-  if (process.getuid() === 0) return t.skip('root ignores permission bits');
+const auditCase = (name, prep, unix = true) => test('audit unavailable => 73 and settings untouched: ' + name, unix ? unixOnly('win-install-fake.test.cjs audit refusals through the helper contract') : {}, t => {
+  if (process.getuid?.() === 0) return t.skip('root ignores permission bits');
   const w = world(t);
   const p = previewOf(w, 'claude').json;
   prep(w);
@@ -228,13 +242,13 @@ const auditCase = (name, prep) => test('audit unavailable => 73 and settings unt
   assertUntouched(w, before);
 });
 auditCase('unwritable dir', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); fs.chmodSync(w.audit, 0o500); });
-auditCase('missing parent', w => { w.audit = path.join(w.d, 'no', 'such', 'audit'); });
+auditCase('missing parent', w => { w.audit = path.join(w.d, 'no', 'such', 'audit'); }, false);
 auditCase('symlink dir', w => { fs.mkdirSync(path.join(w.d, 'real-audit'), { mode: 0o700 }); fs.symlinkSync(path.join(w.d, 'real-audit'), w.audit); });
 auditCase('world-writable dir', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); fs.chmodSync(w.audit, 0o777); });
 auditCase('audit file is a symlink', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); fs.symlinkSync(path.join(w.d, 'target'), path.join(w.audit, 'hook-installs.jsonl')); });
 auditCase('audit file wrong mode', w => { fs.mkdirSync(w.audit, { mode: 0o700 }); const f = path.join(w.audit, 'hook-installs.jsonl'); fs.writeFileSync(f, ''); fs.chmodSync(f, 0o666); });
 test('audit unavailable: foreign-owner directory (/usr) => 73', t => {
-  if (process.getuid() === 0) return t.skip('root owns /usr');
+  if (process.getuid?.() === 0) return t.skip('root owns /usr');
   const w = world(t);
   const p = previewOf(w, 'claude').json; const before = snap(w);
   const r = cli([...base(w, 'claude'), '--apply-plan', p.plan_hash, '--audit-dir', '/usr', '--json'], w.env);
@@ -251,7 +265,7 @@ test('a second apply of an already used hash sees plan_changed and never corrupt
   assert.ok(fs.readFileSync(w.settings).equals(after)); assert.equal(ls(w.d).length, n);
 });
 
-test('concurrency: simultaneous applies of the same hash => exactly one succeeds, the other plan_changed, file valid', t => {
+test('concurrency: simultaneous applies of the same hash => exactly one succeeds, the other plan_changed, file valid', unixOnly('win-install-fake.test.cjs (HU-047 Windows flow through the helper contract) + smoke-windows.ps1 on the installed helper'), t => {
   for (let round = 0; round < 3; round++) {
     const w = world(t);
     const p = previewOf(w, 'claude').json;
@@ -295,7 +309,7 @@ test('closed stdout pipe: apply is applied, audited, exit 0 and silent', async t
   const w = world(t); const p = previewOf(w, 'claude').json;
   const r = await runClosed(['install', ...applyArgs(w, 'claude', p.plan_hash)], w.env);
   assert.equal(r.err, ''); assert.equal(r.status, 0);
-  assert.ok(fs.readFileSync(w.settings, 'utf8').includes(BIN));
+  assert.ok(fs.readFileSync(w.settings, 'utf8').includes(JSON.stringify(BIN).slice(1, -1)));
   assert.equal(fs.readFileSync(path.join(w.audit, 'hook-installs.jsonl'), 'utf8').trim().split('\n').length, 2);
 });
 test('closed stdout pipe: a refusal keeps its own exit code (plan_changed => 70)', async t => {

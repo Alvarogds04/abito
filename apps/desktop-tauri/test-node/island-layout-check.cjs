@@ -85,9 +85,9 @@ test('attribute: agent class + project name pick ONE session; ambiguity attribut
   assert.equal(L.attribute({ agent: '../x' }, rows), null);
 });
 
-test('S4 (abito-avisos-ux): the Abito project folder «sb-second-brain» is shown as «Abito» in the blobs and the centre; others keep their name', () => {
+test('S4 (abito-avisos-ux): the Koda project folder «sb-second-brain» is shown as «Koda» in the blobs and the centre; others keep their name', () => {
   const rows = L.blobRows({ declared: [], sessions: [sess({ id: 's-00000001', cwd: 'sb-second-brain' }), sess({ id: 's-00000002', cwd: 'scratch' })], focusId: null, attributedId: null, badges: new Set() });
-  assert.deepEqual(rows.map(r => r.name), ['Abito', 'scratch']);
+  assert.deepEqual(rows.map(r => r.name), ['Koda', 'scratch']);
   assert.ok(rows.every(r => !/sb-second-brain|\bSB\b/i.test(r.aria)), JSON.stringify(rows.map(r => r.aria)));
 });
 // ---- the right column ----------------------------------------------------------------------------------------------------------
@@ -402,9 +402,9 @@ test('centreView: steps are bounded to what fits (last 2) and a long name is cut
 });
 
 // ---- I: the empty state in the centre, with a CTA ------------------------------------------------------------------------------
-test('emptyView: nothing running -> «Todo tranquilo» + «Preguntar a Abito»; failures and unknown states are NOT empty', () => {
+test('emptyView: nothing running -> «Todo tranquilo» + «Preguntar a Koda»; failures and unknown states are NOT empty', () => {
   const e = L.emptyView({ view: T.sessionsView({ type: 'sessions', schema: 'abito-sessions/view/1', truncated: false, sessions: [] }), pending: null, finished: false });
-  assert.deepEqual(e, { title: 'Todo tranquilo', sub: 'Arrastrá un archivo o preguntá.', cta: { label: 'Preguntar a Abito', action: 'new-chat' } });
+  assert.deepEqual(e, { title: 'Todo tranquilo', sub: 'Arrastrá un archivo o preguntá.', cta: { label: 'Preguntar a Koda', action: 'new-chat' } }); // Koda 0.1 T2
   assert.deepEqual(L.emptyView({ view: null, pending: null, finished: false }).cta.action, 'new-chat', 'no list yet and nothing pending: still a calm empty centre');
   assert.equal(L.emptyView({ view: { state: 'error' }, pending: null, finished: false }), null, 'a failed list is not "everything is calm": the engine row owns that');
   assert.equal(L.emptyView({ view: T.sessionsView({ type: 'sessions', schema: 'abito-sessions/view/1', truncated: false, sessions: [{ id: 's-0000000a', kind: 'pi', cwd: 'x', state: 'sleeping', origin: null }] }), pending: null, finished: false }), null, 'a session exists: the centre shows it');
@@ -525,13 +525,13 @@ test('wiring: ONE delegated tooltip in the island — shows on hover AND keyboar
 
 // ======== T1 · S1 (01 oculta A) + S2 (02 compacta A) ========================================================================
 test('S1 edgeStripView: ONE strip whose colour is the most urgent state (reposo gris / pregunta cian / permiso ámbar / listo verde) and never colour alone', () => {
-  assert.deepEqual(L.edgeStripView({}), { state: 'rest', pulse: false, aria: 'Abito, en reposo' });
-  assert.deepEqual(L.edgeStripView({ pending: 'question' }), { state: 'question', pulse: true, aria: 'Abito: una pregunta espera' });
-  assert.deepEqual(L.edgeStripView({ pending: 'approval' }), { state: 'approval', pulse: true, aria: 'Abito: un permiso espera' });
-  assert.deepEqual(L.edgeStripView({ finished: true }), { state: 'finished', pulse: true, aria: 'Abito: algo terminó' });
+  assert.deepEqual(L.edgeStripView({}), { state: 'rest', pulse: false, aria: 'Koda, en reposo' });
+  assert.deepEqual(L.edgeStripView({ pending: 'question' }), { state: 'question', pulse: true, aria: 'Koda: una pregunta espera' });
+  assert.deepEqual(L.edgeStripView({ pending: 'approval' }), { state: 'approval', pulse: true, aria: 'Koda: un permiso espera' });
+  assert.deepEqual(L.edgeStripView({ finished: true }), { state: 'finished', pulse: true, aria: 'Koda: algo terminó' });
   assert.equal(L.edgeStripView({ pending: 'question', finished: true }).state, 'question', 'pending beats finished');
   assert.equal(L.edgeStripView({ pending: 'approval', finished: true }).state, 'approval');
-  assert.equal(L.edgeStripView({ pending: 'question', queued: 2 }).aria, 'Abito: 3 preguntas esperan', 'the aria says how many wait (the colour cannot)');
+  assert.equal(L.edgeStripView({ pending: 'question', queued: 2 }).aria, 'Koda: 3 preguntas esperan', 'the aria says how many wait (the colour cannot)');
   assert.equal(L.edgeStripView(null).state, 'rest');
   assert.deepEqual(L.EDGE_STRIP, { w: 160, h: 3, zone: 8 });
 });

@@ -63,11 +63,11 @@ test('keyboard 1..N: a bare digit picks that option; modifiers, IME, repeats, ty
   assert.equal(N.optionForKey(n, key('Enter'), { typing: false }), -1);
 });
 
-test('S4 (abito-avisos-ux): «Agente · proyecto» shows the Abito project as «Abito», never «sb-second-brain»', () => {
-  assert.equal(N.projectLabel('sb-second-brain'), 'Abito');
-  assert.equal(N.projectLabel('SB-Second-Brain'), 'Abito');
+test('S4 (abito-avisos-ux): «Agente · proyecto» shows the Koda project as «Koda», never «sb-second-brain»', () => {
+  assert.equal(N.projectLabel('sb-second-brain'), 'Koda'); // Koda 0.1 T2
+  assert.equal(N.projectLabel('SB-Second-Brain'), 'Koda');
   assert.equal(N.projectLabel('scratch'), 'scratch');
-  assert.equal(N.askerLine({ agent: 'codex', projectName: 'sb-second-brain' }), 'Codex · Abito');
+  assert.equal(N.askerLine({ agent: 'codex', projectName: 'sb-second-brain' }), 'Codex · Koda');
 });
 test('trusted gate: only event.isTrusted === true reaches the host', () => {
   assert.equal(N.trusted({ isTrusted: true }), true);

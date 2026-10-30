@@ -45,7 +45,7 @@ fn sensitivity_maps_to_a_vad_threshold_and_a_match_tolerance() {
     assert_eq!(params(250), params(100), "clamped");
 }
 
-// ── Matching «OK Abito» in a transcript ───────────────────────────────────────
+// ── Matching «OK Koda» in a transcript ────────────────────────────────────────
 
 fn m(text: &str, tol: usize) -> Option<String> {
     match_wake(text, tol)
@@ -53,16 +53,17 @@ fn m(text: &str, tol: usize) -> Option<String> {
 
 #[test]
 fn the_phrase_is_found_with_accents_case_and_punctuation_ignored() {
+    // Koda 0.1 T2: the name is «Koda» (was «Abito»).
     for t in [
-        "OK Abito",
-        "ok abito",
-        "Ok, Abito.",
-        "¡OK Abito!",
-        "okay abito",
-        "okey abito",
-        "oca abito",
-        "okey, Ábito",
-        "hey abito",
+        "OK Koda",
+        "ok koda",
+        "Ok, Koda.",
+        "¡OK Koda!",
+        "okay koda",
+        "okey koda",
+        "oca koda",
+        "okey, Kodá",
+        "hey koda",
     ] {
         assert_eq!(m(t, 1), Some(String::new()), "{t}");
     }
@@ -70,15 +71,16 @@ fn the_phrase_is_found_with_accents_case_and_punctuation_ignored() {
 
 #[test]
 fn spoken_variants_of_the_name_match() {
+    // Koda 0.1 T2: only exact known spellings and split forms («ko da»), no fuzzy variants.
     for t in [
-        "ok habito",
-        "ok hábito",
-        "ok a vito",
-        "ok a bito",
-        "ok avito",
-        "ok abbito",
-        "ok abeto",
-        "okey a vito",
+        "ok qoda",
+        "ok kodá",
+        "ok ko da",
+        "ok k oda",
+        "ok kouda",
+        "ok kodda",
+        "okey ko da",
+        "ok kota",
     ] {
         assert!(m(t, 1).is_some(), "{t}");
     }
@@ -86,58 +88,58 @@ fn spoken_variants_of_the_name_match() {
 
 #[test]
 fn spellings_parakeet_actually_gave_for_the_phrase_match_after_an_ok_word() {
-    for t in [
-        "ok cavito",
-        "okey vito",
-        "oca vito",
-        "ok kavito",
-        "ok cabito",
-    ] {
+    // Koda 0.1 T2
+    for t in ["ok kota", "okey goda", "oca kota", "ok goda", "ok qoda"] {
         assert!(m(t, 1).is_some(), "{t}");
     }
-    assert_eq!(m("okey vito con música", 1), Some("con música".into()));
-    // …but «vito» alone, or a plain name in ordinary speech, never wakes.
-    for t in ["vito", "cavito", "hola vito", "conocí a vito ayer"] {
+    assert_eq!(m("okey goda con música", 1), Some("con música".into()));
+    // …but «kota»/«goda» alone, or a plain name in ordinary speech, never wakes.
+    for t in ["kota", "goda", "hola kota", "conocí a goda ayer"] {
         assert_eq!(m(t, 2), None, "{t}");
     }
 }
 
 #[test]
 fn glued_transcriptions_match_too() {
-    assert_eq!(m("okabito", 1), Some(String::new()));
-    assert_eq!(m("okey abito pon música", 1), Some("pon música".into()));
-    assert_eq!(m("okayabito pausa", 1), Some("pausa".into()));
+    // Koda 0.1 T2
+    assert_eq!(m("okkoda", 1), Some(String::new()));
+    assert_eq!(m("okey koda pon música", 1), Some("pon música".into()));
+    assert_eq!(m("okayqoda pausa", 1), Some("pausa".into()));
 }
 
 #[test]
 fn the_command_in_the_same_segment_keeps_its_spelling() {
-    assert_eq!(m("OK Abito, añade GitHub", 1), Some("añade GitHub".into()));
-    assert_eq!(m("ok abito: ¿qué suena?", 1), Some("¿qué suena?".into()));
+    // Koda 0.1 T2
+    assert_eq!(m("OK Koda, añade GitHub", 1), Some("añade GitHub".into()));
+    assert_eq!(m("ok koda: ¿qué suena?", 1), Some("¿qué suena?".into()));
     assert_eq!(
-        m("Euh ok abito pon Daft Punk", 1),
+        m("Euh ok koda pon Daft Punk", 1),
         Some("pon Daft Punk".into())
     );
     // The LAST occurrence wins.
-    assert_eq!(m("ok abito ok abito pausa", 1), Some("pausa".into()));
+    assert_eq!(m("ok koda ok koda pausa", 1), Some("pausa".into()));
 }
 
 #[test]
 fn ok_then_a_short_word_then_the_name_wakes() {
-    // Heard live on 2026-10-22: «Ok ya Vito, que hora es.»
+    // Koda 0.1 T2: «Ok ya Koda, que hora es.» (was «Ok ya Vito», heard live on 2026-10-22)
     assert_eq!(
-        m("Ok ya Vito, que hora es.", 1),
+        m("Ok ya Koda, que hora es.", 1),
         Some("que hora es.".into())
     );
-    // …and the same phrase glued, said first: «Yavito, ¿qué hora es?»
-    assert_eq!(m("Yavito, ¿qué hora es?", 1), Some("¿qué hora es?".into()));
-    assert_eq!(m("okey a habito pon música", 1), Some("pon música".into()));
+    // …and the name split in two, said after an OK: «ok ko da, ¿qué hora es?»
+    assert_eq!(
+        m("ok ko da, ¿qué hora es?", 1),
+        Some("¿qué hora es?".into())
+    );
+    assert_eq!(m("okey a koda pon música", 1), Some("pon música".into()));
     // Only a SHORT word in between, and only before the name.
     for t in [
         "ok ya",
         "ok ya voy",
-        "ok vale vito",
-        "ok ya bonito",
-        "ya vito",
+        "ok vale koda",
+        "ok ya toda",
+        "ya koda",
     ] {
         assert_eq!(m(t, 2), None, "{t}");
     }
@@ -145,21 +147,21 @@ fn ok_then_a_short_word_then_the_name_wakes() {
 
 #[test]
 fn the_name_said_first_and_followed_by_a_comma_wakes_when_parakeet_drops_the_ok() {
-    // Heard live over RDP on 2026-10-22: the «OK» came out as a separate «Yes.» segment
-    // or was lost, and the phrase arrived as «Habito, ¿qué hora es?».
-    assert_eq!(m("Habito, ¿qué hora es?", 1), Some("¿qué hora es?".into()));
-    assert_eq!(m("Habito, que hora es.", 1), Some("que hora es.".into()));
-    assert_eq!(m("Abito, pon música", 0), Some("pon música".into()));
-    assert_eq!(m("Ábito, ¿qué suena?", 1), Some("¿qué suena?".into()));
+    // Koda 0.1 T2: the «OK» came out as a separate «Yes.» segment or was lost, and the phrase
+    // arrived as «Koda, ¿qué hora es?».
+    assert_eq!(m("Koda, ¿qué hora es?", 1), Some("¿qué hora es?".into()));
+    assert_eq!(m("Kota, que hora es.", 1), Some("que hora es.".into()));
+    assert_eq!(m("Koda, pon música", 0), Some("pon música".into()));
+    assert_eq!(m("Kodá, ¿qué suena?", 1), Some("¿qué suena?".into()));
     // Only a known spelling, only as the FIRST word, only with the comma, only with a command.
     for t in [
-        "Hábito",
-        "Habito,",
-        "Habito que hora es",
-        "Abido, pon música",
-        "mi hábito, de leer",
-        "Hola, habito, qué hora es",
-        "El hábito, hace al monje",
+        "Koda",
+        "Koda,",
+        "Koda que hora es",
+        "Kodo, pon música",
+        "mi koda, de leer",
+        "Hola, koda, qué hora es",
+        "El koda, hace al monje",
     ] {
         assert_eq!(m(t, 2), None, "{t}");
     }
@@ -167,15 +169,16 @@ fn the_name_said_first_and_followed_by_a_comma_wakes_when_parakeet_drops_the_ok(
 
 #[test]
 fn ordinary_speech_does_not_wake() {
+    // Koda 0.1 T2
     for t in [
         "",
         "hola qué tal",
-        "abito",
-        "mi hábito de leer",
+        "koda",
+        "mi toda de leer",
         "ok",
         "ok vale",
-        "el hábito hace al monje",
-        "tengo un abrigo",
+        "la moda hace al monje",
+        "tengo una boda",
         "okupa en abril",
     ] {
         assert_eq!(m(t, 1), None, "{t}");
@@ -184,13 +187,17 @@ fn ordinary_speech_does_not_wake() {
 
 #[test]
 fn tolerance_controls_the_fuzzy_names_and_zero_keeps_only_the_known_spellings() {
-    assert_eq!(m("ok abidu", 0), None);
-    assert!(m("ok abido", 1).is_some());
-    assert_eq!(m("ok abxdo", 1), None);
-    assert!(m("ok abxdo", 2).is_some());
-    assert!(m("ok abito", 0).is_some());
+    // Koda 0.1 T2 (human 30-oct «solo koda»): the fuzzy matching of the name was REMOVED (with a
+    // four-letter name 11 of 29 real neighbours would have been rewritten). The opposite invariant:
+    // near spellings never wake at ANY tolerance, and the exact spellings need no tolerance.
+    for tol in 0..=2 {
+        for t in ["ok kodo", "ok kada", "ok toda", "ok moda", "ok kola"] {
+            assert_eq!(m(t, tol), None, "{t} (tolerance {tol})");
+        }
+    }
+    assert!(m("ok koda", 0).is_some());
     assert!(
-        m("ok habito", 0).is_some(),
+        m("ok kodá", 0).is_some(),
         "the known spellings never need tolerance"
     );
     // A high tolerance still never turns a common word into the name.
@@ -217,7 +224,7 @@ fn a_transcript_without_the_phrase_changes_nothing() {
 #[test]
 fn wake_and_command_in_one_segment_give_both_events() {
     let mut f = flow();
-    let ev = f.on_transcript("ok abito pon música", 1);
+    let ev = f.on_transcript("ok koda pon música", 1);
     assert_eq!(
         ev,
         vec![FlowEvent::Wake, FlowEvent::Command("pon música".into())]
@@ -228,7 +235,7 @@ fn wake_and_command_in_one_segment_give_both_events() {
 #[test]
 fn a_bare_wake_arms_the_next_segment_as_the_command() {
     let mut f = flow();
-    assert_eq!(f.on_transcript("ok abito", 1), vec![FlowEvent::Wake]);
+    assert_eq!(f.on_transcript("ok koda", 1), vec![FlowEvent::Wake]);
     assert!(f.armed());
     assert_eq!(
         f.on_transcript("añade GitHub", 1),
@@ -242,9 +249,9 @@ fn a_bare_wake_arms_the_next_segment_as_the_command() {
 #[test]
 fn the_armed_command_may_repeat_the_phrase_and_it_is_stripped() {
     let mut f = flow();
-    f.on_transcript("ok abito", 1);
+    f.on_transcript("ok koda", 1);
     assert_eq!(
-        f.on_transcript("ok abito pausa", 1),
+        f.on_transcript("ok koda pausa", 1),
         vec![FlowEvent::Command("pausa".into())]
     );
 }
@@ -252,7 +259,7 @@ fn the_armed_command_may_repeat_the_phrase_and_it_is_stripped() {
 #[test]
 fn nothing_said_after_the_wake_times_out() {
     let mut f = flow();
-    f.on_transcript("ok abito", 1);
+    f.on_transcript("ok koda", 1);
     assert!(f.advance(3 * SEC).is_empty());
     assert_eq!(f.advance(4 * SEC), vec![FlowEvent::Timeout]);
     assert!(!f.armed());
@@ -262,7 +269,7 @@ fn nothing_said_after_the_wake_times_out() {
 #[test]
 fn a_segment_in_flight_holds_the_timeout_until_its_transcript_arrives() {
     let mut f = flow();
-    f.on_transcript("ok abito", 1);
+    f.on_transcript("ok koda", 1);
     f.segment_sent();
     assert!(f.advance(20 * SEC).is_empty());
     assert_eq!(

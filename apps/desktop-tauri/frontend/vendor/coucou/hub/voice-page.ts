@@ -25,7 +25,7 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
   // #503 S22 (Opción A): a live status banner on top. Every word comes from the REAL status (listening, models, error);
   // nothing is inferred from the preference alone.
   const banner = h('div', { id: 'voice-status', class: 'voice-status', role: 'status', 'aria-live': 'polite' });
-  page.append(ctx.hero('voice', 'OK Abito', t('Say « OK Abito », then ask anything: add a pill, play music, the weather, an email to prepare.')), banner, box);
+  page.append(ctx.hero('voice', 'OK Koda', t('Say « OK Koda », then ask anything: add a pill, play music, the weather, an email to prepare.')), banner, box);
   function paintBanner() {
     banner.replaceChildren();
     const k = st?.vad?.state ?? 'missing', p = st?.parakeet?.state ?? 'missing';
@@ -61,7 +61,7 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
     }
     return el;
   }
-  // «Entrenar mi voz»: the user says «OK Abito» TARGET times; the host hears each one through the live path.
+  // «Entrenar mi voz»: the user says «OK Koda» TARGET times; the host hears each one through the live path.
   let hearing = false, training = false;
   function trainingCard(): HTMLElement {
     const tr = st?.training ?? { recorded: 0, target: 5, active: false, last: null, learned: {} };
@@ -73,12 +73,12 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
     const controls = h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
     const done = tr.recorded >= tr.target;
     if (!ready) status.textContent = 'Primero descargá los modelos.';
-    else if (hearing) status.textContent = `Escuchando… decí «OK Abito» (${Math.min(tr.recorded + 1, tr.target)}/${tr.target})`;
+    else if (hearing) status.textContent = `Escuchando… decí «OK Koda» (${Math.min(tr.recorded + 1, tr.target)}/${tr.target})`;
     else if (training || tr.active) {
-      status.textContent = done ? `Listo ${tr.recorded}/${tr.target}. Guardá para que Abito te reconozca.`
-        : tr.recorded === 0 ? `Decí «OK Abito» (1/${tr.target}).` : `Entendí: «${tr.last ?? ''}» — ${tr.recorded}/${tr.target}. Decilo otra vez.`;
+      status.textContent = done ? `Listo ${tr.recorded}/${tr.target}. Guardá para que Koda te reconozca.`
+        : tr.recorded === 0 ? `Decí «OK Koda» (1/${tr.target}).` : `Entendí: «${tr.last ?? ''}» — ${tr.recorded}/${tr.target}. Decilo otra vez.`;
     } else if (phrases.length) status.textContent = `Entendí: ${phrases.map(p => `«${p}»`).join(', ')} — listo`;
-    else status.textContent = `Decí «OK Abito» ${tr.target} veces y Abito aprende cómo te entiende a vos. El audio no se guarda.`;
+    else status.textContent = `Decí «OK Koda» ${tr.target} veces y Koda aprende cómo te entiende a vos. El audio no se guarda.`;
     if (ready && !hearing) {
       if (!(training || tr.active)) {
         controls.append(trusted(button('Entrenar mi voz', () => { training = true; void step(() => VoiceBridge.trainRecord())(); }, 'primary')));
@@ -90,7 +90,7 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
         controls.append(trusted(button('Cancelar', () => void work(async () => { const next = await VoiceBridge.trainCancel(); training = false; return next; }), '', true)));
       }
     }
-    return card(row('Entrenar mi voz', 'Abito aprende cómo se transcribe TU «OK Abito». Solo se guarda el texto, en este equipo.', controls), status);
+    return card(row('Entrenar mi voz', 'Koda aprende cómo se transcribe TU «OK Koda». Solo se guarda el texto, en este equipo.', controls), status);
   }
   // Ajustes → Voz, the Handy way: the language (Spanish by default), the models with size / languages /
   // state, and the custom words. Downloads are explicit; the one in use cannot be deleted.
@@ -104,7 +104,7 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
     lang.value = sp.language;
     lang.addEventListener('change', () => apply(s => { s.language = lang.value; }));
     const active = (sp.models as any[]).find(m => m.active);
-    const langNote = h('div', { class: 'hub-note', text: active && !active.forcesLanguage ? `${active.name} elige el idioma solo y no admite fijarlo: para fijar el español usá un modelo Whisper.` : 'El idioma queda fijo: Abito no adivina otro.' });
+    const langNote = h('div', { class: 'hub-note', text: active && !active.forcesLanguage ? `${active.name} elige el idioma solo y no admite fijarlo: para fijar el español usá un modelo Whisper.` : 'El idioma queda fijo: Koda no adivina otro.' });
     const list = h('div', { id: 'voice-models', style: 'display:flex;flex-direction:column;gap:6px' });
     for (const m of sp.models as any[]) {
       const downloading = m.state?.state === 'downloading';
@@ -121,8 +121,8 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
     }
     const words = trusted(h('textarea', { id: 'voice-words', rows: '3', 'aria-label': 'Palabras personalizadas', placeholder: 'Una por línea. «Abito» ya está incluida.', text: (sp.words as string[]).join('\n') })) as HTMLTextAreaElement;
     words.addEventListener('change', () => apply(s => { s.words = words.value.split('\n').map(w => w.trim()).filter(Boolean); }));
-    return card(row('Idioma', 'El que escucha Abito para «OK Abito» y el dictado.', lang), langNote, divider(), list, divider(),
-      row('Palabras personalizadas', 'Nombres o términos que Abito corrige al transcribir, además de «Abito».', words));
+    return card(row('Idioma', 'El que escucha Koda para «OK Koda» y el dictado.', lang), langNote, divider(), list, divider(),
+      row('Palabras personalizadas', 'Nombres o términos que Koda corrige al transcribir, además de «Koda».', words));
   }
   function draw() {
     box.replaceChildren();
@@ -144,15 +144,15 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
       result.textContent = now ? `Sensibilidad ${pct} %. Ahora: ${live ? 'Escuchando' : now.prefs.enabled ? 'Activando' : 'Apagado'}. No se abrió el micrófono.` : 'No se pudo comprobar el estado.';
     })(), '', true));
     const privacy = h('details', { id: 'voice-privacy', class: 'voice-privacy' }, h('summary', { text: 'Privacidad' }),
-      h('div', { class: 'hub-note', text: t('Your voice never leaves this computer: Parakeet turns it into text here. Only the words after « OK Abito » go to Anthropic with your Claude key, and to ElevenLabs if you picked it for the answers.') }),
-      h('div', { class: 'hub-note', text: t('An email is never sent by Abito: your mail app opens with it written, and you send it.') }));
+      h('div', { class: 'hub-note', text: t('Your voice never leaves this computer: Parakeet turns it into text here. Only the words after « OK Koda » go to Anthropic with your Claude key, and to ElevenLabs if you picked it for the answers.') }),
+      h('div', { class: 'hub-note', text: t('An email is never sent by Koda: your mail app opens with it written, and you send it.') }));
     box.append(
       label('Activación'),
-      card(row(t('Listen for « OK Abito »'), t('The microphone stays open; only what follows « OK Abito » goes further.'), trusted(toggle(st.prefs.enabled, on => void save(p => { p.enabled = on; })))), divider(),
-        row(t('Parakeet, on your computer'), t('Hears « OK Abito » here, without the internet.'), modelControl()), divider(),
-        row(t('Wake-word sensitivity'), t('Higher hears « OK Abito » more easily, and mishears more.'), sensitivity, value, probe), result),
-      label('Respuestas'), card(row(t('Abito answers out loud'), null, output)),
-      // L2 «OK Abito: A · Avanzado desplegable»: the shared recognition model, language and training sit behind one fold.
+      card(row(t('Listen for « OK Koda »'), t('The microphone stays open; only what follows « OK Koda » goes further.'), trusted(toggle(st.prefs.enabled, on => void save(p => { p.enabled = on; })))), divider(),
+        row(t('Parakeet, on your computer'), t('Hears « OK Koda » here, without the internet.'), modelControl()), divider(),
+        row(t('Wake-word sensitivity'), t('Higher hears « OK Koda » more easily, and mishears more.'), sensitivity, value, probe), result),
+      label('Respuestas'), card(row(t('Koda answers out loud'), null, output)),
+      // L2 «OK Koda: A · Avanzado desplegable»: the shared recognition model, language and training sit behind one fold.
       h('details', { id: 'voice-advanced', class: 'voice-advanced' }, h('summary', { text: 'Avanzado' }),
         label('Reconocimiento'), speechCard(), label('Entrenamiento'), trainingCard()),
       label('Privacidad'), card(privacy),

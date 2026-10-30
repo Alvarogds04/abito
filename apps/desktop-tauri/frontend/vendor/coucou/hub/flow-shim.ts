@@ -55,7 +55,7 @@ export const FlowBridge = Object.freeze({
   removeModels: (): Promise<ModelsStatus> => call({action:'remove_model'}),
 });
 
-// #488: the one closed voice command (OK Abito).
+// #488: the one closed voice command (OK Koda).
 export interface VoicePrefs { enabled: boolean; output: 'system' | 'elevenlabs' | 'off'; gender: 'female' | 'male'; sensitivity: number }
 const voiceCall = (payload: any) => invoke ? invoke('voice_action', { payload }) : Promise.reject(new Error('No disponible todavía'));
 export const VoiceBridge = Object.freeze({

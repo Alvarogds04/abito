@@ -40,9 +40,9 @@ export default function (pi: ExtensionAPI) {
   }, { additionalProperties: false });
   pi.registerTool(defineTool({
     name: 'abito_ask',
-    label: 'Ask through Abito',
+    label: 'Ask through Koda',
     exposure: 'model-only',
-    description: 'Ask a human through the local Abito island and wait for their answer. This blocks this tool until an answer, cancellation or deadline. Only a human answer decides; expiry is NOT approval. If the bridge is unavailable, ask through the normal chat instead. Does not intercept Pi tool permissions or provider consent. Approval requests must have explicit closed options and no free text. '
+    description: 'Ask a human through the local Koda island and wait for their answer. This blocks this tool until an answer, cancellation or deadline. Only a human answer decides; expiry is NOT approval. If the bridge is unavailable, ask through the normal chat instead. Does not intercept Pi tool permissions or provider consent. Approval requests must have explicit closed options and no free text. '
       + 'Three shapes: (1) ONE question, single choice: kind, text, options[{value,label,description}]. (2) ONE question where several options may be ticked: the same plus multiSelect:true; the answer lists every ticked option. '
       + '(3) A QUESTIONNAIRE (1-4 steps asked together, one answer per step): questions[{header (<=32 chars), question, options[2-4]{label,description?,value?}, multiSelect?, allowFreeText?}] — the same shape as Claude Code\'s AskUserQuestion; omit kind/options. '
       + 'Multi-select and questionnaires need the island to support structured questions; otherwise the call says so and you ask through normal chat. The answer reports the chosen labels per step (selected) and any free text.',

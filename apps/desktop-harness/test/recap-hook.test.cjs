@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+const { unixOnly } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -57,7 +58,7 @@ test('session ids and folder names are cleaned and bounded', () => {
   assert.equal(/[\u0000-\u001f]/.test(r.project), false);
 });
 
-test('events are appended 0600, one line each; a symlink or an oversize spool is refused', () => {
+test('events are appended 0600, one line each; a symlink or an oversize spool is refused', unixOnly('registered gap HU-062 (spool privacy is the island runtime DACL on Windows)'), () => {
   const rt = tmp();
   assert.equal(appendEvent(rt, { v: 1, a: 1 }), true);
   assert.equal(appendEvent(rt, { v: 1, a: 2 }), true);

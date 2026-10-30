@@ -84,7 +84,7 @@ const text = e => [e.textContent || '', ...e.children.map(text)].join(' ');
   for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
   assert.equal(status.children[0].className, 'dot');
   assert.equal(status.children[1].textContent, 'Dictado desactivado');
-  assert.equal(all(host).find(e => e.className === 'hub-version').textContent, 'Abito test');
+  assert.equal(all(host).find(e => e.className === 'hub-version').textContent, 'Koda test');
   for (const cls of ['hub-panel', 'hub-scroll', 'hub-page', 'hub-hero']) assert(all(host).some(e => e.className === cls));
   assert(!/Coucou|Mochi/.test(text(host)));
   const { t: hubT, N_ } = await import(pathToFileURL(path.join(base, 'i18n-es.js')));
@@ -165,7 +165,7 @@ const text = e => [e.textContent || '', ...e.children.map(text)].join(' ');
   calls.length = 0;
   assert.equal(ui.firstChild.tagName, 'section', 'General is made of settings sections (#503 S18: three task cards)');
   assert.deepEqual(all(ui).filter(e => e.tagName === 'h2').map(text), [' Apariencia', ' Isla', ' Sonido']);
-  assert.deepEqual(all(ui).filter(e => e.tagName === 'label').map(e => e.textContent), ['Idioma','Tema','Nombre visible','Abrir al iniciar sesión','Abrir Ajustes al abrir Abito','Abrir al pasar el cursor','Plegar tras (s)','Ocultar plegada tras (s)','La isla vive en','Atajo global','Resumen semanal','','Sonido']);
+  assert.deepEqual(all(ui).filter(e => e.tagName === 'label').map(e => e.textContent), ['Idioma','Tema','Nombre visible','Abrir al iniciar sesión','Abrir Ajustes al abrir Koda','Abrir al pasar el cursor','Plegar tras (s)','Ocultar plegada tras (s)','La isla vive en','Atajo global','Resumen semanal','','Sonido']);
   // #503 S18: the theme IS a segmented control now (the MD's «Oscuro / Claro / Sistema»); it must be the only one
   assert.equal(all(ui).filter(e => e.className === 'hub-segmented').length, 1);
   for (const id of ['hub-language']) {
@@ -232,7 +232,7 @@ const text = e => [e.textContent || '', ...e.children.map(text)].join(' ');
   assert.equal(field('hub-volume'), vol, 'keyboard change must preserve focus and the live slider too');
   field('hub-hover').fire('click'); await ui.settled(); assert.deepEqual(calls.pop(), ['prefs_action', { action: 'set_island_interaction', auto_close_seconds: 15, open_on_hover: true }]);
   assert.equal(field('hub-motion'), undefined, 'no inert motion toggle');
-  assert(text(ui).includes('El movimiento no se puede configurar en Abito.'), 'no claim of a working motion preference');
+  assert(text(ui).includes('El movimiento no se puede configurar en Koda.'), 'no claim of a working motion preference');
   assert.equal(calls.length, 0);
   const number = () => all(ui).find(e => e.attrs.type === 'number');
   for (const value of ['4', '121', '2.5', '']) { const n = number(); n.value = value; n.fire('change'); await ui.settled(); assert.deepEqual(calls, []); }

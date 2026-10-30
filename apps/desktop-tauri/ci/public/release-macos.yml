@@ -75,10 +75,10 @@ jobs:
           set -euo pipefail
           out="$GITHUB_WORKSPACE/out"; mkdir -p "$out"
           (cd target/release/bundle/macos
-           ditto -c -k --keepParent *.app "$out/Abito-macos-arm64.zip")
-          cp target/release/bundle/dmg/*.dmg "$out/Abito-macos-arm64.dmg"
+           ditto -c -k --keepParent *.app "$out/Koda-macos-arm64.zip")
+          cp target/release/bundle/dmg/*.dmg "$out/Koda-macos-arm64.dmg"
           (cd "$out"
-           shasum -a 256 Abito-macos-arm64.* > SHA256SUMS-macos.txt
+           shasum -a 256 Koda-macos-arm64.* > SHA256SUMS-macos.txt
            cat SHA256SUMS-macos.txt)
       - name: Attach to the release
         env:

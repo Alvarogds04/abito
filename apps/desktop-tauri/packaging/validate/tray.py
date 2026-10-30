@@ -45,10 +45,10 @@ try:
             visit(child)
     visit(layout)
     labels = [label.replace('_', '') for _, label in rows]
-    expected = ['Mostrar Abito', 'Ocultar', 'Arrancar al iniciar sesión', 'Salir']
+    expected = ['Mostrar Koda', 'Ocultar', 'Arrancar al iniciar sesión', 'Salir']
     assert all(x in labels for x in expected), labels
     if len(sys.argv) > 1:
-        target = {'hide':'Ocultar', 'show':'Mostrar Abito', 'autostart':'Arrancar al iniciar sesión'}[sys.argv[1]]
+        target = {'hide':'Ocultar', 'show':'Mostrar Koda', 'autostart':'Arrancar al iniciar sesión'}[sys.argv[1]]
         ident = next(i for i, label in rows if label.replace('_','') == target)
         call(name, obj, 'com.canonical.dbusmenu', 'Event', GLib.Variant('(isvu)', (ident, 'clicked', GLib.Variant('i', 0), 0)))
     print(json.dumps({'ok':True,'labels':labels,'action':sys.argv[1:] }))

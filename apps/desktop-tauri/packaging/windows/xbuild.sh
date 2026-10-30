@@ -91,7 +91,7 @@ case "$cmd" in
           cp /abito/target/x86_64-pc-windows-msvc/release/\$bin.exe /abito/dist/\$bin.exe
         done
         makensis -V2 -DVERSION=$version -DBINDIR=/abito/dist -DICON=/abito/src/icons/icon.ico -DOUTDIR=/abito/dist /abito/src/packaging/windows/abito.nsi
-        sha256sum /abito/dist/abito-island.exe /abito/dist/abito-island-$version-win-x64-setup.exe"
+        sha256sum /abito/dist/abito-island.exe /abito/dist/koda-$version-win-x64-setup.exe"
     echo "artifacts: $crate/dist (exe + setup + hashes above; receipt: packaging/windows/stage-win.cjs)"
     ;;
   sherpa)

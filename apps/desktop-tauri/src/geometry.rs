@@ -15,7 +15,7 @@ pub enum Edge { #[default] Top, Bottom }
 pub const COMPACT_BAR: (i32, i32) = (288, 32);
 /// The compact pill's widths in logical px: at rest, and widened for session rows, or 560 for a pending question/permission (island-layout.js COMPACT_W / COMPACT_WIDE / COMPACT_ASK; a test keeps the two in step).
 pub const COMPACT_WIDTHS: [i32; 3] = [288, 440, 560];
-pub const OVERVIEW_VISIBLE: (i32, i32) = (720, 184);
+pub const OVERVIEW_VISIBLE: (i32, i32) = (720, 150);
 /// One logical native window for compact, overview, question/recap and chat.
 pub const ISLAND_WINDOW: (i32, i32) = (752, 340);
 pub const CHAT_COLUMN_W: i32 = 720;
@@ -239,7 +239,7 @@ mod tests {
     }
     #[test]
     fn approved_overview_and_compact_are_untouched_by_the_chat_view() {
-        assert_eq!(OVERVIEW_VISIBLE,(720, 184)); assert_eq!(COMPACT_BAR,(288,32));
+        assert_eq!(OVERVIEW_VISIBLE,(720, 150)); assert_eq!(COMPACT_BAR,(288,32));
         assert_eq!(CHAT_COLUMN_W,OVERVIEW_VISIBLE.0); assert!(CHAT_MIN_H > OVERVIEW_VISIBLE.1);
     }
     #[test]
@@ -262,12 +262,12 @@ mod tests {
     }
     #[test]
     fn transition_input_shape_holds_both_endpoints_and_spring_air() {
-        assert_eq!(transition_shape((288, 32), (720, 184), ISLAND_WINDOW), (752, 200));
+        assert_eq!(transition_shape((288, 32), (720, 150), ISLAND_WINDOW), (752, 166));
         assert_eq!(transition_shape((720, 300), (288, 32), ISLAND_WINDOW), (752, 316));
         assert_eq!(transition_shape((752, 340), (720, 300), ISLAND_WINDOW), ISLAND_WINDOW);
         assert_eq!(transition_shape((720, 300), (288, 32), (500, 200)), (500, 200));
-        assert_eq!(transition_shape((720, 184), (288, 32), ISLAND_WINDOW),
-            transition_shape((288, 32), (720, 184), ISLAND_WINDOW));
+        assert_eq!(transition_shape((720, 150), (288, 32), ISLAND_WINDOW),
+            transition_shape((288, 32), (720, 150), ISLAND_WINDOW));
     }
 
     // --- #493 step B (human: «Fija arriba al centro, como Coucou»): ONE fixed window ------------------------------------
@@ -306,14 +306,14 @@ mod tests {
     #[test]
     fn the_input_shape_is_the_visible_island_clamped_between_the_bar_and_the_window() {
         // the page reports what it draws; Rust never lets it make the island unclickable (below the bar) or larger than the window
-        for (asked, expected) in [((288, 32), (288, 32)), ((720, 184), (720, 184)), ((720, 300), (720, 300)), ((0, 0), (288, 32)), ((-5, 9), (288, 32)),
+        for (asked, expected) in [((288, 32), (288, 32)), ((720, 150), (720, 150)), ((720, 300), (720, 300)), ((0, 0), (288, 32)), ((-5, 9), (288, 32)),
             ((10_000, 10_000), (752, 340)), ((720, 5_000), (720, 340)), ((100, 200), (288, 200))] {
             assert_eq!(clamp_island_shape(asked.0, asked.1, ISLAND_WINDOW), expected, "{asked:?}");
         }
         // a window clamped by a small screen bounds it too
         assert_eq!(clamp_island_shape(720, 300, (500, 300)), (500, 300));
         // and the rect inside the window: horizontally centred, glued to the top
-        assert_eq!(island_shape_rect((720, 184), ISLAND_WINDOW), (16, 0, 720, 184));
+        assert_eq!(island_shape_rect((720, 150), ISLAND_WINDOW), (16, 0, 720, 150));
         assert_eq!(island_shape_rect((288, 32), ISLAND_WINDOW), (232, 0, 288, 32));
         assert_eq!(island_shape_rect((752, 340), ISLAND_WINDOW), (0, 0, 752, 340));
     }

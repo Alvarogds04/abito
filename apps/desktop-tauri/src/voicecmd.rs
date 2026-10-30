@@ -141,7 +141,7 @@ fn norm(word: &str) -> String {
 pub fn split_wake(raw: &str) -> Option<String> {
     let words: Vec<&str> = raw.split_whitespace().collect();
     let normed: Vec<String> = words.iter().map(|w| norm(w)).collect();
-    let is_name = |w: &str| matches!(w, "abito" | "abbito" | "avito" | "abeto");
+    let is_name = |w: &str| matches!(w, "koda" | "kodá" | "kota" | "qoda" | "kouda");
     let mut end = None;
     let mut i = 0;
     while i + 1 < normed.len() {

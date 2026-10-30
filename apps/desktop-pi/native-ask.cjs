@@ -244,7 +244,7 @@ function createNativeAskHandler({ controller, env = process.env } = {}) {
       if (!request) return undefined;
       const selection = await race({ controller, ctx, plan, request });
       if (selection.kind === 'fallthrough') return undefined;
-      const where = selection.by === 'abito' ? 'Abito' : selection.by === 'terminal' ? 'la terminal' : null;
+      const where = selection.by === 'abito' ? 'Koda' : selection.by === 'terminal' ? 'la terminal' : null;
       if (where && selection.kind === 'done') tell(ctx, `Respondido en ${where}: ${summarize(plan, selection.answers)}`);
       else if (where) tell(ctx, `Cancelado en ${where}`);
       return { block: true, reason: selection.kind === 'done' ? plan.render(selection.answers) : plan.cancelled };
@@ -432,7 +432,7 @@ function raceConfirm({ controller, ctx, ui, original, request, title, message, o
       outer?.removeEventListener('abort', onOuterAbort);
       if (winner !== 'abito') abito.abort();
       if (winner !== 'terminal') terminal.abort();
-      if (winner === 'abito') tell(ctx, `Respondido en Abito: ${value ? 'Sí' : 'No'}`);
+      if (winner === 'abito') tell(ctx, `Respondido en Koda: ${value ? 'Sí' : 'No'}`);
       resolve(value === true);
     };
     const onOuterAbort = () => finish(false, null); // the caller withdrew: both sides go, never approval

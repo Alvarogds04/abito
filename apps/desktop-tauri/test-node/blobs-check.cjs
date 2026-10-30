@@ -85,7 +85,7 @@ test('S1 default: Abito principal card, agent tiles with state chip, empty «Nue
   const b = boot(TWO());
   const principal = byId(b.host, 'blob-principal-card');
   assert.ok(principal);
-  assert.match(words(principal), /Abito/); assert.match(words(principal), /En reposo/); assert.match(words(principal), /Siempre en la isla/);
+  assert.match(words(principal), /Koda/); assert.match(words(principal), /En reposo/); assert.match(words(principal), /Siempre en la isla/); // Koda 0.1 T2: the principal reads «Koda»
   assert.equal(byClass(b.host, 'blob-tile').length, 2);
   const [a, n] = byClass(b.host, 'blob-tile');
   assert.equal(a.dataset.agentId, 'esp-a'); assert.match(words(a), /Revisor/); assert.match(words(a), /Revisa tus PRs/); assert.match(words(a), /En reposo/);
@@ -94,7 +94,7 @@ test('S1 default: Abito principal card, agent tiles with state chip, empty «Nue
   assert.ok(byId(b.host, 'blob-tile-new'), 'the empty slot while fewer than three');
   assert.match(words(byId(b.host, 'blob-tile-new')), /Nuevo agente/);
   const strip = byId(b.host, 'blob-island-strip');
-  assert.deepEqual(byClass(strip, 'blob-strip-item').map(x => x.textContent.trim()), ['Abito', 'Revisor', 'Notas']);
+  assert.deepEqual(byClass(strip, 'blob-strip-item').map(x => x.textContent.trim()), ['Koda', 'Revisor', 'Notas']);
   assert.match(words(b.host), /Arrastrá o usá las flechas para ordenar/);
   // every blob is the clay character, in its own colour; nothing is a plain dot any more
   assert.equal(byClass(b.host, 'blob-visual').length, 0, 'the CSS-dot blob is gone');
@@ -153,7 +153,7 @@ test('S4 principal editor: «Abito» fixed, colour, «Qué hace» with the decla
   const b = boot(TWO());
   byId(b.host, 'blob-principal-card').fire('click');
   const name = byId(b.host, 'blob-editor-name');
-  assert.equal(name.value, 'Abito'); assert.equal(name.disabled, true);
+  assert.equal(name.value, 'Koda'); assert.equal(name.disabled, true);
   assert.match(words(byId(b.host, 'blob-editor')), /Fijo/);
   assert.match(words(byId(b.host, 'blob-editor')), /Declarativo: todavía no se aplica/);
   assert.equal(byId(b.host, 'blob-editor-delete'), null); assert.equal(byId(b.host, 'blob-editor-left'), null); assert.equal(byId(b.host, 'blob-editor-active'), null);
