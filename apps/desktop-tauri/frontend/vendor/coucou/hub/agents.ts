@@ -10,8 +10,9 @@ import { t } from './i18n-es.js';
 const UNAVAILABLE = 'No disponible todavía';
 // 0.2.1 (S2, L1): Agentes = the five CLI agents Abito can hook. Everything else is visible but disabled, with no install button.
 const NOT_IN_VERSION = 'No disponible en esta versión';
-const CLI_AGENTS: [string,string][] = [['hermes','Hermes'], ['claude-code','Claude Code'], ['codex','Codex'], ['gemini-cli','Gemini CLI']];
-const OTHER_AGENTS: [string,string][] = [['copilot-cli','GitHub Copilot CLI'], ['muse','Muse Code'], ['antigravity','Antigravity'], ['cursor','Cursor Agent'], ['opencode','OpenCode'], ['amp','Amp']];
+// HU-076 (human 30-oct, «Ocultar lo no disponible + textos de una línea»): only agents that work in this version are listed.
+const CLI_AGENTS: [string,string][] = [['claude-code','Claude Code'], ['codex','Codex'], ['gemini-cli','Gemini CLI']];
+const OTHER_AGENTS: [string,string][] = [['copilot-cli','GitHub Copilot CLI'], ['opencode','OpenCode']];
 const flex = (gap: number) => h('div', { style: `display:flex;flex-direction:column;gap:${gap}px` });
 const unknownDot = () => {
   const n = statusDot(false); n.style.setProperty('background', '#6b7079'); n.title = UNAVAILABLE; return n;
@@ -114,7 +115,7 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     let open = false;
     const entry = h('div', { class: 'agent-entry', id: `agent-row-${id}` });
     const line = h('div', { class: 'agent-row', role: 'row' }, h('span', { class: 'agent-name', role: 'cell', text: name }),
-      unknown && !['node_missing', 'failed'].includes(state?.agentsRuntime) ? stateCell('·', UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || '○', r.word), islandSwitch(id, installed), actions);
+      !r || (unknown && !['node_missing', 'failed'].includes(state?.agentsRuntime)) ? stateCell('·', UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || '○', r.word), islandSwitch(id, installed), actions);
     entry.append(line, menu, detail);
     if (id === 'pi') { piControl.update(state); entry.append(piControl.element); }
     const redraw = () => {
@@ -160,11 +161,11 @@ export async function renderAgentSettings({ invoke, V, P, listen, timers }: any)
     (planSwitch as HTMLButtonElement).disabled = !prefsKnown;
     const planTip = "Muestra en la isla el uso de tu plan de Claude (límite de 5 horas y semanal). Abito agrega un relay a la línea de estado de ~/.claude/settings.json; si ya tenías una, sigue funcionando. Solo planes Pro y Max. Los datos vienen de Claude Code en la terminal, no de la app de escritorio.";
     const plan = flex(12);
-    plan.append(row('Claude Code · uso del plan', planTip, planSwitch), integrationBlock('statusline', 'Relay', 'Instala o quita la lectura del plan; tu línea de estado propia sigue funcionando.'));
+    plan.append(row('Claude Code · uso del plan', planTip, planSwitch), integrationBlock('statusline', 'Relay', 'Lee el uso del plan; tu línea de estado sigue igual.'));
     root.append(
       notchTipSection(t('Agents'), 'Abito agrega sus entradas a la configuración de cada agente. Desinstalar quita solo lo que Abito agregó; antes se guarda un respaldo.', table, actionStatus),
       section(t('Plan usage'), plan),
-      section(t('Weekly recap'), integrationBlock('recap', t('Weekly recap'), 'Cuenta tu actividad de Claude Code para el resumen semanal; no guarda comandos, rutas ni prompts.')), s.message);
+      section(t('Weekly recap'), integrationBlock('recap', t('Weekly recap'), 'Cuenta tu actividad de Claude Code; nunca guarda comandos ni prompts.')), s.message);
   }
   const apply = (next: any) => { state = { ...state, ...next }; paint(); };
   paint(); watch('agent:state', apply); watch('prefs:state', next => { prefs = next; prefsKnown = true; paint(); });

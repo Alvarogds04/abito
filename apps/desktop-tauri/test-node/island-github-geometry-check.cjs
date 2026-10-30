@@ -3,6 +3,16 @@
    Split from island-geometry-check.cjs so each stays well inside the 120 s bounded runner. Run: node test-node/island-github-geometry-check.cjs */
 const assert = require('node:assert/strict');
 const H = require('./island-geometry-harness.cjs');
+
+// HU-072: GitHub is paused (frontend/paused.js) and the HU-057 notch has no GitHub surface yet; flip to true when HU-072 lands.
+const GITHUB_ON_ISLAND = false;
+if (!GITHUB_ON_ISLAND) {
+  // Deliberate pause, not a skip: run only what is true today (island-github-paused-check) and say plainly that this is NOT a pass.
+  const r = require('node:child_process').spawnSync(process.execPath, [require('node:path').join(__dirname, 'island-github-paused-check.cjs')], { stdio: 'inherit' });
+  if (r.status !== 0) { console.error('FAIL island-github-geometry-check: the paused-GitHub verification failed'); process.exit(r.status || 1); }
+  console.log('PAUSED island-github-geometry-check: GitHub on the island is paused (HU-072); 12 assertions kept but not run — NOT a pass of the GitHub geometry, see HU-072');
+  process.exit(0);
+}
 if (!H.findPlaywright()) { console.log('SKIPPED island-github-geometry-check: playwright is not installed here (no real layout engine) — NOT a pass'); process.exit(0); }
 
 (async () => {

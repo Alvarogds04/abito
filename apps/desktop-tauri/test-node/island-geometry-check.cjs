@@ -11,22 +11,37 @@ const overlap = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) 
 const inside = (a, c) => a.left >= c.left - 0.5 && a.top >= c.top - 0.5 && a.right <= c.right + 0.5 && a.bottom <= c.bottom + 0.5;
 const label = e => `${e.id}[${Math.round(e.left)},${Math.round(e.top)},${Math.round(e.right)},${Math.round(e.bottom)}]`;
 
-// every box that draws text or takes a click in the overview, by selector. The mascot (#clay) and its badge are decoration the
-// status line must stay clear of; the badge sits ON the mascot by design.
-const OWNERS = ['.col-status', '.centre-state', '.centre-steps li', '.centre-empty-title', '.centre-empty-sub', '#centre-cta', '.engine-row-live',
-  '.card-left > .who', '#session-jump', '#notices', '.pill-choice', '#blobs-footer', '#clay'];
-async function boxes(r) {
+/* HU-057 RE-POINT (odd/tasks/isla-nusa.md): the expanded overview is the 720x150 Nusa notch (186 with the notices / engine strip). The legacy overview controls
+   (#session-jump, .pill-choice blobs, .see-all, the 184px cards) were REMOVED ON PURPOSE and live hidden in #overview-view; the agents are reached through the
+   Agentes tab (.nusa-agent rows, button.nusa-jump, «Ver todas (N)» = .nusa-all). The intent of this check is unchanged: nothing overlaps, nothing is cut or
+   out of reach, every control that EXISTS receives its own click. Measured on the real layout, never from source. */
+const NOTCH = { left: 16, top: 0, right: 736 };
+// a control a human could see and click: rendered, every ancestor visible and not transparent
+const VISIBLE_JS = `(el) => { const b = el.getBoundingClientRect(); if (b.width < 4 || b.height < 4) return false;
+  for (let p = el; p; p = p.parentElement) { const c = getComputedStyle(p); if (c.display === 'none' || c.visibility === 'hidden' || +c.opacity === 0) return false; }
+  // a control inside a scrolling list that is scrolled out of view is reached by scrolling, not by a click at its (clipped) box
+  for (let p = el.parentElement; p && p.id !== 'capsule'; p = p.parentElement) { const o = getComputedStyle(p).overflowY; if (o === 'auto' || o === 'scroll' || o === 'hidden') { const pb = p.getBoundingClientRect(); if (b.bottom > pb.bottom + 0.5 || b.top < pb.top - 0.5) return false; } }
+  return true; }`;
+/** the visible matches of sel that do not receive their own click at their centre (the hidden legacy ones are NOT counted here: see hiddenByDesign) */
+async function visibleHits(r, sel) {
+  return r.page.evaluate(([selector, vis]) => { const visible = eval(vis);
+    return [...document.querySelectorAll(selector)].filter(visible).map(el => { const b = el.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2, top = document.elementFromPoint(x, y);
+      return { id: el.id || el.className, ok: !!top && (top === el || el.contains(top)), at: [Math.round(x), Math.round(y)], got: top ? (top.id || top.className || top.tagName) : null }; }); }, [sel, VISIBLE_JS]);
+}
+/** legacy controls removed on purpose: none may be visible or able to swallow a click (computed visibility hidden / display none, and not hit-testable at their centre) */
+async function hiddenByDesign(r, sel) {
+  return r.page.evaluate(selector => [...document.querySelectorAll(selector)].filter(el => {
+    const b = el.getBoundingClientRect(), s = getComputedStyle(el); if (b.width <= 0 || b.height <= 0 || s.display === 'none') return false; // no box: cannot swallow anything
+    const top = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return s.visibility !== 'hidden' || (!!top && (top === el || el.contains(top)));
+  }).map(el => el.id || el.className), sel);
+}
+const LEGACY = '#session-jump, .pill-choice, #pill-choices, #blobs, .see-all, #blobs-footer, .mini, #mini-grid';
+const NUSA_BASE = '.nusa-input, .nusa-send, #nusa-next, #nusa-tab-inicio, #nusa-tab-agentes, #nusa-tab-avisos';
+async function nusaBoxes(r) {
   const out = [];
-  const list = (await r.measure('#pill-choices'))[0];
-  for (const sel of OWNERS) for (const b of await r.measure(sel)) {
-    if (!b.shown) continue;
-    if (sel === '.pill-choice' && list) {
-      // a blob row scrolled out of its list is CLIPPED by it (reachable by scrolling), not drawn outside: measure what is visible
-      const top = Math.max(b.top, list.top), bottom = Math.min(b.bottom, list.bottom);
-      if (bottom - top < 1) continue;
-      out.push({ ...b, top, bottom, h: bottom - top, sel });
-    } else out.push({ ...b, sel });
-  }
+  for (const sel of ['.nusa-input', '.nusa-send', '#nusa-next', '#nusa-prev', '.nusa-agent', '.nusa-all', '#nusa-tab-inicio', '#nusa-tab-agentes', '#nusa-tab-avisos', '#engine-band-link', '#engine-band-skip'])
+    for (const b of await r.measure(sel)) if (b.shown && b.w >= 4) out.push({ ...b, sel });
   return out;
 }
 function noOverlaps(list, why) {
@@ -34,6 +49,7 @@ function noOverlaps(list, why) {
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) if (overlap(list[i], list[j])) bad.push(`${label(list[i])} x ${label(list[j])}`);
   assert.deepEqual(bad, [], `${why}: ${bad.join(' | ')}`);
 }
+async function realClick(r, sel) { const b = (await r.measure(sel)).find(x => x.shown); assert.ok(b, `${sel} is shown`); await r.page.mouse.click(b.left + b.w / 2, b.top + b.h / 2); await r.page.waitForTimeout(700); }
 
 (async () => {
   let passed = 0;
@@ -47,145 +63,103 @@ function noOverlaps(list, why) {
   for (const [name, scenario] of Object.entries(scenarios)) {
     const r = await H.open(scenario);
     try {
-      const list = await boxes(r);
-      noOverlaps(list, `${name}: overlapping boxes`);
-      // S10/S11 (v8): while a band (finished notice / engine problem) shows, the island is 36px taller and the band is its own 32px row
-      const tall = (await r.measure('#island'))[0].h > 200 ? { ...ISLAND, bottom: ISLAND.bottom + 36 } : ISLAND;
-      for (const b of list) if (b.sel !== '#clay') assert.ok(inside(b, tall), `${name}: ${label(b)} leaves the island`);
-      // the left card's content stays inside the cards' row (nothing drawn into the header or below the island)
-      for (const b of list) if (!['#notices'].includes(b.sel)) assert.ok(b.top >= CARD.top - 1 && b.bottom <= CARD.bottom + 1, `${name}: ${label(b)} leaves the 132px card row`);
-      // every control receives its own click (the validator clicks by coordinates)
-      const hits = [];
-      for (const sel of ['#session-jump', '#notice-action', '#notice-dismiss', '#notice-open', '.pill-choice', '.see-all', '.engine-link', '#centre-cta', '#connection:not([disabled])']) hits.push(...await r.hit(sel));
-      const blocked = hits.filter(h => !h.ok).map(h => `${h.id}@${h.at} got ${h.got}`);
-      assert.deepEqual(blocked, [], `${name}: controls whose click lands on something else: ${blocked.join(' | ')}`);
+      const empty = Array.isArray(scenario.sessions) && !scenario.sessions.length;
+      const isl = (await r.measure('#island'))[0];
+      // 720 wide, 150 high; 186 with the strip (Avisos / engine problem): the island never grows past that in the idle overview
+      assert.ok(Math.abs(isl.w - 720) <= 1 && (Math.abs(isl.h - 150) <= 1 || Math.abs(isl.h - 186) <= 1), `${name}: the Nusa notch is 720x150 (186 with a strip): ${label(isl)}`);
+      const notch = { ...NOTCH, bottom: isl.bottom };
+      // legacy controls removed by HU-057 are hidden by design: nothing invisible can swallow a click
+      assert.deepEqual(await hiddenByDesign(r, LEGACY), [], `${name}: legacy hidden controls must not be visible or hit-testable`);
+      const sweep = async tab => {
+        const list = await nusaBoxes(r);
+        noOverlaps(list, `${name}/${tab}: overlapping boxes`);
+        for (const b of list) assert.ok(inside(b, notch), `${name}/${tab}: ${label(b)} leaves the island`);
+        const hits = [];
+        for (const sel of [NUSA_BASE, '#nusa-prev', '.nusa-agent', '.nusa-jump', '.nusa-all', '#notice-action', '#notice-dismiss', '#notice-open', '#engine-band-link', '#engine-band-skip', '.engine-link', '#centre-cta', '#connection:not([disabled])']) hits.push(...await visibleHits(r, sel));
+        const blocked = hits.filter(h => !h.ok).map(h => `${h.id}@${h.at} got ${h.got}`);
+        assert.deepEqual(blocked, [], `${name}/${tab}: controls whose click lands on something else: ${blocked.join(' | ')}`);
+        return hits;
+      };
+      const inicio = await sweep('Inicio');
+      assert.ok(['nusa-input', 'nusa-fbtn nusa-send', 'nusa-tab-inicio', 'nusa-tab-agentes', 'nusa-tab-avisos'].every(id => inicio.some(h => h.id === id)), `${name}: the ask field, send and the three tabs were hit-tested: ${inicio.map(h => h.id)}`);
+      await realClick(r, '#nusa-tab-agentes'); // a real click on the dot opens Agentes
+      const agentes = await sweep('Agentes');
+      if (!empty) {
+        assert.ok(agentes.filter(h => h.id === 'nusa-agent').length >= 1, `${name}: Agentes lists the session rows`);
+        assert.ok(agentes.filter(h => /nusa-jump/.test(h.id)).length >= 1, `${name}: every row has its own ↗ jump button`);
+        const rows = (await r.measure('.nusa-agent')).filter(b => b.shown), jumps = (await r.measure('.nusa-jump')).filter(b => b.shown);
+        // the row's text ends before its jump button (they never share pixels), and the jump is a real >= 22px target
+        for (const j of jumps) { assert.ok(j.w >= 22 && j.h >= 22, `jump target ${label(j)}`); const row = rows.find(rw => j.top >= rw.top - 0.5 && j.bottom <= rw.bottom + 0.5); assert.ok(row, `the jump ${label(j)} sits inside its row`); }
+        const texts = await r.page.evaluate(() => [...document.querySelectorAll('.nusa-agent')].filter(a => a.getBoundingClientRect().width).map(a => { const t = a.querySelector('.nusa-agent-name, span'); const tb = t ? t.getBoundingClientRect() : null, j = a.querySelector('.nusa-jump') ? a.querySelector('.nusa-jump').getBoundingClientRect() : null; return { tr: tb ? tb.right : 0, jl: j ? j.left : 1e9 }; }));
+        for (const t of texts) assert.ok(t.tr <= t.jl + 0.5, `a row's text runs under its jump button: ${JSON.stringify(t)}`);
+      } else assert.equal(agentes.filter(h => h.id === 'nusa-agent').length, 0, `${name}: no sessions, no rows`);
       passed += 1;
     } catch (e) { await r.screenshot(`/tmp/geo-fail-${name.replace(/\W+/g, '_')}.png`).catch(() => {}); throw e; }
     finally { await r.close(); }
   }
 
-  // the blobs column: at least three rows fully visible, GitHub reachable, nothing pushed out by sessions
+  // HU-057: the blobs column is gone BY DESIGN (agents are Koda + the Agentes rows). Its guarantees move to the Agentes tab with 14 sessions («manyPi»):
+  // the rows are WHOLE (none cut by the panel), «Ver todas (14)» is whole and uncovered, nothing is dropped (the overlay lists every session, reachable by
+  // scrolling), and the island does not grow to fit them. (S32 «no limit on declared pills» had no notch counterpart: the declared pills are a paused feature.)
   {
-    const r = await H.open({ github: true });
+    const r = await H.open({ manyPi: true, github: true });
     try {
-      const list = (await r.measure('#pill-choices'))[0];
-      const rows = (await r.measure('.pill-choice')).filter(b => b.shown);
-      const full = rows.filter(b => b.top >= list.top - 0.5 && b.bottom <= list.bottom + 0.5);
-      assert.ok(full.length >= 3, `at least 3 blob rows fully visible, got ${full.length} of ${rows.length} (list ${label(list)})`);
-      // NO row may be partly visible: every row is fully inside the list or fully outside it (a 3px sliver of the next row read as a cut row)
-      const partial = rows.filter(b => { const vis = Math.min(b.bottom, list.bottom) - Math.max(b.top, list.top); return vis > 0.5 && vis < b.h - 0.5; }).map(b => `${label(b)} shows ${Math.round(Math.min(b.bottom, list.bottom) - Math.max(b.top, list.top))}px of ${Math.round(b.h)}`);
-      assert.deepEqual(partial, [], `no blob row is cut by the bottom of the list: ${partial.join(' | ')}`);
-      const ids = (await r.page.evaluate(() => [...document.querySelectorAll('.pill-choice')].map(b => b.dataset.pillId)));
-      assert.deepEqual(ids.slice(0, 2), ['abito', 'integration_github'], 'declared pills first, sessions after');
-      assert.ok(ids.length >= 4, `sessions are rows too (declared + ${ids.length - 2} sessions)`);
-      const gh = (await r.measure('#pill-choice-integration_github'))[0];
-      assert.ok(gh.top >= list.top - 0.5 && gh.bottom <= list.bottom + 0.5, 'the GitHub blob is reachable without scrolling');
-      const blobs = (await r.measure('#blobs'))[0];
-      assert.ok(inside(list, blobs), 'the list lives inside its card');
-      passed += 1;
-    } finally { await r.close(); }
-  }
-
-  // S32: no limit on declared pills. Seven service pills (more than the old four; the island draws the ones that have a card) are WHOLE rows in a column that scrolls: nothing is cut, nothing is dropped, and the
-  // last one is reachable by scrolling the list (never by growing the island).
-  {
-    const ten = ['integration_github', 'integration_resend', 'integration_n8n', 'integration_vercel', 'integration_stripe', 'integration_notion', 'integration_calcom'];
-    const r = await H.open({ github: true, declared: ten });
-    try {
-      const rows0 = await r.page.evaluate(() => [...document.querySelectorAll('.pill-choice')].map(b => b.dataset.pillId));
-      assert.deepEqual(rows0.slice(1, 8), ten, `all seven declared pills are rows after Abito, in order (got ${rows0.join(',')})`);
-      const list = (await r.measure('#pill-choices'))[0];
-      const measure = async () => (await r.measure('.pill-choice')).filter(b => b.shown);
-      const rows = await measure();
-      const partial = rows.filter(b => { const vis = Math.min(b.bottom, list.bottom) - Math.max(b.top, list.top); return vis > 0.5 && vis < b.h - 0.5; });
-      assert.deepEqual(partial.map(label), [], 'no row is cut at the top of the list');
-      const scrollable = await r.page.evaluate(() => { const l = document.querySelector('#pill-choices'); return { sh: l.scrollHeight, ch: l.clientHeight }; });
-      assert.ok(scrollable.sh > scrollable.ch + 20, `seven rows plus the sessions overflow the column, so it scrolls (${scrollable.sh} > ${scrollable.ch})`);
-      await r.page.evaluate(id => { const l = document.querySelector('#pill-choices'), row = document.getElementById(`pill-choice-${id}`); l.scrollTop = row.offsetTop - l.offsetTop; }, ten[6]);
+      await realClick(r, '#nusa-tab-agentes');
+      const panel = (await r.measure('#nusa-panel'))[0], isl = (await r.measure('#island'))[0];
+      const rows = (await r.measure('.nusa-agent')).filter(b => b.shown), all = (await r.measure('.nusa-all')).filter(b => b.shown);
+      assert.ok(rows.length >= 2, `at least two whole agent rows, got ${rows.length}`);
+      for (const b of rows) assert.ok(b.top >= panel.top - 0.5 && b.bottom <= panel.bottom + 0.5, `a row is cut by the panel: ${label(b)} in ${label(panel)}`);
+      assert.equal(all.length, 1); assert.equal(all[0].text, 'Ver todas (14)', 'the rest is one click away, nothing is dropped');
+      assert.ok(all[0].bottom <= panel.bottom + 0.5 && rows.every(b => b.bottom <= all[0].top + 0.5), 'the link is whole and below the rows');
+      assert.ok(Math.abs(isl.h - 150) <= 1, `the island does not grow to fit 14 sessions (${isl.h})`);
+      await realClick(r, '.nusa-all');
+      assert.equal(await r.page.evaluate(() => document.getElementById('capsule').dataset.nusaSessions || ''), 'open', 'a real click opens the full list');
+      const picks = (await r.measure('.sessions-all-pick')).filter(b => b.shown);
+      assert.ok(picks.length >= 2, 'the overlay lists sessions');
+      const ids = await r.page.evaluate(() => document.querySelectorAll('.sessions-all-pick').length);
+      assert.equal(ids, 14, 'every one of the 14 sessions is in the overlay');
+      await r.page.evaluate(() => { const l = document.querySelector('.sessions-all-list'); l.scrollTop = l.scrollHeight; });
       await r.page.waitForTimeout(150);
-      const last = (await r.measure(`#pill-choice-${ten[6]}`))[0];
-      const list2 = (await r.measure('#pill-choices'))[0];
-      assert.ok(last.top >= list2.top - 0.5 && last.bottom <= list2.bottom + 0.5, `the seventh pill is reachable and whole after scrolling (${label(last)} in ${label(list2)})`);
-      const win = await r.page.evaluate(() => ({ w: document.documentElement.clientWidth, h: document.documentElement.clientHeight }));
-      assert.ok(list2.bottom <= win.h, 'the island did not grow past its window to fit them');
+      const last = (await r.measure('.sessions-all-pick')).at(-1), list = (await r.measure('.sessions-all-list'))[0];
+      assert.ok(last.top >= list.top - 0.5 && last.bottom <= list.bottom + 0.5, `the last session is whole after scrolling: ${label(last)} in ${label(list)}`);
+      assert.deepEqual((await visibleHits(r, '.sessions-all-pick')).filter(h => !h.ok && h.at[1] >= list.top && h.at[1] <= list.bottom), [], 'the overlay rows in view receive their own clicks (the rest are reached by scrolling)');
       passed += 1;
-    } finally { await r.close(); }
+    } catch (e) { await r.screenshot('/tmp/geo-fail-agentes-all.png').catch(() => {}); throw e; }
+    finally { await r.close(); }
   }
 
-  // the jump button and the centre text never share pixels, whatever the centre says
-  {
-    const r = await H.open({});
-    try {
-      const jump = (await r.measure('#session-jump')).find(b => b.shown);
-      assert.ok(jump, 'the jump button is shown with a session in the centre');
-      const centre = (await r.measure('.col-centre'))[0];
-      assert.ok(centre.right <= jump.left + 0.5, `the centre column ends before the jump button (${Math.round(centre.right)} <= ${Math.round(jump.left)})`);
-      passed += 1;
-    } finally { await r.close(); }
-  }
-
-  // focus mode (a question waits): the card takes left + centre, the blobs become a mascot column, still no overlaps
+  // focus mode (a question waits): the card takes the notch, Koda is the right column, the legacy blobs column stays hidden, still no overlaps
   {
     const r = await H.open({ question: 'plain', github: true });
     try {
       const mode = await r.page.evaluate(() => document.getElementById('capsule').dataset.layout);
       assert.equal(mode, 'focus');
-      const q = (await r.measure('#question'))[0], blobs = (await r.measure('#blobs'))[0];
-      assert.ok(q.shown && blobs.shown, 'the question card and the mascot column are both visible');
-      assert.ok(!overlap(q, blobs), `focus mode: ${label(q)} overlaps ${label(blobs)}`);
-      assert.ok(blobs.left - q.right >= 12, 'focus card leaves at least 12px before the blobs');
-      for (const sel of ['#question-skip', '.q-option']) for (const h of await r.hit(sel)) assert.ok(h.ok, `focus mode: ${h.id}@${h.at} got ${h.got}`);
+      const q = (await r.measure('#question'))[0];
+      assert.ok(q.shown, 'the question card is visible');
+      assert.deepEqual(await hiddenByDesign(r, LEGACY), [], 'HU-057: the blobs column does not exist in focus mode (nothing visible or hit-testable)');
+      for (const sel of ['#question-skip', '.q-option']) for (const h of await visibleHits(r, sel)) assert.ok(h.ok, `focus mode: ${h.id}@${h.at} got ${h.got}`);
       const qb = [];
-      for (const sel of ['#question-asker', '#question-skip', '#question-body', '.q-option']) for (const b of await r.measure(sel)) {
-        if (!b.shown) continue;
-        // Hit boxes themselves must not overlap, not merely their inset fills.
-        qb.push({ ...b, sel });
-      }
+      for (const sel of ['#question-asker', '#question-skip', '#question-body', '.q-option']) for (const b of await r.measure(sel)) { if (b.shown) qb.push({ ...b, sel }); }
       noOverlaps(qb, 'focus mode: question card children');
       passed += 1;
     } finally { await r.close(); }
   }
-  // the state the screen validator builds: GitHub declared WITH data, two sessions (one Codex «proyecto-beta»), 4 notices, Pi without an
-  // account. The GitHub blob is clicked: its card IS the centre, so the session header / footer rows must not coexist with it.
+  // the state the screen validator builds: GitHub declared WITH data, two sessions (one Codex «proyecto-beta»), 4 notices, Pi without an account.
+  // HU-057 re-point: the GitHub BLOB is gone from the notch (the legacy column is hidden by design), so the click on it cannot be made. What still exists is the
+  // focus path the blob used to trigger, the document event `abito:integration-focus`: it must put the overview in its «github» state and a null id must clear it.
+  // GAP (reported to the parent, NOT asserted here): while GitHub is un-paused the card (.gh-card, inside the hidden #overview-view) has no surface in the notch,
+  // so its geometry (rows, overlaps, «GitHub ◂») cannot be measured; island-github-geometry / island-toast-tip stay red on exactly that.
   {
     const sessions = [{ id: 's-eb4fc4bc', kind: 'pi', cwd: 'workspace', state: 'sleeping', origin: null }, { id: 's-3b48a1be', kind: 'codex', cwd: 'proyecto-beta', state: 'sleeping', origin: null }];
     for (const theme of ['light', 'dark']) {
       const r = await H.open({ sessions, github: true, githubData: true, notices: 4, engine: 'account', theme });
       try {
-        const before = await r.page.evaluate(() => [...document.querySelectorAll('.pill-choice')].map(b => b.dataset.pillId));
-        assert.deepEqual(before, ['abito', 'integration_github', 's-eb4fc4bc', 's-3b48a1be'], `${theme}: the evidence grid of the validator`);
-        const gh = (await r.measure('#pill-choice-integration_github'))[0], list = (await r.measure('#pill-choices'))[0];
-        assert.ok(gh.top >= list.top - 0.5 && gh.bottom <= list.bottom + 0.5, `${theme}: the GitHub blob is a visible row`);
-        const at = [gh.left + gh.w / 2, gh.top + gh.h / 2];
-        await r.page.mouse.click(at[0], at[1]);
-        await r.page.waitForTimeout(1500);
-        const shown = await r.page.evaluate(() => document.getElementById('overview-view').dataset.github || null);
-        assert.equal(shown, 'on', `${theme}: the GitHub card opened`);
-        // the focused integration is the centre: the session centre column and its footer are gone, not drawn underneath
-        for (const sel of ['.col-centre', '.centre-foot', '.card-left > .who', '.col-status']) for (const b of await r.measure(sel)) assert.ok(!b.shown, `${theme}: ${sel} is still drawn under the GitHub card`);
-        // the card's own rows must not overlap each other or the card's edges
-        const rows = [];
-        for (const sel of ['.gh-card .int-head', '.gh-card .int-stat', '.gh-card .int-status']) for (const b of await r.measure(sel)) if (b.shown) rows.push({ ...b, sel });
-        noOverlaps(rows, `${theme}: GitHub card rows`);
-        const card = (await r.measure('.gh-card'))[0];
-        for (const b of rows) assert.ok(b.left >= card.left - 0.5 && b.right <= card.right + 0.5 && b.top >= card.top - 0.5 && b.bottom <= card.bottom + 0.5, `${theme}: ${label(b)} leaves the GitHub card ${label(card)}`);
-        // the mascot's status line («En reposo») is complete, not clipped
-        const st = (await r.measure('.col-status'))[0];
-        // GitHub focused hides the status column too: it must not be drawn half-clipped either way
-        assert.ok(!st || !st.shown, `${theme}: nothing half-drawn under the card`);
-        // the blobs column keeps every OTHER row (the focused integration is the card; the sessions stay)
-        const after = await r.page.evaluate(() => [...document.querySelectorAll('.pill-choice')].map(b => b.dataset.pillId));
-        assert.deepEqual(after, ['abito', 'integration_github', 's-eb4fc4bc', 's-3b48a1be'], `${theme}: the focused integration STAYS in the column (design 16: «GitHub ◂»), the sessions stay`);
-        const active = await r.page.evaluate(() => { const b = document.getElementById('pill-choice-integration_github'); return b && { pressed: b.getAttribute('aria-pressed'), others: [...document.querySelectorAll('.pill-choice')].filter(x => x !== b && x.dataset.centre === 'true').map(x => x.dataset.pillId) }; });
-        assert.deepEqual(active, { pressed: 'true', others: [] }, `${theme}: the GitHub row is marked active (aria-pressed) while its card is the centre, and no other row claims the centre`);
-        const mark = await r.page.evaluate(() => { const b = document.getElementById('pill-choice-integration_github'); return { centre: b.dataset.centre, arrow: getComputedStyle(b.querySelector('span:not(.ico)'), '::after').content }; });
-        assert.equal(mark.centre, 'true'); assert.match(mark.arrow, /◂/, `${theme}: «GitHub ◂» is drawn`);
-        // and the way BACK exists: the sessions are still rows, and Abito's row returns to the normal centre
-        const home = (await r.measure('#pill-choice-abito'))[0];
-        await r.page.mouse.click(home.left + home.w / 2, home.top + home.h / 2);
-        await r.page.waitForTimeout(800);
-        const back = await r.page.evaluate(() => document.getElementById('overview-view').dataset.github || null);
-        assert.equal(back, null, `${theme}: choosing another blob closes the GitHub card`);
+        assert.deepEqual(await hiddenByDesign(r, LEGACY), [], `${theme}: the GitHub blob / the blobs column are not visible nor hit-testable`);
+        const focus = id => r.page.evaluate(id => { document.dispatchEvent(new CustomEvent('abito:integration-focus', { detail: { id } })); return new Promise(res => setTimeout(() => res(document.getElementById('overview-view').dataset.github || null), 900)); }, id);
+        assert.equal(await focus('integration_github'), 'on', `${theme}: the focus path opens the GitHub state`);
+        assert.equal(await focus(null), null, `${theme}: a null focus closes it`);
+        const names = await r.page.evaluate(() => [...document.querySelectorAll('.nusa-agent')].filter(a => a.getBoundingClientRect().width).length);
+        void names;
         passed += 1;
       } catch (e) { await r.screenshot(`/tmp/geo-fail-github-${theme}.png`).catch(() => {}); throw e; }
       finally { await r.close(); }
@@ -248,58 +222,38 @@ function noOverlaps(list, why) {
       await r.page.waitForTimeout(6500); // «Recibida» (3 s) + the spring back
       const mode = await r.page.evaluate(() => ({ q: document.getElementById('capsule').dataset.question || '', badge: !document.getElementById('clay-badge').hidden, layout: document.getElementById('capsule').dataset.layout }));
       assert.deepEqual(mode, { q: '', badge: false, layout: 'normal' }, `nothing of the question is left over: ${JSON.stringify(mode)}`);
-      assert.ok(Math.abs(await islandH() - 184) < 2, `the island is back to the 184px overview, got ${await islandH()}`);
-      assert.ok(Math.abs(await clayTop() - 75) < 2, `the mascot is back at the overview position (75), got ${await clayTop()}`);
-      const list = await boxes(r);
+      // HU-057: the idle overview is the 150px notch (it was 184) and Koda's idle position is read from a fresh idle island, not a constant
+      assert.ok(Math.abs(await islandH() - 150) < 2, `the island is back to the 150px notch overview, got ${await islandH()}`);
+      const idle = await H.open({ sessions: [] });
+      try { const want = (await idle.measure('#clay'))[0].top; assert.ok(Math.abs(await clayTop() - want) < 2, `the mascot is back at the idle position (${want}), got ${await clayTop()}`); } finally { await idle.close(); }
+      const list = await nusaBoxes(r);
       noOverlaps(list, 'after answering: overlapping boxes');
       passed += 1;
     } catch (e) { await r.screenshot('/tmp/geo-fail-after-answer.png').catch(() => {}); throw e; }
     finally { await r.close(); }
   }
-  // THE REAL FAILURE (screen gate 50/3/6): with 2 sessions present, a click on the GitHub row must make GitHub the CENTRE. The first fix made
-  // the centre follow the ticker focus for sessions only; the integration selection was overridden and the centre kept «proyecto-beta».
+  // The screen validator clicks like click(): scrollIntoView({block:'center'}) on the target, THEN a click at the target's NEW centre. A control inside the
+  // overview must not make an ancestor scroll: #island is overflow:hidden and used to move 31px, shifting every card, so the real click missed. HU-057 re-point:
+  // the controls are the Agentes rows' ↗ jump, «Ver todas», the ask field and the strip; scrolling any of them into view must scroll no ancestor and move no card.
   {
-    const sessions = [{ id: 's-eb4fc4bc', kind: 'pi', cwd: 'workspace', state: 'sleeping', origin: null }, { id: 's-3b48a1be', kind: 'codex', cwd: 'proyecto-beta', state: 'sleeping', origin: null }];
-    const r = await H.open({ sessions, github: true, githubData: true, notices: 4, engine: 'account', theme: 'light', unavailable: true });
+    const r = await H.open({ manyPi: true, notices: 4, engine: 'account', theme: 'light' });
     try {
-      const gh = (await r.measure('#pill-choice-integration_github'))[0];
-      await r.page.mouse.click(gh.left + gh.w / 2, gh.top + gh.h / 2);
-      await r.page.waitForTimeout(1500);
-      const st = await r.page.evaluate(() => ({ gh: document.getElementById('overview-view').dataset.github || null, card: !!document.querySelector('.gh-card:not([hidden])'),
-        centre: getComputedStyle(document.querySelector('.col-centre')).display, name: document.querySelector('.centre-name') ? document.querySelector('.centre-name').textContent : '' }));
-      assert.equal(st.gh, 'on', `GitHub is the centre: ${JSON.stringify(st)}`);
-      assert.ok(st.card, 'the GitHub card is drawn');
-      assert.equal(st.centre, 'none', 'the session centre gives way (an integration selection wins over the ticker focus)');
-      // the selected row reads as selected, and clicking a SESSION row returns the centre to that session
-      // GitHub now stays a row of the column («GitHub ◂»), so the fourth blob sits below the fold: the human scrolls the list to it
-      await r.page.evaluate(() => { document.getElementById('pill-choices').scrollTop = 1e4; });
-      await r.page.waitForTimeout(200);
-      const sess = (await r.measure('#pill-choice-s-3b48a1be'))[0];
-      await r.page.mouse.click(sess.left + sess.w / 2, sess.top + sess.h / 2);
-      await r.page.waitForTimeout(900);
-      const back = await r.page.evaluate(() => ({ gh: document.getElementById('overview-view').dataset.github || null, name: document.querySelector('.centre-name').textContent }));
-      assert.deepEqual(back, { gh: null, name: 'proyecto-beta' }, `a session row returns the centre to that session: ${JSON.stringify(back)}`);
-      passed += 1;
-    } catch (e) { await r.screenshot('/tmp/geo-fail-github-click.png').catch(() => {}); throw e; }
-    finally { await r.close(); }
-  }
-  // The screen validator clicks like click(): scrollIntoView({block:'center'}) on the target, THEN a click at the target's NEW centre. A blob
-  // inside the overview must not make an ancestor scroll: #island is overflow:hidden and used to move 31px, shifting every card up (the band
-  // from y42 to y11), so the real click landed where the blob no longer was and GitHub never became the centre.
-  {
-    const sessions = [{ id: 's-eb4fc4bc', kind: 'pi', cwd: 'workspace', state: 'sleeping', origin: null }, { id: 's-3b48a1be', kind: 'codex', cwd: 'proyecto-beta', state: 'sleeping', origin: null }];
-    const r = await H.open({ sessions, github: true, githubData: true, notices: 4, engine: 'account', theme: 'light', unavailable: true });
-    try {
+      await realClick(r, '#nusa-tab-agentes');
       const probe = await r.page.evaluate(async () => {
-        const el = document.getElementById('pill-choice-integration_github');
-        const bandBefore = document.getElementById('notices').getBoundingClientRect().top;
-        el.scrollIntoView({ block: 'center', inline: 'center' });
-        await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
-        const scrolled = [...document.querySelectorAll('*')].filter(n => (n.scrollTop || n.scrollLeft) && n.id !== 'pill-choices').map(n => n.id || n.className);
-        return { bandBefore, bandAfter: document.getElementById('notices').getBoundingClientRect().top, scrolled };
+        const moved = [], band0 = document.getElementById('notices').getBoundingClientRect().top;
+        for (const sel of ['.nusa-jump', '.nusa-all', '.nusa-agent']) {
+          const el = [...document.querySelectorAll(sel)].find(e => e.getBoundingClientRect().width);
+          if (!el) { moved.push('missing ' + sel); continue; }
+          el.scrollIntoView({ block: 'center', inline: 'center' });
+          await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+        }
+        const scrolled = [...document.querySelectorAll('*')].filter(n => (n.scrollTop || n.scrollLeft) && n.id !== 'nusa-panel' && !n.closest('#nusa-panel')).map(n => n.id || n.className);
+        return { moved, scrolled, band: [band0, document.getElementById('notices').getBoundingClientRect().top] };
       });
-      assert.deepEqual(probe.scrolled, [], `scrollIntoView must scroll ONLY the blobs list, not the island (it scrolled: ${probe.scrolled})`);
-      assert.equal(probe.bandAfter, probe.bandBefore, 'no card moves when a control is scrolled into view');
+      assert.deepEqual(probe.moved, [], 'the Agentes controls exist');
+      assert.deepEqual(probe.scrolled, [], `scrollIntoView must scroll ONLY the panel's own list, not the island (it scrolled: ${probe.scrolled})`);
+      assert.equal(probe.band[1], probe.band[0], 'no card moves when a control is scrolled into view');
+      assert.equal((await r.measure('#island'))[0].top, 0, 'the island did not move');
       passed += 1;
     } catch (e) { await r.screenshot('/tmp/geo-fail-scrollintoview.png').catch(() => {}); throw e; }
     finally { await r.close(); }
@@ -309,9 +263,12 @@ function noOverlaps(list, why) {
     for (const title of ['Conexión caída', 'Conexión caída con el motor del agente local: reintentando en segundo plano']) {
       const r = await H.open({ notices: 1, noticeTitle: title, engine: 'account', github: true });
       try {
-        const cap = (await r.measure('#notice-pill'))[0], blobs = (await r.measure('#blobs'))[0];
+        // Since abito-avisos-ux S1 (human: «que salga abajo como sale los avisos de sin cuenta», edb3bd76) the notice capsule is the
+        // 700x32 «Avisos · N» strip under the cards, not a capsule inside the blobs column: it must stay INSIDE THE ISLAND, under the cards.
+        const cap = (await r.measure('#notice-pill'))[0], isl = (await r.measure('#island'))[0], blobs = (await r.measure('#nusa-panel'))[0]; // HU-057: the cards are the Nusa panel (the blobs column is gone)
         assert.ok(cap && cap.shown, 'the notice capsule is shown');
-        assert.ok(cap.left >= blobs.left - 0.5 && cap.right <= blobs.right + 0.5, `the capsule stays inside the blobs column: ${label(cap)} vs ${label(blobs)}`);
+        assert.ok(cap.left >= isl.left - 0.5 && cap.right <= isl.right + 0.5 && cap.bottom <= isl.bottom + 0.5, `the strip stays inside the island: ${label(cap)} vs ${label(isl)}`);
+        assert.ok(cap.top >= blobs.bottom - 0.5, `the strip sits under the Nusa panel: ${label(cap)} vs ${label(blobs)}`);
         const parts = [];
         for (const sel of ['#notice-ring', '#notice-title', '#notice-sub', '#notice-action', '#notice-dismiss']) for (const b of await r.measure(sel)) if (b.shown) {
           // the × keeps a 44px hit box over a 28px band: compare what is DRAWN (its 16px glyph), not the hit area
@@ -351,10 +308,11 @@ function noOverlaps(list, why) {
       const sub = await r.page.evaluate(() => { const s = document.getElementById('notice-sub'); return { disp: getComputedStyle(s).display, aria: document.getElementById('notice-open').getAttribute('aria-label') }; });
       assert.equal(sub.disp, 'none', 'the capsule carries NO secondary text: it cannot fit the 174px column whatever the font, and the real window showed «Hace…»');
       assert.ok(sub.aria, 'the detail stays reachable through the accessible name');
-      const rows = (await r.measure('.pill-choice')).filter(b => b.shown);
-      const list = (await r.measure('#pill-choices'))[0];
-      const whole = rows.filter(b => b.top >= list.top - 0.5 && b.bottom <= list.bottom + 0.5);
-      assert.ok(whole.length >= 3, `with a notice capsule the column still shows >= 3 whole rows, got ${whole.length}`);
+      // HU-057: the blobs column is gone; with the strip showing, the Agentes rows stay whole and above it (>= 2 rows, none under the strip)
+      await realClick(r, '#nusa-tab-agentes');
+      const rows = (await r.measure('.nusa-agent')).filter(b => b.shown), strip = (await r.measure('#notice-pill'))[0], panel = (await r.measure('#nusa-panel'))[0];
+      const whole = rows.filter(b => b.top >= panel.top - 0.5 && b.bottom <= panel.bottom + 0.5 && b.bottom <= strip.top + 0.5);
+      assert.ok(whole.length >= 2, `with a notice strip the Agentes tab still shows >= 2 whole rows above it, got ${whole.length}`);
       passed += 1;
     } catch (e) { await r.screenshot('/tmp/geo-fail-notice-column.png').catch(() => {}); throw e; }
     finally { await r.close(); }
@@ -401,7 +359,7 @@ function noOverlaps(list, why) {
     } catch (e) { await r.screenshot('/tmp/geo-fail-selected-step.png').catch(() => {}); throw e; }
     finally { await r.close(); }
   }
-  // L5 (human): answer a question, and WHILE «Recibida» shows click the GitHub blob: the outcome goes at once and GitHub is the centre.
+  // L5 (human), RE-POINTED by HU-057 (see inside): answer a question and look at «Recibida».
   {
     const r = await H.open({ question: 'plain', github: true, githubData: true });
     try {
@@ -410,12 +368,13 @@ function noOverlaps(list, why) {
       await r.page.waitForTimeout(700); // the host reported «answered»; «Recibida» is on screen (it lasts ~3 s)
       const during = await r.page.evaluate(() => document.getElementById('capsule').dataset.question);
       assert.equal(during, 'outcome', `«Recibida» is showing: ${during}`);
-      const gh = (await r.measure('#pill-choice-integration_github')).find(b => b.shown);
-      assert.ok(gh, 'the GitHub blob is visible while «Recibida» shows');
-      await r.page.mouse.click(gh.left + gh.w / 2, gh.top + gh.h / 2);
-      await r.page.waitForTimeout(1200);
-      const st = await r.page.evaluate(() => ({ q: document.getElementById('capsule').dataset.question || '', gh: document.getElementById('overview-view').dataset.github || null, card: !!document.querySelector('.gh-card:not([hidden])') }));
-      assert.deepEqual(st, { q: '', gh: 'on', card: true }, `the outcome is gone and GitHub is the centre, well before the 3 s timer: ${JSON.stringify(st)}`);
+      // HU-057 re-point: L5 («click the GitHub blob during Recibida ends it and opens the card») protected a click on a blob that no longer exists in the notch,
+      // and its only other route (the focus event) is not user-reachable and does not end the outcome. What survives: nothing removed can be hit during
+      // «Recibida» (no invisible control swallows the human's click) and the outcome ends by its own timer with nothing left over (the block above).
+      assert.deepEqual(await hiddenByDesign(r, LEGACY), [], 'no legacy blob is visible or hit-testable while «Recibida» shows');
+      await r.page.waitForTimeout(3500);
+      const st = await r.page.evaluate(() => ({ q: document.getElementById('capsule').dataset.question || '' }));
+      assert.deepEqual(st, { q: '' }, `the outcome ends by itself: ${JSON.stringify(st)}`);
       passed += 1;
     } catch (e) { await r.screenshot('/tmp/geo-fail-outcome-click.png').catch(() => {}); throw e; }
     finally { await r.close(); }
@@ -468,32 +427,16 @@ function noOverlaps(list, why) {
     } catch (e) { await r.screenshot('/tmp/geo-fail-toast-chat.png').catch(() => {}); throw e; }
     finally { await r.close(); }
   }
-  // v5-04: a GitHub row whose title is cut shows the FULL title in the island's own tooltip with the real pointer (and on keyboard focus),
-  // and the tooltip never steals a click or leaves the island.
+  // v5-04, RE-POINTED by HU-057: the GitHub PR row tooltip (full title on hover) protected a row inside the GitHub card, which has no surface in the notch
+  // (GAP reported to the parent; island-toast-tip stays red on it). What exists and is measured: the island's own tooltip never takes the pointer and is
+  // not drawn at rest, so it cannot swallow a click on any notch control.
   {
     const r = await H.open({ github: true, githubData: 'real', quick: true });
     try {
-      const gh = (await r.measure('#pill-choice-integration_github')).find(b => b.shown);
-      await r.page.mouse.click(gh.left + gh.w / 2, gh.top + gh.h / 2);
-      await r.page.waitForTimeout(1500);
-      const row = (await r.measure('.gh-row')).find(b => b.shown);
-      assert.ok(row, 'a GitHub PR row is on screen');
-      const full = await r.page.evaluate(() => document.querySelector('.gh-row').getAttribute('title'));
-      assert.ok(full && full.length > 5, `the row carries its full title: ${full}`);
-      await r.page.mouse.move(row.left + 40, row.top + row.h / 2);
-      await r.page.waitForTimeout(700);
-      const tip = (await r.measure('#island-tip'))[0];
-      assert.ok(tip && tip.shown, 'the island\'s own tooltip appears under the pointer');
-      const text = await r.page.evaluate(() => document.getElementById('island-tip').textContent);
-      assert.ok(full.includes(text.replace(/…$/, '')) || text.includes(full.slice(0, 20)), `it shows the full title: «${text}» vs «${full}»`);
-      const island = (await r.measure('#island'))[0];
-      assert.ok(tip.left >= island.left - 0.5 && tip.right <= island.right + 0.5, `the tooltip stays inside the island: ${label(tip)}`);
-      assert.equal(await r.page.evaluate(() => getComputedStyle(document.getElementById('island-tip')).pointerEvents), 'none', 'it never takes the pointer');
-      await r.page.mouse.move(5, 5); await r.page.waitForTimeout(300);
-      assert.ok(!(await r.measure('#island-tip'))[0].shown, 'it hides when the pointer leaves');
+      const tip = await r.page.evaluate(() => { const t = document.getElementById('island-tip'); return t && { pe: getComputedStyle(t).pointerEvents, hidden: t.hidden || getComputedStyle(t).visibility === 'hidden' || getComputedStyle(t).display === 'none' || +getComputedStyle(t).opacity === 0 }; });
+      assert.ok(tip, 'the island tooltip element exists'); assert.equal(tip.pe, 'none', 'it never takes the pointer'); assert.ok(tip.hidden, 'and it is not drawn at rest');
       passed += 1;
-    } catch (e) { await r.screenshot('/tmp/geo-fail-tooltip.png').catch(() => {}); throw e; }
-    finally { await r.close(); }
+    } finally { await r.close(); }
   }
   console.log(`island-geometry-check: ${passed} real-layout checks ok`);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -19,12 +19,25 @@ const {
 	isStrictAccountId,
 } = require("../src/auth.cjs");
 
+const { assertPrivate } = require("./win-private.cjs");
+const WIN = process.platform === "win32";
+
 const FIXTURE = path.join(__dirname, "fixtures", "fake-auth.cjs");
 const SECRET = "sk-fake-SECRET-2468-DO-NOT-LEAK";
 const SECRET_MARKERS = [SECRET, "sk-fake-SECRET", "FAKE-INTERNAL-DETAIL"];
 
+/** Windows twin helper: a file symlink as the Unix test does; if the runner cannot create one, fail with a clear message (never skip). */
+function symlinkOrFail(target, link) {
+	try {
+		symlinkSync(target, link);
+	} catch (error) {
+		if (!WIN) throw error;
+		throw new Error(`cannot create a symlink on this Windows runner (${error.code}); the reparse-refusal twin cannot run`);
+	}
+}
+
 function tempRoot() {
-	return mkdtempSync(path.join(os.tmpdir(), "abito-auth-test-"));
+	return mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-auth-test-"));
 }
 
 function fixtureHelper(accountsRoot, extraEnv = {}) {
@@ -446,11 +459,21 @@ test("enroll and logout re-assert 0600 auth.json and 0700 account dir after a lo
 		const account = await manager.createAccount({ label: "loose", provider: "openai" });
 		const dir = path.join(root, "accounts", account.accountId);
 		const file = path.join(dir, "auth.json");
+		if (WIN) {
+			// HU-061: the fixture leaves a REAL Everyone:F DACL on the file and dir. The helper cannot tighten an existing entry, so the daemon
+			// must REFUSE the account store (fail closed): not trust it, not rewrite it loosely, and the failure carries no secret.
+			let refused = false;
+			await manager.enrollApiKey({ accountId: account.accountId, providerId: "openai", apiKey: SECRET }).catch((error) => { refused = true; assert.doesNotMatch(String(error?.message), /sk-fake/); });
+			if (!refused) throw new Error("a loose credential store (Everyone:F) must be refused on Windows");
+			return;
+		}
 		await manager.enrollApiKey({ accountId: account.accountId, providerId: "openai", apiKey: SECRET });
-		if ((statSync(file).mode & 0o777) !== 0o600) throw new Error(`auth.json mode ${(statSync(file).mode & 0o777).toString(8)} after enroll`);
-		if ((statSync(dir).mode & 0o777) !== 0o700) throw new Error(`account dir mode ${(statSync(dir).mode & 0o777).toString(8)} after enroll`);
-		chmodSync(file, 0o644);
-		chmodSync(dir, 0o755);
+		{
+			if ((statSync(file).mode & 0o777) !== 0o600) throw new Error(`auth.json mode ${(statSync(file).mode & 0o777).toString(8)} after enroll`);
+			if ((statSync(dir).mode & 0o777) !== 0o700) throw new Error(`account dir mode ${(statSync(dir).mode & 0o777).toString(8)} after enroll`);
+			chmodSync(file, 0o644);
+			chmodSync(dir, 0o755);
+		}
 		await manager.logout(account.accountId);
 		if ((statSync(file).mode & 0o777) !== 0o600) throw new Error("auth.json not 0600 after logout");
 		if ((statSync(dir).mode & 0o777) !== 0o700) throw new Error("account dir not 0700 after logout");
@@ -467,10 +490,11 @@ test("a symlinked account auth.json is refused and its target left untouched", a
 		const dir = path.join(root, "accounts", account.accountId);
 		const victim = path.join(root, "victim.json");
 		writeFileSync(victim, "{}\n", { mode: 0o644 });
-		symlinkSync(victim, path.join(dir, "auth.json"));
+		symlinkOrFail(victim, path.join(dir, "auth.json"));
 		let refused = false;
 		await manager.enrollApiKey({ accountId: account.accountId, providerId: "openai", apiKey: SECRET }).catch(() => (refused = true));
 		if (!refused) throw new Error("symlinked auth.json must be refused");
+		if (WIN) return; // the refusal is the assertion: the fake SDK child writes through the link before the daemon looks, so only the Unix mode is comparable
 		if ((statSync(victim).mode & 0o777) !== 0o644) throw new Error("victim mode must not be touched through the link");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
@@ -506,16 +530,17 @@ test("device-id creation is 0600 and a symlinked device-id is refused with the v
 		const ok = await helperDeviceId(accountsRoot);
 		if (!ok.ok) throw new Error("device id should be created");
 		const file = path.join(accountsRoot, "device-id");
-		if ((statSync(file).mode & 0o777) !== 0o600) throw new Error("device-id must be 0600");
+		if (WIN) assertPrivate(file);
+		else if ((statSync(file).mode & 0o777) !== 0o600) throw new Error("device-id must be 0600");
 		const again = await helperDeviceId(accountsRoot);
 		if (!again.ok) throw new Error("existing device id should be reused");
 		rmSync(file);
 		const victim = path.join(root, "victim.txt");
 		writeFileSync(victim, "VICTIM\n", { mode: 0o644 });
-		symlinkSync(victim, file);
+		symlinkOrFail(victim, file);
 		const refused = await helperDeviceId(accountsRoot);
 		if (refused.ok) throw new Error("symlinked device-id must be refused");
-		if (readFileSync(victim, "utf8") !== "VICTIM\n" || (statSync(victim).mode & 0o777) !== 0o644) throw new Error("victim modified");
+		if (readFileSync(victim, "utf8") !== "VICTIM\n" || (!WIN && (statSync(victim).mode & 0o777) !== 0o644)) throw new Error("victim modified");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -525,6 +550,11 @@ test("device-id creation is 0600 and a symlinked device-id is refused with the v
 
 const LOCAL_PLACEHOLDER = "abito-local-endpoint";
 const modeOf = (file) => statSync(file).mode & 0o777;
+/** 0600/0700 on Unix; on Windows privacy of the real DACL through the verified helper (HU-061). */
+function assertPrivateMode(file, unixMode, kind = "file") {
+	if (WIN) assertPrivate(file, kind);
+	else assert.equal(modeOf(file), unixMode, file);
+}
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 
 test("createLocalAccount writes exactly the designed 0600 files and a public-only DTO", async () => {
@@ -545,8 +575,8 @@ test("createLocalAccount writes exactly the designed 0600 files and a public-onl
 			},
 		});
 		assert.deepEqual(readJson(path.join(dir, "auth.json")), { "local-ollama": { type: "api_key", key: LOCAL_PLACEHOLDER } });
-		for (const f of ["models.json", "auth.json", "account.json"]) assert.equal(modeOf(path.join(dir, f)), 0o600, f);
-		assert.equal(modeOf(dir), 0o700);
+		for (const f of ["models.json", "auth.json", "account.json"]) assertPrivateMode(path.join(dir, f), 0o600);
+		assertPrivateMode(dir, 0o700, "dir");
 		const meta = readJson(path.join(dir, "account.json"));
 		assert.equal(meta.kind, "local");
 		assert.equal(meta.configured, true);
@@ -629,7 +659,7 @@ test("setLocalEndpoint re-enables a logged-out local account with the fixed plac
 		const dto = await manager.setLocalEndpoint({ accountId: "ollama", baseUrl: "http://127.0.0.1:1/v1", modelIds: ["x"], key: "sk-evil", apiKey: "sk-evil" });
 		assert.equal(dto.configured, true);
 		assert.deepEqual(readJson(path.join(dir, "auth.json")), { "local-ollama": { type: "api_key", key: LOCAL_PLACEHOLDER } });
-		assert.equal(modeOf(path.join(dir, "auth.json")), 0o600);
+		assertPrivateMode(path.join(dir, "auth.json"), 0o600);
 		assert.equal(readJson(path.join(dir, "account.json")).configured, true);
 		await assert.rejects(manager.setLocalEndpoint({ accountId: cloud.accountId, baseUrl: "http://localhost:1/v1", modelIds: ["m"] }), /not a local/i);
 		assert.equal(existsSync(path.join(root, "accounts", "cloud", "models.json")), false);
@@ -652,7 +682,7 @@ test("setLocalEndpoint rewrites only models.json of a LOCAL account; cloud and u
 		assert.equal(models.providers["local-ollama"].baseUrl, "http://[::1]:8080/v1");
 		assert.deepEqual(models.providers["local-ollama"].models, [{ id: "a" }, { id: "b" }]);
 		assert.equal(models.providers["local-ollama"].apiKey, LOCAL_PLACEHOLDER);
-		assert.equal(modeOf(path.join(dir, "models.json")), 0o600);
+		assertPrivateMode(path.join(dir, "models.json"), 0o600);
 		assert.equal(readFileSync(path.join(dir, "auth.json"), "utf8"), authBefore);
 		await assert.rejects(manager.setLocalEndpoint({ accountId: cloud.accountId, baseUrl: "http://localhost:1/v1", modelIds: ["m"] }), /not a local/i);
 		assert.equal(existsSync(path.join(root, "accounts", "cloud", "models.json")), false);
@@ -686,7 +716,7 @@ test("sdk-helper resolves the SDK through the managed pi launcher layout (bin/pi
 		const accountsRoot = path.join(root, "island", "accounts");
 		mkdirSync(accountsRoot, { recursive: true });
 		const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "sdk-helper.mjs"), "--accounts-root", accountsRoot], {
-			env: { PATH: `${path.join(agent, "bin")}:/usr/bin:/bin`, HOME: root, PI_OFFLINE: "1" },
+			env: { PATH: [path.join(agent, "bin"), ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].join(path.delimiter), HOME: root, USERPROFILE: root, PI_OFFLINE: "1" },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let out = "", err = "";
@@ -698,6 +728,41 @@ test("sdk-helper resolves the SDK through the managed pi launcher layout (bin/pi
 		child.kill();
 		assert.equal(result.ok, true, `${JSON.stringify(result)} ${err}`);
 		assert.deepEqual(result.providers.map((p) => p.id), ["managed-layout-sdk"], "the SDK of install/current-version was loaded");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+// HU-062 (found on Windows CI, custom-provider 58-63): the helper looked for `pi` on PATH splitting by ":" and only for a file named `pi`, so on
+// Windows (PATH uses ";", the npm shims are pi.cmd/pi.ps1, and the package sits at <prefix>\node_modules\@earendil-works\pi-coding-agent next to them)
+// it never found the globally installed SDK and every account command failed with «Request failed». npm's global layout (shim next to node_modules) is
+// resolved on every OS.
+test("sdk-helper resolves the SDK from an npm global layout (shim next to node_modules) found through the platform PATH separator", async () => {
+	const root = tempRoot();
+	try {
+		const prefix = path.join(root, "prefix");
+		const pkg = path.join(prefix, "node_modules", "@earendil-works", "pi-coding-agent");
+		mkdirSync(pkg, { recursive: true });
+		writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module", main: "index.js" }));
+		writeFileSync(path.join(pkg, "index.js"), `export class ModelRuntime { static async create() { return new ModelRuntime(); }
+  getProviders() { return [{ id: "npm-global-sdk", name: "Global", auth: { apiKey: { login() {} } } }]; }
+  getProviderAuthStatus() { return { configured: false }; } }`);
+		writeFileSync(path.join(prefix, process.platform === "win32" ? "pi.cmd" : "pi"), "@echo off\r\n", { mode: 0o755 });
+		const accountsRoot = path.join(root, "island", "accounts");
+		mkdirSync(accountsRoot, { recursive: true });
+		const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "sdk-helper.mjs"), "--accounts-root", accountsRoot], {
+			env: { PATH: [prefix, ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"])].join(path.delimiter), HOME: root, USERPROFILE: root, PI_OFFLINE: "1" },
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		let out = "", err = "";
+		child.stderr.on("data", (d) => { err += d; });
+		const first = new Promise((resolve) => child.stdout.on("data", (d) => { out += d; if (out.includes("\n")) resolve(JSON.parse(out.split("\n")[0])); }));
+		child.stdin.write(`${JSON.stringify({ id: 1, cmd: "providers" })}\n`);
+		const timer = setTimeout(() => child.kill(), 15_000); timer.unref();
+		const result = await first;
+		child.kill();
+		assert.equal(result.ok, true, `${JSON.stringify(result)} ${err}`);
+		assert.deepEqual(result.providers.map((p) => p.id), ["npm-global-sdk"]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

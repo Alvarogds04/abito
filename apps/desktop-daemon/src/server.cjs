@@ -572,7 +572,7 @@ class IslandServer {
 				return await fn();
 			} catch (error) {
 				this.log(`command ${frame.type} failed`);
-				fail(/busy/i.test(String(error?.message)) ? "busy" : "failed");
+				fail(error?.code === "store_not_private" ? "store_not_private" : /busy/i.test(String(error?.message)) ? "busy" : "failed");
 				return undefined;
 			}
 		};
