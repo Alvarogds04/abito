@@ -14,6 +14,10 @@ const files = [...L.DAEMON_FILES.map(f => `desktop-daemon/${f}`), ...L.HARNESS_F
 const bins = ['abito-island.exe', 'abito-notice-relay.exe', 'abito-private-session.exe', 'abito-install.json'];
 function run(...args) { return spawnSync(process.execPath, [script, '--out', out, ...args], { encoding: 'utf8' }); }
 function entries(dir, prefix = '') { return fs.readdirSync(dir).flatMap(n => fs.statSync(path.join(dir, n)).isDirectory() ? entries(path.join(dir, n), `${prefix}${n}/`) : [`${prefix}${n}`]).sort(); }
+// HU-062: test-only helpers of the harness suite (the pipe preload, fake receivers, fixtures) are never part of the shipped closed list,
+// and no shipped file references the preload or its switch.
+assert.ok(!files.some(f => /(^|\/)test\//.test(f) || /pipe-preload|fake-receiver|platform-env|ABITO_TEST_PIPE/.test(f)), 'test-only harness files must not be shipped');
+for (const f of files.filter(f => f.endsWith('.cjs'))) assert.doesNotMatch(fs.readFileSync(path.join(crate, '..', f), 'utf8'), /pipe-preload|ABITO_TEST_PIPE/, `${f} must not reference the test preload`);
 try {
   let r = run();
   assert.equal(r.status, 0, r.stderr);
@@ -75,6 +79,9 @@ try {
   assert.equal(manifest.schema, 'abito-install/1');
   assert.deepEqual(Object.keys(manifest.files).sort(), ['abito-private-session.exe', ...files].sort());
   for (const f of files) assert.equal(manifest.files[f], require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(crate, '..', f))).digest('hex'));
+  // HU-061: the daemon ships its own byte-identical copy of the helper protocol module (the harness copy is the source of truth).
+  assert.ok(files.includes('desktop-daemon/src/win-fs.cjs'));
+  assert.deepEqual(fs.readFileSync(path.join(crate, '../desktop-daemon/src/win-fs.cjs')), fs.readFileSync(path.join(crate, '../desktop-harness/src/win-fs.cjs')), 'daemon win-fs.cjs must be byte-identical to the harness one');
   assert.ok(files.includes('desktop-harness/src/win-fs.cjs') && files.includes('desktop-harness/src/install-pi-win.cjs'));
   // Exercise receipt generation/check through its public CLI in an isolated source tree.
   const fixture = path.join(scratch, 'source');
@@ -95,7 +102,7 @@ try {
   assert.equal(r.status, 0, r.stderr);
   const dist = path.join(fixtureCrate, 'dist');
   const version = JSON.parse(fs.readFileSync(path.join(fixtureCrate, 'tauri.conf.json'))).version;
-  for (const f of [...bins, `abito-island-${version}-win-x64-setup.exe`]) fs.writeFileSync(path.join(dist, f), 'fixture, not a Windows executable');
+  for (const f of [...bins, `koda-${version}-win-x64-setup.exe`]) fs.writeFileSync(path.join(dist, f), 'fixture, not a Windows executable');
   const receiptRun = (...args) => spawnSync(process.execPath, [path.join(fixtureCrate, 'packaging/windows/stage-win.cjs'), ...args], { encoding: 'utf8' });
   r = receiptRun(); assert.equal(r.status, 0, r.stderr); assert.equal(r.stderr, '');
   r = receiptRun('--check'); assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout, 'OK: windows artifacts match the receipt\n'); assert.equal(r.stderr, '');

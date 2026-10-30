@@ -66,16 +66,19 @@ fn a_fake_codex_on_path_is_asked_and_only_limits_come_back() {
     )
     .unwrap();
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let old = std::env::var_os("PATH");
-    // SAFETY of test isolation: this is the only test touching PATH in this module.
-    std::env::set_var("PATH", &dir);
-    let got = read();
-    match old {
-        Some(p) => std::env::set_var("PATH", p),
-        None => std::env::remove_var("PATH"),
-    }
+    // The PATH is passed in, never set on the process: other tests run in parallel and spawn `node` through it.
+    let got = read_with(Some(dir.clone().into_os_string()));
     let _ = std::fs::remove_dir_all(&dir);
     let got = got.expect("answer");
     assert_eq!(got["rateLimits"]["planType"], "plus");
     assert!(got.get("account").is_none());
+}
+
+#[test]
+fn reading_codex_limits_never_changes_the_process_path() {
+    // candidates_in, not read_with: read_with takes the process-wide BUSY guard, and a parallel call here made the
+    // fake-codex test above read «busy» (None) about 4 runs in 6.
+    let before = std::env::var_os("PATH");
+    let _ = candidates_in(Some(std::ffi::OsString::from("/nonexistent-abito-dir")));
+    assert_eq!(std::env::var_os("PATH"), before);
 }

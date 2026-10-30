@@ -63,7 +63,7 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
         return Some(w);
     }
     WebviewWindowBuilder::new(app, cw::LABEL, WebviewUrl::App(cw::PAGE.into()))
-        .title("Abito")
+        .title("Koda")
         .inner_size(cw::SIZE, cw::SIZE)
         // GTK will not size a non-resizable window below its natural size.
         .resizable(true)
@@ -171,7 +171,7 @@ fn paint_highlight(app: &AppHandle, rect: Option<Rect>) {
     };
     let win = app.get_webview_window(HIGHLIGHT).or_else(|| {
         WebviewWindowBuilder::new(app, HIGHLIGHT, WebviewUrl::App("desktop-highlight.html".into()))
-            .title("Abito").inner_size(120.0, 120.0).resizable(true)
+            .title("Koda").inner_size(120.0, 120.0).resizable(true)
             .decorations(false).transparent(true).shadow(false).always_on_top(true)
             .skip_taskbar(true).visible_on_all_workspaces(true).focused(false).focusable(false)
             .maximizable(false).minimizable(false).closable(false).visible(false).build().ok()

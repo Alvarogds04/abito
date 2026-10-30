@@ -185,7 +185,7 @@ async function renderGeneral({ invoke, V, navigate }) {
     const soundsFolder = identify(trusted(h("button", { text: t("Open sounds folder"), onclick: () => {
       run(async () => {
         await send("sound_action", { action: "reveal" });
-      }, "No se pudo abrir la carpeta de sonidos (el administrador de archivos no respondió). Ábrela a mano: la carpeta «sounds» dentro de la carpeta de configuración de Abito.");
+      }, "No se pudo abrir la carpeta de sonidos (el administrador de archivos no respondió). Ábrela a mano: la carpeta «sounds» dentro de la carpeta de configuración de Koda.");
     } })), "hub-sounds-folder");
     const soundsReload = identify(trusted(h("button", { text: t("Reload sounds"), onclick: () => {
       run(async () => {
@@ -216,11 +216,11 @@ async function renderGeneral({ invoke, V, navigate }) {
       notchCard(
         "Apariencia",
         row(t("Language"), language, h("span", { class: "hint", text: "No disponible todavía" })),
-        notchTipRow(t("Theme"), "Sistema sigue el tema de tu escritorio. El movimiento no se puede configurar en Abito.", themeSelect),
+        notchTipRow(t("Theme"), "Sistema sigue el tema de tu escritorio. El movimiento no se puede configurar en Koda.", themeSelect),
         row("Nombre visible", name, save),
         nameIssue,
-        notchTipRow(t("Launch at startup"), "Abre Abito al iniciar la sesión del escritorio.", startup),
-        notchTipRow("Abrir Ajustes al abrir Abito", "Solo al abrir Abito a mano; no al iniciar el equipo.", openSettings)
+        notchTipRow(t("Launch at startup"), "Abre Koda al iniciar la sesión del escritorio.", startup),
+        notchTipRow("Abrir Ajustes al abrir Koda", "Solo al abrir Koda a mano; no al iniciar el equipo.", openSettings)
       ),
       notchCard(
         "Isla",

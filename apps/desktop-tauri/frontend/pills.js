@@ -17,7 +17,7 @@
   const MAX_BLOB_NAME = 40;
   const CONTROL = /[\u0000-\u001f\u007f]/;
   const validBlobName = name => typeof name === 'string' && name.length > 0 && [...name].length <= MAX_BLOB_NAME &&
-    name.trim() === name && !CONTROL.test(name) && name.toLowerCase() !== 'abito';
+    name.trim() === name && !CONTROL.test(name) && name.toLowerCase() !== 'abito' && name.toLowerCase() !== 'koda'; // Koda 0.1 T2: the principal's visible name is reserved too
   const isBlobColor = color => color === '' || isColor(color);
   const isMain = (id, os) => C.acceptedMain(os).some(def => def.id === id);
   // #346 F033: the ONLY colour vocabulary — avatar-colors.js PALETTE, the same five names

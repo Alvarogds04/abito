@@ -43,7 +43,7 @@ export async function privacyPage(page, ctx, invoke) {
     box.append(card(tipRow("Avisarme de problemas", "Se guardan solo en esta computadora. Nada sale sin tu confirmación.",
       trusted(toggle(st.enabled, (v) => guard(async () => refresh(await call({ action: "set_enabled", enabled: v }))))))));
     if (st.enabled && st.pending.length) {
-      box.append(label("Abito tuvo un problema. ¿Querés reportarlo?"));
+      box.append(label("Koda tuvo un problema. ¿Querés reportarlo?"));
       box.append(card(...st.pending.map((f) => row(`${f.step} · ${f.process}`, f.count > 1 ? `Pasó ${f.count} veces` : null,
         trusted(button("Reportar", () => preview(f.fingerprint), "primary", true)),
         trusted(button("Ahora no", () => guard(async () => refresh(await call({ action: "later", fingerprint: f.fingerprint }))), "", true)),

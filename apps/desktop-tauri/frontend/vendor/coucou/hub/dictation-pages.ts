@@ -136,10 +136,10 @@ export async function flowSettingsPage(page: HTMLElement, ctx: HubContext, _invo
   if (status.keys === "ok") {
     keysCard.append(h("div", {
       class: "hub-warn",
-      text: t("On Wayland, the desktop holds the dictation key for Abito: Ctrl+Alt+V, or the keys you picked when it asked. The first paste asks once to let Abito type for you."),
+      text: t("On Wayland, the desktop holds the dictation key for Koda: Ctrl+Alt+V, or the keys you picked when it asked. The first paste asks once to let Koda type for you."),
     }));
   } else if (status.keys !== "ok") {
-    keysCard.append(h("div", { class: "hub-warn", text: t("Abito can't watch the keyboard here: use the pill's microphone to dictate.") }));
+    keysCard.append(h("div", { class: "hub-warn", text: t("Koda can't watch the keyboard here: use the pill's microphone to dictate.") }));
   }
   page.append(keysCard, copied);
 
@@ -147,10 +147,10 @@ export async function flowSettingsPage(page: HTMLElement, ctx: HubContext, _invo
   page.append(label("Audio"));
   const mics: [string, string][] = [["", t("System default")], ...status.mics.map((m): [string, string] => [m.name, m.name])];
   if (prefs.mic && !mics.some(([id]) => id === prefs.mic)) mics.push([prefs.mic, prefs.mic]);
-  // The ONE place where dictation gets prepared (0.2.1, L2): Dictado only links here. Parakeet is shared with Notetaker and OK Abito.
-  const toVoice = trusted(h('button', { class: 'hub-link', text: 'Administrar en OK Abito', onclick: () => ctx.navigate('voice') }));
+  // The ONE place where dictation gets prepared (0.2.1, L2): Dictado only links here. Parakeet is shared with Notetaker and OK Koda.
+  const toVoice = trusted(h('button', { class: 'hub-link', text: 'Administrar en OK Koda', onclick: () => ctx.navigate('voice') }));
   page.append(card(
-    row(t("Microphone"), null, trusted(select(mics, prefs.mic, (mic) => save((p) => (p.mic = mic)))), infoTip(t("The one Abito listens to for dictation and calls."), "Más información: Micrófono")),
+    row(t("Microphone"), null, trusted(select(mics, prefs.mic, (mic) => save((p) => (p.mic = mic)))), infoTip(t("The one Koda listens to for dictation and calls."), "Más información: Micrófono")),
     divider(),
     row(t("Parakeet, on your computer"), null, modelsControl(ctx, life), infoTip(t("The most accurate, offline, 25 languages. Downloaded once (about {0} MB).", { 0: number(status.models.downloadMb) }) + " " + t("Your voice never leaves this computer: Parakeet turns it into text here, and the recording is dropped as soon as it is pasted."), "Más información: Parakeet")),
     h('div', { class: 'hub-row' }, toVoice)));
@@ -175,7 +175,7 @@ export async function flowSettingsPage(page: HTMLElement, ctx: HubContext, _invo
     row(t("Keep the history"), null, trusted(select(keep, String(prefs.keepDays), (v) => save((p) => (p.keepDays = Number(v)))))),
     divider(),
     confirmRow,
-    h("div", { class: "hub-row" }, infoTip(t("The history, the statistics and your notes stay on this computer, in Abito's folder. Dictations are never saved as audio; a call's audio is deleted as soon as its transcript is written."), "Más información: Datos")),
+    h("div", { class: "hub-row" }, infoTip(t("The history, the statistics and your notes stay on this computer, in Koda's folder. Dictations are never saved as audio; a call's audio is deleted as soon as its transcript is written."), "Más información: Datos")),
   ));
 }
 

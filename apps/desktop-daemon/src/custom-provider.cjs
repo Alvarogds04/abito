@@ -13,8 +13,9 @@
 const http = require("node:http");
 const https = require("node:https");
 const { validateCustomBaseUrl } = require("./protocol.cjs");
+const { MODEL_LIMITS } = require("./custom-provider-extension.cjs");
 
-const DISCOVERY_LIMITS = Object.freeze({ timeoutMs: 10_000, maxBytes: 256 * 1024, maxModels: 128, maxIdChars: 200 });
+const DISCOVERY_LIMITS = Object.freeze({ timeoutMs: 10_000, maxBytes: 256 * 1024, maxModels: MODEL_LIMITS.maxModels, maxIdChars: MODEL_LIMITS.maxIdChars });
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 class CustomProviderError extends Error {
@@ -65,7 +66,8 @@ function discoverModels({ baseUrl, apiKey, timeoutMs = DISCOVERY_LIMITS.timeoutM
 			fn(value);
 		};
 		const timer = setTimeout(() => finish(reject, new CustomProviderError("timeout")), timeoutMs);
-		request = client.request(
+		try {
+			request = client.request(
 			{
 				protocol: url.protocol,
 				hostname: url.hostname.replace(/^\[|\]$/g, ""),
@@ -99,6 +101,10 @@ function discoverModels({ baseUrl, apiKey, timeoutMs = DISCOVERY_LIMITS.timeoutM
 		);
 		request.on("error", () => finish(reject, new CustomProviderError("unreachable")));
 		request.end();
+		} catch {
+			// Synchronous setup failure (e.g. a header value Node refuses): clear the timer, fixed reason.
+			finish(reject, new CustomProviderError("unreachable"));
+		}
 	});
 }
 

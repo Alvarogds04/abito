@@ -86,10 +86,10 @@ test('island icon buttons never override the absolute placement of #card-info/#n
   assert.equal(decls('#card-info').position, 'absolute', 'the info button keeps its corner placement');
   assert.equal(decls('#permission #card-fold, #question #question-fold, #permission #card-info').position, 'absolute', 'S10: the fold chevron is anchored to the card corner, like Coucou');
 });
-test('chat top bar: visible title «Abito» before the gear/back buttons (design isla-chat-*)', () => {
+test('chat top bar: visible title «Koda» before the gear/back buttons (design isla-chat-*)', () => {
   const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
   const header = html.slice(html.indexOf('<header id="chat-header">'), html.indexOf('</header>', html.indexOf('<header id="chat-header">')));
-  assert.match(header, /<h2 id="chat-title">Abito<\/h2>[\s\S]*id="open-screen-settings"[\s\S]*id="chat-back"/);
+  assert.match(header, /<h2 id="chat-title">Koda<\/h2>[\s\S]*id="open-screen-settings"[\s\S]*id="chat-back"/); // Koda 0.1 T2
   const t = decls('#chat-title');
   assert.equal(t['font-size'], 'var(--fs-body)');
   assert.equal(t['font-weight'], '600');

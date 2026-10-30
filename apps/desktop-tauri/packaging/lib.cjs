@@ -12,7 +12,8 @@ const IDENTIFIER = 'com.abitog.AbitoTauri';
 const RESERVED = ['com.abitog.Abito', 'com.abitog.Abito.Preview', 'abito-desktop', 'abito-desktop-preview'];
 const FRONTEND_FILES = ['DESIGN.md', 'avatar-colors.js', 'character-desktop-logic.js', 'character-minibots.js', 'character-motion.js', 'chat-cards.js', 'chat-markdown.css', 'chat-markdown.js', 'chat-view.js', 'chat.js', 'clay-engine.js', 'desktop-character.css', 'desktop-character.html', 'desktop-character.js', 'desktop.js', 'icons.js', 'index.html', 'integrations-calendar.js', 'integrations-deployments.js', 'integrations-email.js', 'integrations-finance.js', 'integrations-github.js', 'integrations-mail.js', 'integrations-n8n.js',
   'integrations-notion.js', 'integrations-payments.js', 'integrations-view.js', 'island-idle.js', 'island-integrations.js', 'island-integrations.css', 'island-header.js', 'island-github.js', 'island-desktop.js', 'island-dictation.js', 'island-voice.js', 'island-voice.css', 'island-plan.js', 'island-recap.js', 'island-interaction.js', 'island.js', 'models.js', 'notify-view.js', 'notify.js', 'overview-view.js', 'pill-catalog.js', 'pill-settings.js', 'pills-view.js', 'paused.js', 'spotify-view.js', 'pills.js', 'sessions-ticker.js', 'settings-view.js', 'settings.js', 'sound-engine.js', 'sound-wiring.js', 'specialists-view.js', 'specialists.js', 'style.css', 'theme.js'];
-FRONTEND_FILES.push('desktop-highlight.html', 'desktop-highlight.css', 'question-toast.css', 'question-toast.js', 'island-layout.js');
+FRONTEND_FILES.push('koda-catalog.js', 'koda-logic.js', 'koda-skin.js', 'koda-skin.css', 'koda/koda-chibi-24.png', 'koda/koda-chibi-32.png');
+FRONTEND_FILES.push('desktop-highlight.html', 'desktop-highlight.css', 'question-toast.css', 'question-toast.js', 'island-layout.js', 'island-nusa.js', 'island-nusa-bodies.js', 'island-nusa-mount.js', 'island-nusa.css', 'settings-nusa.css', 'settings-nusa.js', 'settings-nusa-mount.js', 'settings-isla.js', 'settings-isla-mount.js');
 // Every embedded vendor source, generated module and license is a closed input.
 FRONTEND_FILES.push(
   'vendor/coucou/LICENSE', 'vendor/coucou/bridge-abito.js', 'vendor/coucou/package.json',
@@ -167,8 +168,8 @@ exec "$here/abito-island"
 function desktopText() {
   return `[Desktop Entry]
 Type=Application
-Name=Abito
-Comment=Abito
+Name=Koda
+Comment=Koda
 Exec="@INSTALL_DIR@/abito-island-launcher"
 Icon=@INSTALL_DIR@/abito-island.png
 Terminal=false
@@ -180,10 +181,10 @@ StartupWMClass=Abito-island
 // ---- receipt verification (no launch) -------------------------------------
 const DAEMON_FILES = ['package.json', 'identity.md', 'THIRD-PARTY-NOTICES.md',
   'src/agent-hooks.cjs', 'src/agents-direct.cjs', 'src/agents.cjs', 'src/auth.cjs', 'src/cli.cjs', 'src/config.cjs',
-  'src/connectors.cjs', 'src/connector-host.cjs', 'src/connector-host-client.cjs', 'src/custom-provider.cjs',
+  'src/connectors.cjs', 'src/connector-host.cjs', 'src/connector-host-client.cjs', 'src/custom-provider.cjs', 'src/custom-provider-extension.cjs',
   'src/daemon.cjs', 'src/interrupt.cjs', 'src/isolation.cjs', 'src/mcp-import.cjs', 'src/profiles.cjs',
   'src/protocol.cjs', 'src/rotation.cjs', 'src/runtime.cjs', 'src/sdk-helper.mjs', 'src/server.cjs',
-  'src/sessions.cjs', 'src/procinfo.cjs', 'src/spaces.cjs'];
+  'src/sessions.cjs', 'src/procinfo.cjs', 'src/spaces.cjs', 'src/win-fs.cjs'];
 // L42 F1: the hook installer (apps/desktop-harness) ships NEXT TO the daemon: the daemon derives
 // <package>/desktop-harness/bin/abito-hook.cjs from its own location (src/cli.cjs packagedInstallerBin), so Ajustes can
 // install the Claude/Codex/recap/status-line hooks. Closed under require(): packaging-check pins that.
@@ -225,10 +226,28 @@ function checkInstalledLayout(dir) {
     if (path.dirname(p) === p) break;
   }
   if (problems.length || !fs.existsSync(dir)) return problems;
+  const audit = path.join(dir, USER_AUDIT_DIR);
+  let keepAudit = false;
+  try { keepAudit = isUserAuditDir(audit); } catch { keepAudit = false; }
   const entries = stageEntries(dir, problems);
-  for (const file of entries.files) if (![...STAGED, 'receipt.json'].includes(file)) problems.push(`unexpected installed file: ${file}`);
-  for (const sub of entries.dirs) if (!STAGED_DIRS.includes(sub)) problems.push(`unexpected installed directory: ${sub}`);
+  const ours = file => keepAudit && (file === USER_AUDIT_DIR || file.startsWith(USER_AUDIT_DIR + '/'));
+  for (const file of entries.files) if (![...STAGED, 'receipt.json'].includes(file) && !ours(file)) problems.push(`unexpected installed file: ${file}`);
+  for (const sub of entries.dirs) if (!STAGED_DIRS.includes(sub) && !ours(sub)) problems.push(`unexpected installed directory: ${sub}`);
   return problems;
+}
+// Abito 0.1.2 wrote its hook-install audit log into the install prefix (`<prefix>/audit/*.jsonl`). An upgrade keeps those
+// records instead of refusing to install: tolerated ONLY as a private folder (0700, ours, not a link) of private regular
+// files (0600, ours, single link, no subfolders). Anything else there is still an unsafe layout.
+const USER_AUDIT_DIR = 'audit';
+function isUserAuditDir(dir) {
+  const me = process.getuid ? process.getuid() : null;
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory() || st.isSymbolicLink() || (st.mode & 0o077) || (me !== null && st.uid !== me)) return false;
+  for (const name of fs.readdirSync(dir)) {
+    const f = fs.lstatSync(path.join(dir, name));
+    if (!f.isFile() || f.isSymbolicLink() || f.nlink !== 1 || (f.mode & 0o077) || (me !== null && f.uid !== me)) return false;
+  }
+  return true;
 }
 function verifyStage(dir, { sourceCrate } = {}) {
   const problems = [];

@@ -62,10 +62,10 @@ impl TrayState {
     /// Human tooltip line, the island's established Spanish copy.
     pub fn label(self) -> &'static str {
         match self {
-            TrayState::Idle => "Abito — Listo",
-            TrayState::Working => "Abito — En curso",
-            TrayState::NeedsAttention => "Abito — Espera tu sí",
-            TrayState::Disconnected => "Abito — No disponible",
+            TrayState::Idle => "Koda — Listo",
+            TrayState::Working => "Koda — En curso",
+            TrayState::NeedsAttention => "Koda — Espera tu sí",
+            TrayState::Disconnected => "Koda — No disponible",
         }
     }
 }
@@ -103,9 +103,7 @@ pub fn derive(
     }
 }
 
-/// A 32×32 RGBA glyph, drawn by pure pixel rules (see module docs). The four
-/// variants differ by SHAPE, not only by color: continuous ring, dashed ring,
-/// ring + badge dot, dimmed ring + diagonal slash.
+/// An RGBA glyph (straight alpha, row-major).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Glyph {
     pub width: u32,
@@ -113,88 +111,53 @@ pub struct Glyph {
     pub rgba: Vec<u8>,
 }
 
-pub fn glyph_rgba(state: TrayState) -> Glyph {
-    const SIZE: u32 = 32;
-    const CENTER: f64 = 16.0;
-    const RING_R: f64 = 11.0;
-    const STROKE: f64 = 1.4; // half-width: the ring band is ~2.8 px
+/// HU-056: the tray icon is Koda Chibi, one pose per tray state (the four §10.3 states keep their meaning and are told apart by pose and
+/// the little badge Koda carries, not only by colour): idle = `termino` (calm, tail up), working = `trabaja`, needs-attention = `espera`
+/// (the «?» badge), disconnected = `error` (the red badge). Frames are cut from the same sheets the island ships
+/// (`tools/gen-koda-tray.py`), so the pixel art is identical to the island's.
+const KODA_CELLS: [u32; 3] = [16, 24, 32];
 
-    // §1.1 tokens: --go, --island-live, --sun, --faint
-    let (r, g, b, dim) = match state {
-        TrayState::Idle => (0xbd, 0xee, 0x63, 255u8),
-        TrayState::Working => (0x63, 0xb3, 0xff, 255),
-        TrayState::NeedsAttention => (0xff, 0xd2, 0x3f, 255),
-        TrayState::Disconnected => (0x6f, 0x6d, 0x66, 150), // dimmed ring
-    };
-
-    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
-    let mut put = |x: u32, y: u32, a: u8| {
-        if x < SIZE && y < SIZE {
-            let i = ((y * SIZE + x) * 4) as usize;
-            rgba[i] = r;
-            rgba[i + 1] = g;
-            rgba[i + 2] = b;
-            rgba[i + 3] = a;
-        }
-    };
-
-    let dist = |x: f64, y: f64| ((x - CENTER).powi(2) + (y - CENTER).powi(2)).sqrt();
-    // dashed working ring: 8 segments, every other 45° arc transparent
-    let dashed = state == TrayState::Working;
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let (fx, fy) = (x as f64 + 0.5, y as f64 + 0.5);
-            let d = dist(fx, fy);
-            if (d - RING_R).abs() <= STROKE {
-                if dashed {
-                    // angle from the center, 0 at 12 o'clock, clockwise
-                    let ang = (fx - CENTER).atan2(CENTER - fy); // -π..π
-                    let deg = ang.to_degrees();
-                    let seg = ((deg + 360.0) % 360.0 / 45.0).floor() as i32;
-                    if seg % 2 == 1 {
-                        continue; // gap: shape carries the state, not the color
-                    }
-                }
-                put(x, y, dim);
+fn koda_frame(state: TrayState, cell: u32) -> &'static [u8] {
+    macro_rules! f {
+        ($s:literal) => {
+            match cell {
+                16 => &include_bytes!(concat!("tray_koda/", $s, "-16.rgba"))[..],
+                24 => &include_bytes!(concat!("tray_koda/", $s, "-24.rgba"))[..],
+                _ => &include_bytes!(concat!("tray_koda/", $s, "-32.rgba"))[..],
             }
-        }
-    }
-
-    if state == TrayState::NeedsAttention {
-        // badge dot, top-right and OFF the ring stroke (per §10.3: insignia)
-        let (bx, by, br) = (CENTER + 7.0, CENTER - 7.0, 3.4);
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let (fx, fy) = (x as f64 + 0.5, y as f64 + 0.5);
-                if (fx - bx).powi(2) + (fy - by).powi(2) <= br * br {
-                    put(x, y, 255);
-                }
-            }
-        }
-    }
-
-    if state == TrayState::Disconnected {
-        // diagonal slash (bottom-left -> top-right), over the dimmed ring
-        let slash = |px: f64, py: f64| {
-            // distance to the line through (7,25)-(25,7): x + y = 32
-            let d = (px + py - 32.0).abs() / std::f64::consts::SQRT_2;
-            let inside = (6.0..=26.0).contains(&px) && (6.0..=26.0).contains(&py);
-            d <= 1.6 && inside
         };
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                if slash(x as f64 + 0.5, y as f64 + 0.5) {
-                    put(x, y, 255); // the slash itself stays crisp
-                }
-            }
-        }
     }
+    match state {
+        TrayState::Idle => f!("idle"),
+        TrayState::Working => f!("working"),
+        TrayState::NeedsAttention => f!("needs-attention"),
+        TrayState::Disconnected => f!("disconnected"),
+    }
+}
 
-    Glyph {
-        width: SIZE,
-        height: SIZE,
-        rgba,
+/// The sheet cell (16, 24 or 32 px) a platform's tray should receive. Only whole-number scales of the pixel art are ever handed to the
+/// OS: Linux trays ask for 16/22/24 px (24 is the largest exact cell they scale down from); the macOS menu bar draws 16 pt, so 32 px is
+/// exactly 16 pt @2x (and 18 pt @2x = 36 px sits within the OS's own scaling of that frame); Windows asks 16 px at 100 %, 24 at 150 %
+/// and 32 at 200 %, so 32 px is the exact 200 % frame and Windows scales it down by whole-pixel sampling.
+pub fn koda_cell_for_platform() -> u32 {
+    if cfg!(target_os = "linux") {
+        24
+    } else {
+        32
     }
+}
+
+pub fn glyph_rgba_sized(state: TrayState, cell: u32) -> Glyph {
+    let cell = if KODA_CELLS.contains(&cell) { cell } else { 32 };
+    Glyph {
+        width: cell,
+        height: cell,
+        rgba: koda_frame(state, cell).to_vec(),
+    }
+}
+
+pub fn glyph_rgba(state: TrayState) -> Glyph {
+    glyph_rgba_sized(state, koda_cell_for_platform())
 }
 
 /// One entry of the tray menu: a plain item, a check item (autostart) or a separator. Pure data: the same spec builds the real menu on
@@ -210,7 +173,7 @@ pub enum MenuEntry {
 /// toggle really works (`autostart_supported`: a desktop entry on Linux/macOS today). Windows has no Run-key implementation, so the item
 /// and its separator are omitted there rather than shown and failing. «Salir» is always last.
 pub fn menu_spec(autostart_supported: bool) -> Vec<MenuEntry> {
-    let mut menu = vec![MenuEntry::Item("tray-show", "Mostrar Abito"), MenuEntry::Item("tray-hide", "Ocultar"), MenuEntry::Separator];
+    let mut menu = vec![MenuEntry::Item("tray-show", "Mostrar Koda"), MenuEntry::Item("tray-hide", "Ocultar"), MenuEntry::Separator];
     if autostart_supported {
         menu.push(MenuEntry::Check("tray-autostart", "Arrancar al iniciar sesión"));
         menu.push(MenuEntry::Separator);

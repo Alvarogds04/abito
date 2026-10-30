@@ -26,6 +26,8 @@ mod train_tests;
 mod words_tests;
 #[cfg(test)]
 mod wake_tests;
+#[cfg(test)]
+mod koda_word_tests;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

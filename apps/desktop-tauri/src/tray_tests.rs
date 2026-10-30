@@ -75,114 +75,75 @@ fn index_round_trip_and_unknown_fails_closed() {
     }
 }
 
-// --- glyphs: four shapes, not four colors ------------------------------------
+// --- HU-056: the tray icon is Koda Chibi, one pose per state, in the native cells ---
 
-fn alpha_at(g: &Glyph, x: u32, y: u32) -> u8 {
-    assert_eq!(g.width, 32);
-    assert_eq!(g.height, 32);
-    assert_eq!(g.rgba.len(), (32 * 32 * 4) as usize, "32×32 RGBA");
-    g.rgba[((y * g.width + x) * 4 + 3) as usize]
-}
-
-#[test]
-fn every_glyph_is_32x32_rgba_and_deterministic() {
-    for state in [
-        TrayState::Idle,
-        TrayState::Working,
-        TrayState::NeedsAttention,
-        TrayState::Disconnected,
-    ] {
-        let a = glyph_rgba(state);
-        let b = glyph_rgba(state);
-        assert_eq!(a, b, "{:?} must draw deterministically", state);
-        assert_eq!(a.width, 32);
-        assert_eq!(a.height, 32);
-        assert_eq!(a.rgba.len(), 32 * 32 * 4);
-    }
-}
+const STATES: [TrayState; 4] = [
+    TrayState::Idle,
+    TrayState::Working,
+    TrayState::NeedsAttention,
+    TrayState::Disconnected,
+];
 
 #[test]
-fn the_four_glyphs_are_pairwise_distinct() {
-    let states = [
-        TrayState::Idle,
-        TrayState::Working,
-        TrayState::NeedsAttention,
-        TrayState::Disconnected,
-    ];
-    for (i, a) in states.iter().enumerate() {
-        for b in &states[i + 1..] {
-            assert_ne!(
-                glyph_rgba(*a),
-                glyph_rgba(*b),
-                "{a:?} and {b:?} must differ by shape, not only by color"
-            );
+fn every_glyph_is_a_square_rgba_cell_and_deterministic_in_every_size() {
+    for state in STATES {
+        for cell in [16u32, 24, 32] {
+            let a = glyph_rgba_sized(state, cell);
+            assert_eq!(a, glyph_rgba_sized(state, cell), "{state:?} {cell}");
+            assert_eq!((a.width, a.height), (cell, cell));
+            assert_eq!(a.rgba.len(), (cell * cell * 4) as usize);
         }
     }
 }
 
 #[test]
-fn idle_ring_is_continuous_and_working_ring_has_gaps() {
-    let idle = glyph_rgba(TrayState::Idle);
-    let working = glyph_rgba(TrayState::Working);
-    // ring pixel straight above the center (16,16): r=11 -> y=16-11=5
-    assert!(alpha_at(&idle, 16, 5) > 128, "idle ring top is drawn: {}", alpha_at(&idle, 16, 5));
-    assert!(alpha_at(&idle, 5, 16) > 128, "idle ring left is drawn");
-    // the dashed working ring MUST have transparent gaps somewhere ON the ring
-    let mut gaps = 0;
-    let mut drawn = 0;
-    for x in 5..=27 {
-        // follow the top half of the ring: y = 16 - sqrt(121 - (x-16)^2)
-        let dx = x as f64 - 16.0;
-        let y = (16.0 - (121.0_f64 - dx * dx).max(0.0).sqrt()).round() as i64;
-        if (0..32).contains(&y) {
-            match alpha_at(&working, x, y as u32) {
-                0 => gaps += 1,
-                a if a > 128 => drawn += 1,
-                _ => {}
+fn the_platform_glyph_uses_the_platform_cell() {
+    let cell = koda_cell_for_platform();
+    assert!([16, 24, 32].contains(&cell));
+    if cfg!(target_os = "linux") {
+        assert_eq!(cell, 24, "Linux trays scale down from the 24 px cell");
+    } else {
+        assert_eq!(cell, 32, "macOS (16 pt @2x) and Windows (200 %) get the 32 px cell");
+    }
+    for state in STATES {
+        let g = glyph_rgba(state);
+        assert_eq!((g.width, g.height), (cell, cell));
+    }
+}
+
+#[test]
+fn the_four_glyphs_are_pairwise_distinct_in_every_size() {
+    for cell in [16u32, 24, 32] {
+        for (i, a) in STATES.iter().enumerate() {
+            for b in &STATES[i + 1..] {
+                assert_ne!(
+                    glyph_rgba_sized(*a, cell),
+                    glyph_rgba_sized(*b, cell),
+                    "{a:?} and {b:?} must differ at {cell} px"
+                );
             }
         }
     }
-    assert!(drawn > 0, "working ring is drawn somewhere");
-    assert!(gaps > 0, "working ring is DASHED: gaps on the ring, got none");
-    // and the idle ring stays continuous
-    let mut idle_gaps = 0;
-    for x in 5..=27 {
-        let dx = x as f64 - 16.0;
-        let y = (16.0 - (121.0_f64 - dx * dx).max(0.0).sqrt()).round() as i64;
-        if (0..32).contains(&y) && alpha_at(&idle, x, y as u32) == 0 {
-            idle_gaps += 1;
+}
+
+#[test]
+fn every_glyph_is_visible_koda_on_a_transparent_background() {
+    for state in STATES {
+        for cell in [16u32, 24, 32] {
+            let g = glyph_rgba_sized(state, cell);
+            let alphas: Vec<u8> = g.rgba.iter().skip(3).step_by(4).copied().collect();
+            let opaque = alphas.iter().filter(|&&a| a == 255).count();
+            let clear = alphas.iter().filter(|&&a| a == 0).count();
+            assert!(opaque > (cell * cell / 5) as usize, "{state:?} {cell}: Koda is drawn ({opaque} opaque px)");
+            assert!(clear > 0, "{state:?} {cell}: the corners stay transparent");
+            assert!(alphas.iter().all(|&a| a == 0 || a == 255), "{state:?} {cell}: pixel art has no soft edges");
         }
     }
-    assert_eq!(idle_gaps, 0, "idle ring must be continuous");
 }
 
 #[test]
-fn attention_has_a_badge_dot_off_the_ring_center() {
-    let attention = glyph_rgba(TrayState::NeedsAttention);
-    // badge sits top-right, off the ring stroke: around (23, 9)
-    let badge = (10..14)
-        .map(|y| (19..24).map(move |x| (x, y)))
-        .flatten()
-        .any(|(x, y)| alpha_at(&attention, x, y) > 128);
-    assert!(badge, "needs-attention glyph carries an opaque badge dot top-right");
-}
-
-#[test]
-fn disconnected_is_dimmed_and_slashed() {
-    let idle = glyph_rgba(TrayState::Idle);
-    let gone = glyph_rgba(TrayState::Disconnected);
-    // dimmed: strictly less total alpha than the clean idle glyph
-    let sum = |g: &Glyph| g.rgba.iter().skip(3).step_by(4).map(|&a| a as u64).sum::<u64>();
-    assert!(sum(&gone) < sum(&idle), "disconnected must be dimmer than idle");
-    // slashed: opaque pixels along the anti-diagonal inside the ring,
-    // where idle is transparent
-    let slash = (10i32..=22).any(|i| {
-        let x = 16 + (i - 16).unsigned_abs() / 2 + 4;
-        let y = 32 - i - 4;
-        alpha_at(&gone, x.min(31) as u32, y.min(31) as u32) > 128
-            && alpha_at(&idle, x.min(31) as u32, y.min(31) as u32) == 0
-    });
-    assert!(slash, "disconnected carries a diagonal slash idle lacks");
+fn an_unknown_cell_falls_back_to_the_32_px_frame() {
+    assert_eq!(glyph_rgba_sized(TrayState::Idle, 20), glyph_rgba_sized(TrayState::Idle, 32));
 }
 
 // --- HU-048: the tray menu, one spec for every platform ------------------------
@@ -193,7 +154,7 @@ fn disconnected_is_dimmed_and_slashed() {
 #[test]
 fn the_menu_with_autostart_is_the_one_linux_and_macos_have_always_had() {
     assert_eq!(menu_spec(true), vec![
-        MenuEntry::Item("tray-show", "Mostrar Abito"),
+        MenuEntry::Item("tray-show", "Mostrar Koda"),
         MenuEntry::Item("tray-hide", "Ocultar"),
         MenuEntry::Separator,
         MenuEntry::Check("tray-autostart", "Arrancar al iniciar sesión"),
@@ -205,7 +166,7 @@ fn the_menu_with_autostart_is_the_one_linux_and_macos_have_always_had() {
 #[test]
 fn without_autostart_the_item_and_its_separator_are_gone_and_nothing_else_changes() {
     assert_eq!(menu_spec(false), vec![
-        MenuEntry::Item("tray-show", "Mostrar Abito"),
+        MenuEntry::Item("tray-show", "Mostrar Koda"),
         MenuEntry::Item("tray-hide", "Ocultar"),
         MenuEntry::Separator,
         MenuEntry::Item("tray-quit", "Salir"),

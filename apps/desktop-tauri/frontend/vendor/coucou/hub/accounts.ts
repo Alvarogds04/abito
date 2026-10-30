@@ -172,7 +172,7 @@ export async function renderAccounts({ invoke, V, listen, timers, page = 'all', 
     else {
       for (const a of owned.accounts.filter((a: any) => !chat || !a.accountId.startsWith('key-'))) ownedSec.append(card(row(a.config.nombre, a.hasCredential ? 'Clave guardada' : 'Sin clave', action('Editar', () => { form = accountForm(a); paint(); }, saving), action('Quitar conexión', () => {
         if (saving) return; saving = true;
-        work(() => agent({ action: 'abito_account_remove', accountId: a.accountId }), next => { apply(next); message.textContent = 'Conexión quitada. La clave se borró del almacén de Abito.'; }).finally(() => { saving = false; if (s.alive()) paint(); });
+        work(() => agent({ action: 'abito_account_remove', accountId: a.accountId }), next => { apply(next); message.textContent = 'Conexión quitada. La clave se borró del almacén de Koda.'; }).finally(() => { saving = false; if (s.alive()) paint(); });
       }, saving))));
       ownedSec.append(action('Configurar proveedor', () => { form = accountForm(null); paint(); }, saving));
     }

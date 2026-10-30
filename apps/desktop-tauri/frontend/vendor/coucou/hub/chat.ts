@@ -32,7 +32,7 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
   const keyRefresh: Record<string,() => void> = {};
   const subscriptionCleanups: (() => void)[] = [];
   function subscriptionRow(group: 'anthropic' | 'openai', provider: 'claude' | 'chatgpt') {
-    const box = h('div', { id: `chat-subscription-${group}`, title: `Usa tu suscripción de ${provider === 'claude' ? 'Claude' : 'ChatGPT'}. El inicio de sesión se hace en tu navegador; Abito guarda el acceso solo en el llavero del sistema. Sin verificar con el proveedor.`, style: 'display:flex;flex-direction:column;gap:6px;min-width:0' });
+    const box = h('div', { id: `chat-subscription-${group}`, title: `Usa tu suscripción de ${provider === 'claude' ? 'Claude' : 'ChatGPT'}. El inicio de sesión se hace en tu navegador; Koda guarda el acceso solo en el llavero del sistema. Sin verificar con el proveedor.`, style: 'display:flex;flex-direction:column;gap:6px;min-width:0' });
     const badge = h('span', { class: 'hint', role: 'status' });
     const controls = h('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0' });
     const manual = h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;min-width:0' });
@@ -207,7 +207,7 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
       if (!offered.length) for (const [id, name] of FALLBACK[group] || [['', UNAVAILABLE]]) select.append(h('option', { value: id, text: name }));
       else for (const m of offered) select.append(h('option', { value: m.id, text: m.name }));
       select.value = offered.find((m: any) => m.chosen)?.id || offered[0]?.id || FALLBACK[group]?.[0][0] || '';
-      select.disabled = modelBusy || !offered.length; select.title = offered.length ? 'Modelos elegidos de Abito; no cambia el modelo activo de una conversación.' : UNAVAILABLE;
+      select.disabled = modelBusy || !offered.length; select.title = offered.length ? 'Modelos elegidos de Koda; no cambia el modelo activo de una conversación.' : UNAVAILABLE;
     }
   }
   const engineSlots: Record<string, HTMLElement> = {};
@@ -245,7 +245,7 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
     const label = h('label', {}, h('i', { class:'dot', style:`background:${p.accent};margin-right:8px` }), h('span', { text:t(name) }));
     block.append(h('div', { class:'row' }, label, url, connect));
     if (id === 'custom') block.append(row('', key));
-    const na = hint(UNAVAILABLE); na.setAttribute('title', 'Conexión de direcciones arbitrarias no disponible todavía; los modelos verificados de Abito siguen debajo.');
+    const na = hint(UNAVAILABLE); na.setAttribute('title', 'Conexión de direcciones arbitrarias no disponible todavía; los modelos verificados de Koda siguen debajo.');
     block.append(na, exposure);
     showExposure(); locals.append(block);
   }
@@ -259,10 +259,10 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
     // S5 (#503): the chat's live-state context (agent sessions + integrations), ON by default.
     const live = trusted(toggle(prefs.liveContext !== false, value => { work(() => call('prefs_action', { action: 'set_live_context', live_context: value }), next => { prefs = next; paintContext(); }, () => paintContext()); }));
     (live as HTMLButtonElement).disabled = typeof prefs.liveContext !== 'boolean';
-    ctxBody.append(row(t('Live context'), live), h('div', { class: 'hub-note', text: t('When you write in the chat, Abito adds a short read-only summary of what it already knows: your coding-agent sessions, pending questions and the status of your connected integrations. It makes no new requests, and sends no keys, mail bodies or diffs. The chat still cannot run or approve anything. On by default.') }));
+    ctxBody.append(row(t('Live context'), live), h('div', { class: 'hub-note', text: t('When you write in the chat, Koda adds a short read-only summary of what it already knows: your coding-agent sessions, pending questions and the status of your connected integrations. It makes no new requests, and sends no keys, mail bodies or diffs. The chat still cannot run or approve anything. On by default.') }));
     const available = prefs.windowContextAvailable;
     if (prefs.windowContextNative === true) {
-      ctxBody.append(h('div', { class: 'hub-note', text: 'Abito lee la app y el título de la ventana activa del sistema. No se captura la URL.' + (typeof prefs.windowContextNote === 'string' ? ' Contexto ' + prefs.windowContextNote + '. Para activarlo: Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla. Abito no pide ese permiso por ti.' : '') }));
+      ctxBody.append(h('div', { class: 'hub-note', text: 'Koda lee la app y el título de la ventana activa del sistema. No se captura la URL.' + (typeof prefs.windowContextNote === 'string' ? ' Contexto ' + prefs.windowContextNote + '. Para activarlo: Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla. Koda no pide ese permiso por ti.' : '') }));
     } else
     ctxBody.append(h('div', { class: 'hub-note', text: available === true
       ? 'La extensión de GNOME está disponible. Solo se leen la app y el título; no se captura la URL.'
@@ -274,11 +274,11 @@ export async function renderChatSettings({ invoke, V, listen, timers }: any) {
         h('code', { text: 'sh apps/desktop-tauri/gnome-extension/install.sh' }),
         h('div', { class: 'hub-note', text: 'En Wayland, después de instalar una extensión nueva debes cerrar sesión y volver a entrar. Después ejecuta:' }),
         h('code', { text: 'gnome-extensions enable abito-context@abito' }),
-        h('div', { class: 'hub-note', text: 'Vuelve a abrir esta página para comprobarla. Abito no instala ni habilita la extensión automáticamente. No se captura la URL.' }));
+        h('div', { class: 'hub-note', text: 'Vuelve a abrir esta página para comprobarla. Koda no instala ni habilita la extensión automáticamente. No se captura la URL.' }));
     }
   };
   paintContext();
-  const ctxCard = notchTipSection(t('Active window context'), t('When you open the chat, Abito reads the app name and the title of the window you were using and attaches them to your first message. Off by default; nothing is read while it is off. The title goes to the model you chat with.'), ctxBody);
+  const ctxCard = notchTipSection(t('Active window context'), t('When you open the chat, Koda reads the app name and the title of the window you were using and attaches them to your first message. Off by default; nothing is read while it is off. The title goes to the model you chat with.'), ctxBody);
   ctxCard.setAttribute('id', 'chat-window-context'); // S5 (#503): the live-context row lives inside it
   foldable(ctxCard);
   const localCard = section(t('Local models'), locals);

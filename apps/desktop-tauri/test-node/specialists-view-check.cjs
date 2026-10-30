@@ -31,7 +31,8 @@ test('an id is opaque lowercase ASCII, never derived from the visible name, and 
 });
 
 test('the reserved identities of the avatar contract are refused: the principal and the engine CLIs', () => {
-  for (const bad of ['abito', 'pi', 'claude-code', 'codex', 'opencode', '__proto__', 'prototype', 'constructor']) {
+  // Koda 0.1 T2: the principal is now named «Koda» on screen, so `koda` is reserved too (`abito` stays: the internal identity).
+  for (const bad of ['abito', 'koda', 'pi', 'claude-code', 'codex', 'opencode', '__proto__', 'prototype', 'constructor']) {
     assert.equal(S.validId(bad), false, `${bad} must never be a specialist id`);
   }
   for (const bad of ['', 'A', 'Esp-x', 'esp x', '-esp', '.esp', '_esp', 'esp.'.repeat(9), 42, null, undefined, {}, 'esp-0011223344556677 '.repeat(1) + 'x'.repeat(20)]) {
@@ -187,7 +188,7 @@ test('with no active specialist the section says the principal is in charge', ()
   assert.deepEqual(v.rows.map(r => r.name), ['Investigador', 'Editor']);
   assert.deepEqual(v.rows.map(r => r.active), [false, false]);
   assert.equal(S.roleChip(state()), null, 'the principal shows no role chip');
-  assert.match(S.storeView(state(), listing).principalNote, /Abito/i);
+  assert.match(S.storeView(state(), listing).principalNote, /Koda/i); // Koda 0.1 T2
 });
 
 test('the active specialist is marked, named by its id, and shown in the chat chip', () => {
@@ -317,11 +318,11 @@ test('editing carries the id; cancel discards; an invalid draft is never sent', 
 });
 
 // ---- explicit selection: a radiogroup with the principal first ---------------------------------------
-test('the role choice is a radiogroup: Abito (principal) first, exactly one checked, active:null = principal', () => {
+test('the role choice is a radiogroup: Koda (principal) first, exactly one checked, active:null = principal', () => {
   const none = S.roleChoices(S.storeView(state(), listing));
   assert.deepEqual(none.map(r => r.id), [null, 'esp-0011223344556677', 'esp-8899aabbccddeeff']);
   assert.deepEqual(none.map(r => r.checked), [true, false, false]);
-  assert.equal(none[0].label, 'Abito');
+  assert.equal(none[0].label, 'Koda');
   assert.equal(none[0].principal, true);
   const second = S.roleChoices(S.storeView(state({ active: 'esp-8899aabbccddeeff' }), listing));
   assert.deepEqual(second.map(r => r.checked), [false, false, true]);

@@ -356,9 +356,9 @@ fn a_portal_without_the_registry_still_works_like_before() {
 #[test]
 fn every_catalog_action_sends_its_own_human_description_to_the_portal() {
     use abito_island::hotkey::{Target,HotkeyConfig};
-    let expected = ["Mostrar u ocultar la isla de Abito", "Enviar Abito al escritorio o traerlo a casa",
-        "Abrir el chat de Abito", "Ir al permiso o pregunta pendiente", "Enfocar una terminal abierta",
-        "Ir a la siguiente pestaña", "Ir a la pestaña anterior", "Silenciar o activar el sonido de Abito",
+    let expected = ["Mostrar u ocultar la isla de Koda", "Enviar Koda al escritorio o traerlo a casa",
+        "Abrir el chat de Koda", "Ir al permiso o pregunta pendiente", "Enfocar una terminal abierta",
+        "Ir a la siguiente pestaña", "Ir a la pestaña anterior", "Silenciar o activar el sonido de Koda",
         "Abrir o cerrar el guardarropa"];
     let bus=Bus::start();
     let _server=serve(&bus,Dialog::Accept);

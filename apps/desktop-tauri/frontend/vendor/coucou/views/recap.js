@@ -10,7 +10,7 @@ const T = {
     return t("No activity last week");
   },
   get noActivitySub() {
-    return t("Abito counts your agent sessions as they happen — check back next Monday.");
+    return t("Koda counts your agent sessions as they happen — check back next Monday.");
   },
   get coding() {
     return t("coding");
@@ -56,7 +56,7 @@ const T = {
     return t("Share image");
   },
   get shareUnavailable() {
-    return t("The share image is not available in Abito yet.");
+    return t("The share image is not available in Koda yet.");
   },
   get ok() {
     return t("OK");

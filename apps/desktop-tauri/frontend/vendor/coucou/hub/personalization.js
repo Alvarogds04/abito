@@ -3,7 +3,7 @@ import { h, clear } from "../views/dom.js";
 import { pillDefinition } from "../core/pills.js";
 import { t } from "./i18n-es.js";
 import { notchSection, notchRow, notchTipRow, notchTipSection, infoTip } from "./notch.js";
-import { card, row, select, toggle } from "./ui.js";
+import { row, select, toggle } from "./ui.js";
 import { action, note, section, trusted, session, preserveFocus } from "./runtime.js";
 function colors(V, A, prefs, identities, save) {
   const rows = [];
@@ -45,7 +45,7 @@ async function renderAppearance({ invoke, listen, V, S, A }) {
     const theme = V.themeView(prefs), pick = trusted(select(theme.options.map((o) => [o.id, o.label]), theme.mode, (value) => save({ action: "set_theme", theme: value })));
     pick.setAttribute("id", "appearance-theme");
     pick.setAttribute("aria-label", "Tema");
-    root.append(section("Tema", row("Tema", null, pick)), colors(V, A, prefs, [{ id: A.PRINCIPAL_ID, name: "Abito" }, ...S.identityView(store).identities], save), section("Movimiento", row("Animación reducida", "No disponible en esta ventana")), message);
+    root.append(section("Tema", row("Tema", null, pick)), colors(V, A, prefs, [{ id: A.PRINCIPAL_ID, name: "Koda" }, ...S.identityView(store).identities], save), section("Movimiento", row("Animación reducida", "No disponible en esta ventana")), message);
     if (S.identityView(store).kind !== "ready") root.append(note("Colores de especialistas no disponibles: no se pudieron cargar sus identidades."));
     restore();
   }
@@ -71,7 +71,6 @@ async function renderAppearance({ invoke, listen, V, S, A }) {
 async function renderPills({ invoke, listen, V, S, A, P, C, part = "tools" }) {
   const s = session(invoke, listen), { root, call, work, watch, message } = s;
   if (part === "tools") {
-    root.append(card(row("Herramienta principal: No disponible todavía", null)));
     return s.finish();
   }
   let prefs = {}, store = null, saving = false;
@@ -115,7 +114,7 @@ async function renderPills({ invoke, listen, V, S, A, P, C, part = "tools" }) {
       if (s.alive()) paint();
     });
   }
-  const principalInstructions = h("textarea", { id: "abito-instructions", class: "hub-input", "aria-label": "Instrucciones de Abito" });
+  const principalInstructions = h("textarea", { id: "abito-instructions", class: "hub-input", "aria-label": "Instrucciones de Koda" });
   let instructionsDraft = false;
   principalInstructions.addEventListener("input", (e) => {
     if (e.isTrusted) instructionsDraft = true;
@@ -140,7 +139,7 @@ async function renderPills({ invoke, listen, V, S, A, P, C, part = "tools" }) {
     }
     if (part === "island") {
       const m = P.islandModel(prefs, agents());
-      const spec = notchTipSection("Especialistas", "Los especialistas se definen en el código de Abito. Elegí cuáles se ven en la isla (hasta " + m.specialistsMax + ").");
+      const spec = notchTipSection("Especialistas", "Los especialistas se definen en el código de Koda. Elegí cuáles se ven en la isla (hasta " + m.specialistsMax + ").");
       const base = owned();
       if (base.kind !== "ready") spec.append(note(base.persistenceNote || "Leyendo especialistas…"));
       else {
@@ -159,10 +158,10 @@ async function renderPills({ invoke, listen, V, S, A, P, C, part = "tools" }) {
       if (!instructionsDraft) principalInstructions.value = prefs.abitoInstructions || "";
       principalInstructions.maxLength = S.MAX_INSTRUCTIONS;
       root.append(
-        section("Abito", row("Instrucciones", null, infoTip("Se aplican a los próximos mensajes del chat de Abito.", "Más información: Instrucciones"), principalInstructions, action("Guardar instrucciones", () => {
+        section("Koda", row("Instrucciones", null, infoTip("Se aplican a los próximos mensajes del chat de Koda.", "Más información: Instrucciones"), principalInstructions, action("Guardar instrucciones", () => {
           run({ type: "set_abito_instructions", text: principalInstructions.value });
         }))),
-        colors(V, A, prefs, [{ id: A.PRINCIPAL_ID, name: "Abito" }, ...S.identityView(store).identities], (p) => run({ type: "prefs", payload: p }))
+        colors(V, A, prefs, [{ id: A.PRINCIPAL_ID, name: "Koda" }, ...S.identityView(store).identities], (p) => run({ type: "prefs", payload: p }))
       );
     }
     root.append(message);

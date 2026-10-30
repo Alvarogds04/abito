@@ -76,14 +76,37 @@ function readPrevious(home) {
   } catch { return null; }
 }
 
-// Runs `command` as Claude Code does (/bin/sh -c) with `input` on stdin. Returns up to 64 KiB of stdout, or null
+// The shell Claude Code itself runs a statusLine command with. Unix: `/bin/sh -c`. Windows: Git Bash when installed, PowerShell
+// otherwise (https://code.claude.com/docs/en/statusline, «Windows configuration»), found ONLY at fixed absolute locations, never
+// by PATH lookup: CLAUDE_CODE_GIT_BASH_PATH (absolute, an existing file named bash.exe), %ProgramFiles%\\Git\\bin\\bash.exe,
+// %ProgramFiles(x86)%\\Git\\bin\\bash.exe, then %SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe. Returns null when none is usable.
+function previousShell({ platform = process.platform, env = process.env, exists } = {}) {
+  if (platform !== 'win32') return { file: '/bin/sh', args: ['-c'] };
+  const w = require('node:path').win32;
+  // Windows environment names are case-insensitive; a plain copy of process.env (spread, tests, a parent that rebuilds it) is not.
+  const get = name => { const k = Object.keys(env).find(x => x.toLowerCase() === name.toLowerCase()); return k === undefined ? undefined : env[k]; };
+  const isFile = exists || (p => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+  const absolute = p => typeof p === 'string' && /^[A-Za-z]:\\/.test(p) && w.normalize(p) === p && !p.includes('\0');
+  const candidates = [];
+  if (absolute(get('CLAUDE_CODE_GIT_BASH_PATH')) && w.basename(get('CLAUDE_CODE_GIT_BASH_PATH')).toLowerCase() === 'bash.exe') candidates.push(get('CLAUDE_CODE_GIT_BASH_PATH'));
+  for (const root of [get('ProgramFiles'), get('ProgramFiles(x86)')]) if (absolute(root)) candidates.push(w.join(root, 'Git', 'bin', 'bash.exe'));
+  for (const c of candidates) if (isFile(c)) return { file: c, args: ['-c'] };
+  const sysRoot = get('SystemRoot');
+  if (!absolute(sysRoot)) return null;
+  const ps = w.join(sysRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return isFile(ps) ? { file: ps, args: ['-NoProfile', '-NonInteractive', '-Command'] } : null;
+}
+
+// Runs `command` as Claude Code does (see previousShell) with `input` on stdin. Returns up to 64 KiB of stdout, or null
 // when it could not start or ran past `budgetMs` (then it is killed). Synchronous façade over a child process.
-function runPrevious(command, input, budgetMs = PREVIOUS_BUDGET_MS) {
+function runPrevious(command, input, budgetMs = PREVIOUS_BUDGET_MS, { env } = {}) {
   const { spawnSync } = require('node:child_process');
-  const r = spawnSync('/bin/sh', ['-c', command], { input, timeout: budgetMs, killSignal: 'SIGKILL', maxBuffer: MAX_OUTPUT * 4, stdio: ['pipe', 'pipe', 'ignore'] });
+  const shell = previousShell({ env: env ?? process.env });
+  if (!shell) return null;
+  const r = spawnSync(shell.file, [...shell.args, command], { input, timeout: budgetMs, killSignal: 'SIGKILL', maxBuffer: MAX_OUTPUT * 4, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   if (r.error && r.error.code !== 'ENOBUFS') return null;
   if (!r.stdout) return null;
   return r.stdout.subarray(0, MAX_OUTPUT);
 }
 
-module.exports = { extractPlan, writeChannel, readPrevious, runPrevious, runtimeDir, channelPath, previousPath, CHANNEL };
+module.exports = { extractPlan, writeChannel, readPrevious, runPrevious, previousShell, runtimeDir, channelPath, previousPath, CHANNEL };

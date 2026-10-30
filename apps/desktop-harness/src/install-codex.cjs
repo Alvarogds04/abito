@@ -49,7 +49,7 @@ const CODEX_PROFILE = {
   buildEntry: (event) => {
     const sub = NOTICE_SUBS[event];
     if (!sub) throw new core.InstallError(64, 'unknown codex hook event');
-    return { type: 'command', command: commandBase(process.execPath, core.BIN_PATH) + sub, timeout: event === 'Stop' ? STOP_TIMEOUT_SEC : NOTICE_TIMEOUT_SEC, statusMessage: 'Abito island' };
+    return { type: 'command', command: commandBase(process.execPath, core.BIN_PATH) + sub, timeout: event === 'Stop' ? STOP_TIMEOUT_SEC : NOTICE_TIMEOUT_SEC, statusMessage: 'Koda island' };
   },
   // Ours = the exact generated command shape (both ends anchored, execPath included); anything else is third-party.
   // The legacy `permission-request --timeout-sec N` entry is OURS too: it is the answered install this version migrates.
@@ -68,7 +68,7 @@ const CODEX_PROFILE = {
     'IMPORTANT: Codex marks new or changed hooks as untrusted until you review them in /hooks; until then they do nothing. Review and trust them there yourself. This installer never touches ~/.codex/config.toml.',
     'Note: Codex only ever sends the island a NOTICE («Codex te pide permiso / Codex te pregunta… Respondé en la terminal»). The approval prompt stays in the terminal and the island never answers for Codex.',
   ],
-  postNotes: plan => plan.remove ? [] : ['Next: open Codex and review/trust the Abito hooks in /hooks; they are inactive until you do.'],
+  postNotes: plan => plan.remove ? [] : ['Next: open Codex and review/trust the Koda hooks in /hooks; they are inactive until you do.'],
 };
 
 // The plan-level builder needs the real paths: `planClaudeSettings` passes its own binPath/execPath into buildEntry.
@@ -77,7 +77,7 @@ const withPaths = (profile) => ({
   buildEntry: (event, _timeoutSec, binPath, execPath) => {
     const sub = NOTICE_SUBS[event];
     if (!sub) throw new core.InstallError(64, 'unknown codex hook event');
-    return { type: 'command', command: commandBase(execPath, binPath) + sub, timeout: event === 'Stop' ? STOP_TIMEOUT_SEC : NOTICE_TIMEOUT_SEC, statusMessage: 'Abito island' };
+    return { type: 'command', command: commandBase(execPath, binPath) + sub, timeout: event === 'Stop' ? STOP_TIMEOUT_SEC : NOTICE_TIMEOUT_SEC, statusMessage: 'Koda island' };
   },
 });
 

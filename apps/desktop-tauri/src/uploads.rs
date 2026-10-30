@@ -220,7 +220,7 @@ pub fn attachments_dir(island_root: &Path) -> Result<PathBuf, ChatError> {
     // missing island means the attachments workspace does not exist yet.
     if !island_root.is_dir() {
         return Err(invalid(
-            "La carpeta de trabajo de Abito todavía no existe: abrí el chat cuando el motor esté disponible.",
+            "La carpeta de trabajo de Koda todavía no existe: abrí el chat cuando el motor esté disponible.",
         ));
     }
     let config = island_root.join("config.json");

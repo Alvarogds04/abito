@@ -31,7 +31,9 @@ const state = (s, notices) => ({ state: s, notices, card: null, request: null, r
     }));
     assert.ok(!after.calls.includes('expand'), `S4: no automatic expand (${after.calls})`);
     assert.equal(after.phase, 'compact', 'S4: still compact');
-    assert.deepEqual([after.w, after.h], [before.w, before.h], 'S4: the island did not grow');
+    // HU-057 S12: the compact pill FITS its content (min 96, max 420), so a notice line may widen it; it still stays 32 high and compact
+    assert.equal(after.h, before.h, 'S4: the island did not grow taller');
+    assert.ok(after.w >= 96 && after.w <= 420, `S12: the pill fits its content within 96..420 (${after.w})`);
     assert.equal(after.activity, 'Pi terminó su turno', 'S4: the notice reads inside the compact pill');
     assert.ok(after.shown, 'S4: the line is visible');
     assert.deepEqual([after.badge, after.badgeHidden], ['finished', false]);

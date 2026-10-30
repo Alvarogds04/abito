@@ -55,15 +55,17 @@
   // S10 (L24, «Notch pegado arriba como Coucou»): the expanded island is stuck to the top edge of the screen (gap 0) with
   // Coucou's corners 0 0 14 14; Rust pins every view with geometry::island_window_rect.
   const GAP_TOP = 0; // S29 (human: «No lo separes, me gusta que esté pegada»): the shell is flush to the top edge again
-  const OVERVIEW = { w: 720, h: 184, r: 22, gap: 0, clay: 66, clayX: 68, cy: 113 };
+  const OVERVIEW = { w: 720, h: 150, r: 26, gap: 0, clay: 64, clayX: 598, cy: 74 }; // HU-057 Nusa notch (bottom corners only)
   const RECAP_H = 208; // Coucou VIEW_LAYOUTS.recap: the recap card needs two more text lines than the overview card
   const QUESTION_H = 224; // default; a long question grows it (abito:question-size), capped by the fixed window
   let questionH = QUESTION_H;
   let compactW = COMPACT.w; // S2/S3: the compact pill widens for the minis, the activity line and a waiting question (island-layout.js compactView)
   let engineBandOn = false; // S11: the engine/account band under the overview (+36px island)
   let noticeStripOn = false; // S1 (abito-avisos-ux): the Avisos strip takes the same bottom slot (+36px island)
-  let finishedH = 0; // D: the island height a long «terminó» result needs (0 = the normal overview)
+  let cardH = 0; // the island height the desktop bridge approval card needs in the Nusa take-over (0 = the normal overview)
+  let finishedH = 0; // D: the island height a long «terminó» result needs (0 = the normal overview). Only honoured while the notices lane is open (HU-057: several paths clear the lane without resetting it, which left the strip outside the 150px notch)
   // const QUESTION_H doc: // Coucou QUESTION_PICKER_H: the fixed window already has room
+  const LEGACY_CARD_H = 184; // HU-057: OVERVIEW_CARD.cy (113) was measured on the 184-high legacy overview; the question card keeps that anchor
   const OVERVIEW_CARD = { clay: 64, clayX: 62, cy: 113 };
   const BLOB_DROP = 10 / 140; // the drawn blob sits this fraction of the box below the box centre (measured, was drop 10 at box 140)
   // The engine draws its body ~112 viewBox units wide inside its 200x160
@@ -251,24 +253,42 @@
     if (conceal.moving && !raf) raf = requestAnimationFrame(tick);
   }
 
+  let compactAsk = false, measureCtx = null;
+  const compactHasText = () => { const a = $('compact-activity'); return !!(a && a.textContent); };
+  function compactTextWidth() {
+    const a = $('compact-activity'); if (!a || !a.textContent) return 0;
+    try {
+      measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+      const cs = getComputedStyle(a); measureCtx.font = `${cs.fontWeight} 12px ${cs.fontFamily}`;
+      return measureCtx.measureText(a.textContent).width;
+    } catch { return a.textContent.length * 7; }
+  }
   function render() {
-    const w = lerp(compactW, lerp(OVERVIEW.w, CHAT.w, q.x), p);
-    const overviewHeight = recapShown ? RECAP_H : questionShown ? questionH : finishedH || (engineBandOn || noticeStripOn ? OVERVIEW.h + FINISHED_BAND_H : OVERVIEW.h);
+    // HU-057 S12: the compact pill fits its text + Koda (AbitoNusa.compactWidth). Visual only: the reported shape keeps the
+    // island-layout widths (288/440/560), so geometry::COMPACT_WIDTHS and the native input shape do not move.
+    const fitOn = !!window.AbitoNusa && compactAsk === false && p < 0.001 && q.x < 0.001;
+    const fitW = fitOn ? window.AbitoNusa.compactWidth(compactTextWidth()) : 0;
+    if ((capsule.dataset.pillFit === 'true') !== fitOn) capsule.dataset.pillFit = String(fitOn);
+    const w = fitOn ? fitW : lerp(compactW, lerp(OVERVIEW.w, CHAT.w, q.x), p);
+    const compactClayX = fitOn ? (compactHasText() ? window.AbitoNusa.COMPACT.padLeft + window.AbitoNusa.COMPACT.koda / 2 : fitW / 2) /* #clay is translated -50% by the vendor sheet: `left` is its CENTRE */ : COMPACT.clayX;
+    if ((capsule.dataset.pillBare === 'true') !== (fitOn && !compactHasText())) capsule.dataset.pillBare = String(fitOn && !compactHasText());
+    const overviewHeight = recapShown ? RECAP_H : questionShown ? questionH : cardShown && cardH ? cardH : (noticeLane && noticeLane.view === 'notices' ? finishedH : 0) || (engineBandOn || noticeStripOn ? OVERVIEW.h + FINISHED_BAND_H : OVERVIEW.h);
     const h = lerp(COMPACT.h, lerp(overviewHeight, CHAT.h, q.x), p);
     const QT = window.AbitoQuestionToast, withToast = (shape) => (QT && toastShown ? QT.shapeWithToast(shape, true) : shape);
     reportShape(withToast([lerp(compactW, lerp(OVERVIEW.w, CHAT.w, q.target), target),
       lerp(COMPACT.h, lerp(overviewHeight, CHAT.h, q.target), target) + GAP_TOP * (1 - conceal.target) - 24 * conceal.target]), withToast([w, h + GAP_TOP * (1 - conceal.x) - 24 * conceal.x]), mode === 'idle' && q.mode === 'idle' && !conceal.moving);
-    // corners: square on top (the bar and the notch meet the screen edge), r14 below
-    const rTop = lerp(COMPACT.r, OVERVIEW.r, p), rBottom = rTop; // S29: rounded on ALL corners, Sileo's pill family (its pill rx is 16)
+    // corners (HU-057): the compact pill is r16 on all four; the expanded island is the Nusa notch, square on top (the ears are
+    // drawn by island-nusa-mount.js) and r26 (OVERVIEW.r) at the bottom.
+    const rBottom = lerp(COMPACT.r, OVERVIEW.r, p), rTop = lerp(COMPACT.r, 0, p), rTopUsed = fitOn ? 0 : rTop; // S12: the fitted pill hangs from the edge, bottom corners only
     const gap = lerp(COMPACT.gap, OVERVIEW.gap, p);
     // the question card is 148 high (200 island): the character centres on it, 15px lower than on the 108 cards
-    const ovBase = recapShown ? { ...OVERVIEW_CARD, cy: 42 + (RECAP_H - 52) / 2 } : questionShown ? { ...OVERVIEW_CARD, cy: OVERVIEW_CARD.cy + (questionH - OVERVIEW.h) / 2 } : cardShown ? OVERVIEW_CARD : OVERVIEW;
+    const ovBase = recapShown ? { ...OVERVIEW_CARD, cy: 42 + (RECAP_H - 52) / 2 } : questionShown ? { ...OVERVIEW_CARD, cy: OVERVIEW_CARD.cy + (questionH - LEGACY_CARD_H) / 2 } : cardShown ? OVERVIEW_CARD : OVERVIEW;
     // the confirmed finished-notice lane (pane starts at x=108) uses the small R6 too, or the 128px blob covers the pane
     const ov = (noticeLane && noticeLane.view === 'notices') ? OVERVIEW_CARD : ovBase;
     const cs = lerp(COMPACT.clay, ov.clay, p);
     put(island, 'width', w + 'px');
     put(island, 'height', h + 'px');
-    put(island, 'borderRadius', `${rTop}px ${rTop}px ${rBottom}px ${rBottom}px`);
+    put(island, 'borderRadius', `${rTopUsed}px ${rTopUsed}px ${rBottom}px ${rBottom}px`);
     put(island, 'top', (gap * (1 - conceal.x) - 24 * conceal.x - 0 * conceal.x) + 'px');
     put(island, 'bottom', 'auto');
     // R6 is only scaled and positioned (never redrawn): centred in the
@@ -279,7 +299,7 @@
     put(clayEl, 'viewBox', BASE_VB.map((b, i) => +(b + (OVERVIEW_VB[i] - b) * z).toFixed(2)).join(' '));
     put(clayEl, 'width', csv + 'px');
     put(clayEl, 'height', csv + 'px');
-    put(clayEl, 'left', lerp(lerp(COMPACT.clayX, ov.clayX, p), CHAT.clayLeft, q.x) + 'px'); // chat: the bot sits at the composer's left, inside the 640 island
+    put(clayEl, 'left', lerp(lerp(compactClayX, ov.clayX, p), CHAT.clayLeft, q.x) + 'px'); // chat: the bot sits at the composer's left, inside the 640 island
     // Coucou companion follows the live composer, not a demo success pose.
     put(clayEl, 'top', lerp(overviewTop, CHAT.h - 76, q.x) + 'px');
     // Coucou's badge sits on the character's top-left (core/layout.ts botPosition: centre - (20, 21)); 16px circle.
@@ -291,7 +311,7 @@
       badge.hidden = !kind || p < 1;
       if (badge.dataset.kind !== kind) badge.dataset.kind = kind;
       // G: the badge rides the mascot's OWN rendered box (the same left/top/size just written above), in every view
-      const clayLeft = lerp(lerp(COMPACT.clayX, ov.clayX, p), CHAT.clayLeft, q.x), clayTop = lerp(overviewTop, CHAT.h - 76, q.x);
+      const clayLeft = lerp(lerp(compactClayX, ov.clayX, p), CHAT.clayLeft, q.x), clayTop = lerp(overviewTop, CHAT.h - 76, q.x);
       const at = window.AbitoIslandLayout && window.AbitoIslandLayout.badgePosition({ left: clayLeft, top: clayTop, size: csv });
       if (at) { badge.style.left = at.left + 'px'; badge.style.top = at.top + 'px'; }
     }
@@ -647,8 +667,19 @@
       try { const why = edgeInteraction.snapshot().why; if (capsule.dataset.edgeWhy !== why) capsule.dataset.edgeWhy = why; } catch { /* optional diagnostic */ }
     }
   }
+  // HU-057 S9: S/M/L/Auto. The scale is AbitoNusa.sizeScale(setting, work-area width) published as --nusa-size on #capsule
+  // (the expanded notch scales as one piece, origin top-centre). The native window is 752 wide and the notch 720, so anything
+  // above 752/720 is clamped: the notch can never outgrow the window it is drawn in (geometry::ISLAND_WINDOW is untouched).
+  const NUSA_MAX_SCALE = 752 / 720;
+  function applyIslandSize(setting) {
+    const N = window.AbitoNusa; if (!N || !capsule) return;
+    const area = (window.screen && Number(window.screen.availWidth)) || 0;
+    const k = Math.min(N.sizeScale(N.SIZES.some(x => x.id === setting) ? setting : 'auto', area, 0), NUSA_MAX_SCALE);
+    capsule.style.setProperty('--nusa-size', String(+k.toFixed(4)));
+  }
   function applyInteractionPrefs(p) {
     if (!interaction || !p) return;
+    applyIslandSize(p.islandSize);
     if (edgeInteraction) edgeInteraction.setPreferences({ sound:p.sound !== false, absenceSeconds:p.absenceSeconds ?? 10 });
     // An absent/foreign pair (a host without #336) keeps the module defaults.
     if (Number.isInteger(p.autoCloseSeconds) && typeof p.openOnHover === 'boolean') {
@@ -1022,9 +1053,18 @@
   // for the height it needs (capped like a question, then it scrolls inside); the window grows through the existing on-demand verb.
   // S10 (10 «Pi terminó», B): the notice is a fixed 32px band UNDER the overview, so the island is 36px taller while it shows.
   const FINISHED_BAND_H = 36;
+  // HU-063 (human, 29-oct): in the Nusa take-over the island ADJUSTS to the card: 36px header strip + the card as tall as its wrapped
+  // message needs + a 16px bottom air, never above the frozen 340 window less its 16px air. Other cases keep the fixed overview height.
+  const FINISHED_HEAD = 36, FINISHED_AIR = 16, FINISHED_MAX = 340 - 16;
   function fitFinished(shown) {
-    const next = shown || capsule.dataset.noticeBand === 'true' ? OVERVIEW.h + FINISHED_BAND_H : 0;
+    let next = shown || capsule.dataset.noticeBand === 'true' ? OVERVIEW.h + FINISHED_BAND_H : 0;
+    if (next && shown && capsule.dataset.takeover && noticeCard && !noticeCard.hidden && noticeCard.offsetHeight > 0)
+      next = Math.min(FINISHED_MAX, Math.max(OVERVIEW.h - 2, Math.ceil(FINISHED_HEAD + noticeCard.offsetHeight + FINISHED_AIR)));
     if (next !== finishedH) { finishedH = next; render(); }
+  }
+  if (noticeCard && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => { if (noticeLane?.view === 'notices') fitFinished(true); }).observe(noticeCard);
+    new MutationObserver(() => { if (noticeLane?.view === 'notices') fitFinished(true); }).observe(capsule, { attributes: true, attributeFilter: ['data-takeover'] });
   }
   // the band appears when an agent finished and goes away while THAT agent runs again (human note: «aparece y se oculta dependiendo si terminó, o si está corriendo»)
   let runningNow = [];
@@ -1041,14 +1081,26 @@
     const selected = noticeLane?.view === 'notices' ? current?.notices?.find(n => n.id === noticeLane.id) : first;
     const v = selected && !agentRunning(selected) && O.finishedCardView ? O.finishedCardView(selected, NV && NV.agentLabel) : null;
     noticeCard.hidden = !v;
+    noticeCard.dataset.severity = selected && selected.severity === 'error' ? 'error' : 'info'; // HU-057 T5: display data only (the Nusa takeover reads it; no behaviour)
     noticeTerminalId = v && selected ? selected.id : null;
     // R14: retained history uses Avisos; the S10 band remains for native-confirmed detail only.
     capsule.dataset.noticeBand = 'false';
     document.dispatchEvent(new CustomEvent('abito:finished-shown', { detail: { shown: !!v && noticeLane?.view === 'notices' } }));
-    if (!v) { fitFinished(false); return; }
+    if (!v) {
+      fitFinished(false);
+      // «un "Terminó" nunca debe mostrarse sin contenido»: the lane is only open while its card is shown; close it like the other lane exits (end / question-open)
+      if (noticeLane?.view === 'notices') {
+        noticeLane = null; delete capsule.dataset.noticeView;
+        moveView(0); renderCard(); render(); syncInteraction();
+        document.dispatchEvent(new CustomEvent('island:view', { detail: 'overview' }));
+      }
+      return;
+    }
     $('notice-card-name').textContent = v.name;
     $('notice-card-verb').textContent = v.verb;
-    const msg = $('notice-card-message'); msg.textContent = v.message; msg.hidden = !v.message; msg.setAttribute('data-tip', v.full);
+    const msg = $('notice-card-message'); // human 29-oct: the notch card wraps the WHOLE result; the model's one-line cut («…») only applies without the Nusa look
+    const whole = window.AbitoNusa && v.message && /…$/.test(v.message) && v.full && v.full.length > v.message.length ? v.full : v.message;
+    msg.textContent = whole; msg.hidden = !v.message; msg.setAttribute('data-tip', v.full);
     const t = $('notice-card-terminal'); t.disabled = !v.terminal.available;
     fitFinished(noticeLane?.view === 'notices');
   }
@@ -1319,6 +1371,20 @@
     flag.setAttribute('aria-label', questionWaiting && !waiting ? 'Pi espera tu respuesta' : waiting ? 'Algo espera tu decisión' : (bridgeDown ? 'Sin puente' : 'Avisos caídos'));
     putIcon($('compact-flag-icon'), (waiting || questionWaiting) ? dotNode() : iconNode(icon('triangle')));
   }
+  // The bridge approval card (#permission) ADJUSTS the island like the finished card: the lowest control + a 16px air, never above the
+  // frozen 340 window less its 16px air. Only in the Nusa «waiting» take-over; everything else keeps the fixed overview height.
+  function fitCard() {
+    let next = 0;
+    const perm = $('permission');
+    if (cardShown && perm && !perm.hidden && capsule.dataset.takeover === 'waiting' && capsule.dataset.phase === 'expanded') {
+      const top = island.getBoundingClientRect().top; let low = 0;
+      for (const id of ['allow', 'deny', 'card-fold', 'card-actions']) { const e = $(id); if (e && e.offsetHeight > 0) low = Math.max(low, e.getBoundingClientRect().bottom - top); }
+      if (low > 0) next = Math.min(FINISHED_MAX, Math.max(OVERVIEW.h, Math.ceil(low + FINISHED_AIR)));
+    }
+    if (next !== cardH) { cardH = next; render(); }
+  }
+  for (const id of ['operation', 'card-actions']) { const e = $(id); if (e && typeof ResizeObserver === 'function') new ResizeObserver(() => fitCard()).observe(e); }
+  new MutationObserver(() => fitCard()).observe(capsule, { attributes: true, attributeFilter: ['data-takeover', 'data-phase'] });
   function renderCard() {
     syncCountdownTimer();
     paintCompactFlag();
@@ -1359,6 +1425,7 @@
     allow.disabled = deny.disabled = Boolean(reason || cardFlight);
     const wait = $('card-wait'); // T7.3: «Espera tu respuesta» only while the human may still decide
     if (wait) wait.hidden = Boolean(reason);
+    fitCard();
   }
   const cardInfo = $('card-info');
   if (cardInfo) cardInfo.addEventListener('click', () => {
@@ -1483,7 +1550,8 @@
     if (badge) { badge.hidden = !v.badge; badge.dataset.kind = v.badge || ''; }
     const reply = $('compact-reply'); if (reply) reply.hidden = !v.reply;
     capsule.dataset.compactAsk = v.reply ? 'true' : 'false';
-    if (next !== compactW) { compactW = next; render(); }
+    compactAsk = !!v.reply;
+    compactW = next; render(); // always: the fitted pill follows the text, not only the reported width
   });
   // S3: «Responder» on the widened pill opens the island on the question (the same verb the toast used)
   const compactReply = $('compact-reply');
@@ -1521,7 +1589,7 @@
     if (!toggleButton) return;
     const open = state === 'expanded';
     toggleButton.setAttribute('aria-expanded', open ? 'true' : 'false');
-    toggleButton.textContent = open ? 'Cerrar Abito' : 'Abrir Abito';
+    toggleButton.textContent = open ? 'Cerrar Koda' : 'Abrir Koda';
   }
   if (toggleButton) {
     toggleButton.addEventListener('click', () => {

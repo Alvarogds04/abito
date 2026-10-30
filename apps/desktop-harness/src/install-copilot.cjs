@@ -26,7 +26,7 @@ const isOurs = (h, binPath, execPath) => EVENTS.some(e => isOursFor(e)(h, binPat
 const COPILOT_PROFILE = {
   name: 'copilot', defaultFile: ['.copilot', 'hooks', 'abito-island.json'], events: EVENTS, defaultTimeoutSec: 35, usage: USAGE,
   isOurs, checkPaths: (binPath, execPath) => { if (!isAbsPlain(binPath) || !isAbsPlain(execPath)) throw refuse('hook script and node paths must be absolute'); },
-  previewNotes: plan => plan.remove ? [] : [`Target hooks file (Abito owns it): ${plan.settingsPath}`,
+  previewNotes: plan => plan.remove ? [] : [`Target hooks file (Koda owns it): ${plan.settingsPath}`,
     'Copilot CLI loads it at startup. An island `allow` skips the Copilot permission prompt for lossless requests; anything else, or no answer, leaves the prompt to Copilot. sessionEnd only sends a notice.'],
   postNotes: () => [],
   verify: plan => (parsed, _p, text) => {

@@ -4,12 +4,14 @@
 // ONE PermissionRequest handler dispatches by tool_name (see claude.cjs); the old PreToolUse question path is gone.
 // Fake receiver + stub clients only; nothing here reads or writes the real ~/.claude or the live island.
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint, assertMode } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { handleClaudeHook } = require('../src/claude.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { handleClaudeHook: raw_handleClaudeHook } = require('../src/claude.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
 
 const cwd = path.resolve(__dirname, '..');
 const QUESTION = { question: '¿Qué base de datos usamos?', header: 'DB', multiSelect: false,
@@ -62,7 +64,7 @@ test('other tools keep the permission path: AskUserQuestion is dispatched by too
   await p;
   const q = rcv.frames.find(f => f.type === 'question');
   assert.deepEqual(q.options.map(o => o.value), ['allow', 'deny']);
-  assert.equal(r.stdout, '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from the Abito island by the user."}}}\n');
+  assert.equal(r.stdout, '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from the Koda island by the user."}}}\n');
 });
 test('S6: the pre-tool-use event is gone: no frame, no output, whatever the tool', async t => {
   const rcv = await fakeReceiver(t, { questions: true });
@@ -74,7 +76,7 @@ test('S6: the pre-tool-use event is gone: no frame, no output, whatever the tool
 });
 test('an island option "allow"/"deny" is never a question answer', async () => {
   for (const value of ['allow', 'deny', 'terminal', 'o9']) {
-    const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: { ABITO_DESKTOP_SOCKET: '/x' }, argv: [],
+    const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: stubEndpoint('x'), argv: [],
       clientFactory: () => ({ ask: async () => ({ status: 'answered', answer: { type: 'option', value } }) }) });
     assert.equal(r.stdout, '', value);
   }
@@ -97,17 +99,17 @@ test('unrepresentable shapes fall back to Claude\'s own dialog: duplicate questi
 });
 test('every non-answer outcome => EMPTY stdout (never allow, never deny)', async () => {
   for (const s of ['expired', 'busy', 'cancelled', 'human_cancelled', 'unavailable', 'unsupported_receiver', 'protocol_error', 'invalid_request', 'weird']) {
-    const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: { ABITO_DESKTOP_SOCKET: '/nope' }, argv: [], clientFactory: stub(s) });
+    const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: stubEndpoint(), argv: [], clientFactory: stub(s) });
     assert.equal(r.stdout, '', s); assert.equal(r.exitCode, 0); assert.doesNotMatch(r.stderr, /Postgres|base de datos/);
   }
   for (const answer of [{ type: 'option', value: 'o9' }, { type: 'option', value: 'allow' }, { type: 'text', text: 'Postgres' }, undefined]) {
-    const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: { ABITO_DESKTOP_SOCKET: '/x' }, argv: [],
+    const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: stubEndpoint('x'), argv: [],
       clientFactory: () => ({ ask: async () => ({ status: 'answered', answer }) }) });
     assert.equal(r.stdout, '');
   }
 });
 test('no island at all => empty stdout and a generic hint on stderr only', async () => {
-  const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: { ABITO_SOCKET_DIR: '/nonexistent-abito-test' }, argv: [] });
+  const r = await handleClaudeHook({ event: 'permission-request', input: perm(), env: offlineDir('nonexistent-abito-test'), argv: [] });
   assert.equal(r.stdout, ''); assert.equal(r.exitCode, 0);
 });
 test('bad input never produces output: wrong event name, bad JSON, bad cwd, oversize, hook timeout too short', async t => {
@@ -121,7 +123,7 @@ test('bad input never produces output: wrong event name, bad JSON, bad cwd, over
 });
 
 // ---- SessionStart: cache the session title so the island can name the session ----
-const tmp = t => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-title-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
+const tmp = t => { const d = fs.mkdtempSync(path.join(require('./platform-env.cjs').tmpBase(), 'abito-title-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
 const start = (over = {}) => JSON.stringify({ session_id: 'sess-1', cwd, hook_event_name: 'SessionStart', source: 'startup', session_title: 'Migrar la base', ...over });
 
 test('SessionStart caches the title privately and prints nothing; the next question is labelled with it', async t => {
@@ -130,9 +132,9 @@ test('SessionStart caches the title privately and prints nothing; the next quest
   const r = await handleClaudeHook({ event: 'session-start', input: start(), env, argv: [] });
   assert.deepEqual(r, { stdout: '', stderr: '', exitCode: 0 });
   const dir = path.join(state, 'claude-titles');
-  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
   const files = fs.readdirSync(dir); assert.equal(files.length, 1);
-  assert.equal(fs.statSync(path.join(dir, files[0])).mode & 0o777, 0o600);
+  assertMode(dir, 0o700); // Windows twin inside assertMode: the helper reports the directory/file as private to the user
+  assertMode(path.join(dir, files[0]), 0o600);
   const p = answerer(rcv, 'o0');
   await handleClaudeHook({ event: 'permission-request', input: perm(), env, argv: [] }); await p;
   assert.equal(rcv.frames.find(f => f.type === 'question').projectName, 'Migrar la base');

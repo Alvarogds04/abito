@@ -26,7 +26,7 @@ const { dom, Element, all, text } = require('./settings-accounts-check.cjs');
   await privacyPage(page, { hero, navigate() {}, set onLeave(_) {} }, invoke);
   assert.deepEqual(calls.splice(0), [['failure_action', { action: 'view' }]], 'opening only reads');
   const btn = label => all(page).find(e => e.tagName === 'button' && e.textContent === label);
-  assert(text(page).includes('Abito tuvo un problema. ¿Querés reportarlo?'));
+  assert(text(page).includes('Koda tuvo un problema. ¿Querés reportarlo?'));
   assert(btn('No volver a preguntar') && btn('Ahora no') && btn('Reportar un problema'));
   btn('Reportar').fire('click', false);
   await new Promise(r => setImmediate(r));

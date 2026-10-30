@@ -54,7 +54,7 @@ function fixture() {
   s = await b.saveSettings({ ...s, soundEnabled: false, soundVolume: 0, openOnHover: false, screen: 'HDMI-1' });
   assert.deepEqual(f.calls.map(p => p.action), ['sound_off', 'set_sound_gain', 'set_island_interaction', 'set_monitor']);
   for (const [key, value] of Object.entries({ autostart: true, language: 'es', shortcuts: { x: {} }, model: 'x', chatProvider: 'openai', chatModels: { x: 'y' }, ollamaUrl: 'x', lmstudioUrl: 'x', customUrl: 'x', planRelayInstalled: true, showPlanInNotch: true, showCodexPlanInNotch: true, hooksInstalled: true, phoneLink: true, phoneChat: true, phoneDetails: true, phoneChatModels: ['x'], mochiOutfit: 'x', absenceInterval: 30, unknown: true })) {
-    f.calls.length = 0; await assert.rejects(b.saveSettings({ ...s, soundEnabled: true, [key]: value }), /no disponible en Abito/); assert.deepEqual(f.calls, []);
+    f.calls.length = 0; await assert.rejects(b.saveSettings({ ...s, soundEnabled: true, [key]: value }), /no disponible en Koda/); assert.deepEqual(f.calls, []);
   }
   for (const delta of [{ soundVolume: 0.21 }, { soundVolume: NaN }, { soundVolume: '0.1' }, { autoCloseInterval: 4 }, { autoCloseInterval: 5.5 }, { autoCloseInterval: 121 }, { openOnHover: 1 }, { screen: '' }, { pillColors: { agent_amp: '#FFFFFF' } }]) {
     f.calls.length = 0; await assert.rejects(b.saveSettings({ ...s, ...delta })); assert.deepEqual(f.calls, []);

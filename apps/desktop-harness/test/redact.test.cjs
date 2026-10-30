@@ -6,7 +6,7 @@ const { redactCommand, PATTERNS } = require('../src/redact.cjs');
 const { describeToolDetailed } = require('../src/projection.cjs');
 const claude = require('../src/claude.cjs');
 const codex = require('../src/codex.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { fakeReceiver, viaPipe } = require('./fake-receiver.cjs');
 
 // Risky command words are assembled so this source never carries them as one literal.
 const SUDO = ['su', 'do'].join(''), SH = ['s', 'h'].join(''), RMRF = ['rm', '-rf'].join(' ');
@@ -191,7 +191,8 @@ test('redactCommand directly on 1 MB stays < 1500 ms and is linear (2 MB <= 3.5x
   const time = s => { const t = process.hrtime.bigint(); redactCommand(s); return Number(process.hrtime.bigint() - t) / 1e6; };
   for (const u of ['curl -u ', 'curl -b ', 'http -a ', 'TOKEN=', '-----BEGIN PRIVATE KEY-----', 'A'.repeat(39) + ' ']) {
     time(mbOf(u, 2e5)); // warm-up
-    const a = time(mbOf(u)), b = time(mbOf(u, 2e6));
+    const best = (s, n = 3) => Math.min(...Array.from({ length: n }, () => time(s))); // noisy shared runners: the minimum of 3 runs, not one sample
+    const a = best(mbOf(u)), b = best(mbOf(u, 2e6));
     max = Math.max(max, a);
     assert.ok(a < 1500, `${u} 1MB ${a.toFixed(0)} ms`);
     assert.ok(b <= Math.max(3.5 * a, 60), `${u}: 2MB ${b.toFixed(0)} ms vs 1MB ${a.toFixed(0)} ms`);
@@ -468,7 +469,7 @@ const answerer = (rcv, value) => rcv.next('question').then(q => rcv.send({ v: 1,
   sessionId: q.sessionId, at: Date.now(), id: q.id, source: 'human', answer: { type: 'option', value } }));
 // S2 (ad0ae382) keeps Claude answering; S4/T2 makes Codex NOTICE-ONLY, so its rows live in the `Codex (aviso)` block
 // at the end of this file. The redaction contract itself (never a secret on the wire) is asserted for both.
-const ADAPTERS = [['Claude Code', claude.handleClaudeHook, claude]];
+const ADAPTERS = [['Claude Code', viaPipe(claude.handleClaudeHook), claude]];
 const input = command => JSON.stringify({ session_id: 's', cwd, hook_event_name: 'PermissionRequest', tool_name: 'Bash',
   tool_input: { command, description: 'SECRETDESC' }, last_assistant_message: 'SECRETREPLY' });
 const checkSize = (rcv, q) => {
@@ -477,7 +478,7 @@ const checkSize = (rcv, q) => {
 };
 const codexNotice = async (t, command) => {
   const rcv = await fakeReceiver(t, { questions: true });
-  const r = await codex.handleCodexHook({ event: 'permission-request', input: input(command), env: envOf(rcv), argv: [] });
+  const r = await viaPipe(codex.handleCodexHook)({ event: 'permission-request', input: input(command), env: envOf(rcv), argv: [] });
   const notice = await rcv.seen('attention');
   assert.equal(r.stdout, ''); assert.equal(r.exitCode, 0);
   assert.equal(rcv.frames.filter(f => f.type === 'questions_hello' || f.type === 'question').length, 0, 'never a question');

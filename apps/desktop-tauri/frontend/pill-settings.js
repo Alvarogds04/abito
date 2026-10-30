@@ -120,10 +120,10 @@
     left.append(el('span', 'psection-label', 'Principal'));
     const card = el('button', 'blob-principal'); card.type = 'button'; card.id = 'blob-principal-card';
     card.setAttribute('aria-pressed', ui.mode !== 'create' && ui.key === 'principal' ? 'true' : 'false');
-    card.setAttribute('aria-label', 'Abito: siempre en la isla');
+    card.setAttribute('aria-label', 'Koda: siempre en la isla');
     card.append(clay(e.clays, { blob: 'principal', color: principalColor, seed: 'abito' }).svg);
     const cardText = el('span', 'blob-principal-text');
-    cardText.append(el('span', 'blob-name', 'Abito'));
+    cardText.append(el('span', 'blob-name', 'Koda'));
     const chips = el('span', 'blob-chips');
     const rest = el('span', 'chip', 'En reposo'); rest.dataset.tone = 'go';
     chips.append(rest, el('span', 'chip', 'Siempre en la isla'));
@@ -206,7 +206,7 @@
       item.append(clay(e.clays, { blob: `strip-${blob}`, color, seed: blob }).svg, el('span', 'blob-name', name));
       strip.append(item);
     };
-    stripItem('principal', 'Abito', principalColor);
+    stripItem('principal', 'Koda', principalColor);
     for (const agent of agents) stripItem(agent.id, agent.name, agent.color);
     left.append(strip);
     left.append(el('span', 'blob-hint', 'Arrastrá o usá las flechas para ordenar'));
@@ -277,7 +277,7 @@
       bar.append(made.svg);
       const text = el('div', 'blob-editor-title');
       text.append(el('span', 'blob-name', title));
-      const anim = el('span', 'chip', 'Animado como Abito'); anim.dataset.tone = 'live'; text.append(anim);
+      const anim = el('span', 'chip', 'Animado como Koda'); anim.dataset.tone = 'live'; text.append(anim);
       const seg = el('div', 'segmented'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Vista previa');
       const rest = el('button', 'seg', 'Reposo'); rest.type = 'button'; rest.id = 'blob-preview-rest';
       const work = el('button', 'seg', 'Trabaja'); work.type = 'button'; work.id = 'blob-preview-work';
@@ -401,11 +401,11 @@
       const actions = el('div', 'editor-actions'); actions.append(confirm, cancel); editor.append(actions);
     } else if (ui.key === 'principal') {
       // Abito: name fixed, colour (D4: it changes the island character), «Qué hace» (declarative), model.
-      editor.append(header('Abito', principalColor, 'editor'));
-      const name = el('input', 'sfield'); name.id = 'blob-editor-name'; name.value = 'Abito'; name.disabled = true; name.setAttribute('aria-label', 'Nombre');
+      editor.append(header('Koda', principalColor, 'editor'));
+      const name = el('input', 'sfield'); name.id = 'blob-editor-name'; name.value = 'Koda'; name.disabled = true; name.setAttribute('aria-label', 'Nombre');
       const fixed = el('span', 'chip', 'Fijo'); const nameWrap = field('Nombre', name); nameWrap.append(fixed);
       editor.append(nameWrap);
-      editor.append(field('Color', swatchRow(principalColor, 'Color de Abito', color => intent({ type: 'set_color', id: A.PRINCIPAL_ID, color }))));
+      editor.append(field('Color', swatchRow(principalColor, 'Color de Koda', color => intent({ type: 'set_color', id: A.PRINCIPAL_ID, color }))));
       const what = el('textarea', 'sfield'); what.id = 'blob-editor-what'; what.rows = 3; what.maxLength = V.MAX_INSTRUCTIONS;
       what.value = typeof prefs.abitoInstructions === 'string' ? prefs.abitoInstructions : ''; what.disabled = o.saving === true;
       what.setAttribute('aria-label', 'Qué hace');
