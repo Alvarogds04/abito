@@ -8,8 +8,8 @@ import { piInstallControl } from "./piinstall.js";
 import { t } from "./i18n-es.js";
 const UNAVAILABLE = "No disponible todavía";
 const NOT_IN_VERSION = "No disponible en esta versión";
-const CLI_AGENTS = [["hermes", "Hermes"], ["claude-code", "Claude Code"], ["codex", "Codex"], ["gemini-cli", "Gemini CLI"]];
-const OTHER_AGENTS = [["copilot-cli", "GitHub Copilot CLI"], ["muse", "Muse Code"], ["antigravity", "Antigravity"], ["cursor", "Cursor Agent"], ["opencode", "OpenCode"], ["amp", "Amp"]];
+const CLI_AGENTS = [["claude-code", "Claude Code"], ["codex", "Codex"], ["gemini-cli", "Gemini CLI"]];
+const OTHER_AGENTS = [["copilot-cli", "GitHub Copilot CLI"], ["opencode", "OpenCode"]];
 const flex = (gap) => h("div", { style: `display:flex;flex-direction:column;gap:${gap}px` });
 const unknownDot = () => {
   const n = statusDot(false);
@@ -162,7 +162,7 @@ async function renderAgentSettings({ invoke, V, P, listen, timers }) {
       "div",
       { class: "agent-row", role: "row" },
       h("span", { class: "agent-name", role: "cell", text: name }),
-      unknown && !["node_missing", "failed"].includes(state?.agentsRuntime) ? stateCell("·", UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || "○", r.word),
+      !r || unknown && !["node_missing", "failed"].includes(state?.agentsRuntime) ? stateCell("·", UNAVAILABLE) : stateCell(TONE_ICON[r.tone] || "○", r.word),
       islandSwitch(id, installed),
       actions
     );
@@ -246,11 +246,11 @@ async function renderAgentSettings({ invoke, V, P, listen, timers }) {
     planSwitch.disabled = !prefsKnown;
     const planTip = "Muestra en la isla el uso de tu plan de Claude (límite de 5 horas y semanal). Abito agrega un relay a la línea de estado de ~/.claude/settings.json; si ya tenías una, sigue funcionando. Solo planes Pro y Max. Los datos vienen de Claude Code en la terminal, no de la app de escritorio.";
     const plan = flex(12);
-    plan.append(row("Claude Code · uso del plan", planTip, planSwitch), integrationBlock("statusline", "Relay", "Instala o quita la lectura del plan; tu línea de estado propia sigue funcionando."));
+    plan.append(row("Claude Code · uso del plan", planTip, planSwitch), integrationBlock("statusline", "Relay", "Lee el uso del plan; tu línea de estado sigue igual."));
     root.append(
       notchTipSection(t("Agents"), "Abito agrega sus entradas a la configuración de cada agente. Desinstalar quita solo lo que Abito agregó; antes se guarda un respaldo.", table, actionStatus),
       section(t("Plan usage"), plan),
-      section(t("Weekly recap"), integrationBlock("recap", t("Weekly recap"), "Cuenta tu actividad de Claude Code para el resumen semanal; no guarda comandos, rutas ni prompts.")),
+      section(t("Weekly recap"), integrationBlock("recap", t("Weekly recap"), "Cuenta tu actividad de Claude Code; nunca guarda comandos ni prompts.")),
       s.message
     );
   }

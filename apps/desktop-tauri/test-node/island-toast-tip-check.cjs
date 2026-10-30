@@ -3,6 +3,16 @@
    NO native title (a second tooltip), only data-tip + aria-label, and the island tip hides on leave. Real layout. */
 const assert = require('node:assert/strict');
 const H = require('./island-geometry-harness.cjs');
+
+// HU-072: GitHub is paused (frontend/paused.js) and the HU-057 notch has no GitHub surface yet; flip to true when HU-072 lands.
+const GITHUB_ON_ISLAND = false;
+if (!GITHUB_ON_ISLAND) {
+  // Deliberate pause, not a skip: run only what is true today (island-github-paused-check) and say plainly that this is NOT a pass.
+  const r = require('node:child_process').spawnSync(process.execPath, [require('node:path').join(__dirname, 'island-github-paused-check.cjs')], { stdio: 'inherit' });
+  if (r.status !== 0) { console.error('FAIL island-toast-tip-check: the paused-GitHub verification failed'); process.exit(r.status || 1); }
+  console.log('PAUSED island-toast-tip-check: GitHub on the island is paused (HU-072); 9 assertions kept but not run — NOT a pass of the GitHub geometry, see HU-072');
+  process.exit(0);
+}
 if (!H.findPlaywright()) { console.log('SKIPPED island-toast-tip-check: no playwright — NOT a pass'); process.exit(0); }
 (async () => {
   {

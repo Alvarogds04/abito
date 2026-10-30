@@ -187,6 +187,39 @@ test('--uninstall removes exactly our files and the .desktop; foreign files and 
   assert.equal(run(['--uninstall', '--prefix', e.prefix, '--applications-dir', e.apps], e).status, 0);
 });
 
+test('upgrading over a 0.1.2 install that holds its private audit/ log keeps the log and installs (29-oct, human Linux)', () => {
+  const st = stage(), e = env(); assert.equal(install(st, e).status, 0);
+  const audit = path.join(e.prefix, 'audit');
+  fs.mkdirSync(audit, { mode: 0o700 });
+  const log = '{"ts":1,"event":"refused","code":"not_island","plan_hash":"x"}\n';
+  fs.writeFileSync(path.join(audit, 'hook-installs.jsonl'), log, { mode: 0o600 });
+  const r = install(st, e); assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(path.join(audit, 'hook-installs.jsonl'), 'utf8'), log, 'the user audit record is kept byte for byte');
+  assert.deepEqual(L.verifyStage(e.prefix).filter(p => !/audit/.test(p)), []);
+  // uninstall leaves the user's audit records (and so the prefix) in place
+  const u = run(['--uninstall', '--prefix', e.prefix, '--applications-dir', e.apps], e); assert.equal(u.status, 0, u.stderr);
+  assert.equal(fs.readFileSync(path.join(audit, 'hook-installs.jsonl'), 'utf8'), log);
+  assert.match(u.stdout, /Kept/);
+});
+
+test('an audit/ that is not a plain private folder of regular files is still refused', () => {
+  const cases = {
+    'audit is a symlink': p => fs.symlinkSync(tmp(), path.join(p, 'audit')),
+    'audit holds a symlink': p => { fs.mkdirSync(path.join(p, 'audit'), { mode: 0o700 }); fs.symlinkSync('/etc/passwd', path.join(p, 'audit', 'x.jsonl')); },
+    'audit holds a subfolder': p => { fs.mkdirSync(path.join(p, 'audit', 'sub'), { recursive: true, mode: 0o700 }); },
+    'audit is world-readable': p => { fs.mkdirSync(path.join(p, 'audit'), { mode: 0o755 }); fs.chmodSync(path.join(p, 'audit'), 0o755); },
+    'another unexpected dir': p => { fs.mkdirSync(path.join(p, 'logs'), { mode: 0o700 }); },
+  };
+  for (const [name, plant] of Object.entries(cases)) {
+    const st = stage(), e = env(); assert.equal(install(st, e).status, 0);
+    plant(e.prefix);
+    const before = fs.readFileSync(path.join(e.prefix, 'receipt.json'));
+    const r = install(st, e);
+    assert.equal(r.status, 1, `${name}: ${r.stderr}`); assert.match(r.stderr, /unsafe installed layout/, name);
+    assert.deepEqual(fs.readFileSync(path.join(e.prefix, 'receipt.json')), before, name);
+  }
+});
+
 test('uninstall → install round trip restores a verifying install', () => {
   const st = stage(), e = env();
   assert.equal(install(st, e).status, 0);
