@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **Abito is now Koda.** This repository is archived. New releases: **https://github.com/Alvarogds04/koda** (Koda 0.1.0 continues Abito 0.3).
+
 # Abito
 
 Abito is a small desktop island for your coding agents. It sits at the top of the screen, shows what **Claude Code**, **Codex**
