@@ -13,12 +13,21 @@ use crate::voiceintent::normalise;
 pub const MAX_WORDS: usize = 50;
 const MAX_WORD_CHARS: usize = 40;
 /// Always corrected towards, with the stricter guard below.
-pub const BUILT_IN: &str = "Abito";
+pub const BUILT_IN: &str = "Koda";
 /// Conservative: only near spellings of the built-in word (score 0 = exact, 1 = anything).
 const BUILT_IN_THRESHOLD: f64 = 0.3;
 const USER_THRESHOLD: f64 = 0.4;
-/// Real words that are close to «abito» and must never be rewritten into it (hábito = habit).
-const NEVER_ABITO: &[&str] = &["habito", "hbito", "obito", "abito"];
+/// Real Spanish words that sound like «Koda» and must NEVER be rewritten into it nor wake the app (human 30-oct: «solo koda»;
+/// measured against a corpus of everyday phrases in `koda_word_tests`). «Koda» has four letters, so an edit-distance match alone
+/// would catch a good part of the dictionary: the corrector below only ever accepts the exact spellings in `KODA_HEARD`.
+pub(crate) const NEVER_KODA: &[&str] = &[
+    "toda", "todo", "todas", "todos", "soda", "moda", "boda", "roda", "joda", "poda", "coca", "copa", "coma", "cola", "cosa",
+    "toca", "toma", "codo", "cada", "cote", "dota", "nota", "bota", "rota", "gota", "mota", "coda", "cota",
+];
+/// How the recogniser writes «Koda» (it often hears a hard «c» for the «k»). Only these exact spellings are corrected; «coda» is here
+/// because it is the transcription of the name, and it is only ever rewritten when it is the first word followed by a comma and a
+/// command (the vocative), never in the middle of a sentence («una coda»): see `correct`.
+pub(crate) const KODA_HEARD: &[&str] = &["koda", "qoda", "kouda", "kodá", "codá", "kodda"];
 
 fn key(word: &str) -> String {
     normalise(word).chars().filter(|c| c.is_ascii_alphanumeric()).collect()
@@ -121,18 +130,18 @@ fn apply(text: &str, words: &[String], threshold: f64, allowed: impl Fn(&str) ->
     out.join(" ")
 }
 
-/// The user's words first, then the built-in «Abito», which never replaces a common word.
+/// The user's words first, then the built-in «Koda», which never replaces a common word (only its exact known spellings).
 pub fn correct(text: &str, user_words: &[String]) -> String {
     let mut user = apply_custom_words(text, user_words, USER_THRESHOLD);
-    // «Habito, ¿qué hora es?»: the verb "habito" is a real word, so only the vocative reading
-    // (first word, comma right after, a command following) is the name.
+    // «Kota, ¿qué hora es?»: «cota» is also a real word (a height), so only the vocative reading
+    // (first word, comma right after, a command following) is the name. «coda» is never the name (see wake::NAMES_VOCATIVE_ONLY).
     if let Some((first, rest)) = user.split_once(' ') {
-        if first.ends_with(',') && key(first) == "habito" && !rest.trim().is_empty() {
+        if first.ends_with(',') && matches!(key(first).as_str(), "kota" | "cota") && !rest.trim().is_empty() {
             user = format!("{BUILT_IN}, {rest}");
         }
     }
     apply(&user, &[BUILT_IN.to_string()], BUILT_IN_THRESHOLD, |cand| {
-        !NEVER_ABITO.contains(&cand) && !COMMON.contains(&cand) && cand.chars().count() >= 5
+        !NEVER_KODA.contains(&cand) && !COMMON.contains(&cand) && KODA_HEARD.contains(&cand)
     })
 }
 

@@ -27,16 +27,16 @@ async function handleOpencodeHook({ event, input, env = {}, argv = [], now, clie
     if (!isObject(data) || !validCwd(data.directory) || typeof data.sessionID !== 'string' || (event === 'permission-request' && typeof data.type !== 'string')) return none();
     if (event === 'stop') { // session.idle: one settled notice, never any output
       let cfg;
-      try { cfg = resolveConfig(env, process.getuid()); } catch { return none(); }
+      try { cfg = resolveConfig(env, process.getuid?.()); } catch { return none(); }
       if (!cfg.endpoint) return none();
       await clientFactory({ endpoint: cfg.endpoint, runtime: cfg.runtime, cwd: data.directory, sessionId: sessionToken(data.sessionID), agent: 'opencode', onDiagnostic: () => {} }).notify();
       return none();
     }
     const deadline = computeDeadline({ cliTimeoutMs: args.timeoutSec * 1000, maxMs: MAX_ISLAND_WAIT_MS });
-    if (deadline.mode !== 'ask') return none('Abito island: hook timeout too short for a question. Answer in the terminal.\n');
+    if (deadline.mode !== 'ask') return none('Koda island: hook timeout too short for a question. Answer in the terminal.\n');
     let config;
-    try { config = resolveConfig(env, process.getuid()); } catch { return none('Abito island: invalid configuration.\n'); }
-    if (!config.endpoint) return none('Abito island unavailable. Answer in the terminal.\n');
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Koda island: invalid configuration.\n'); }
+    if (!config.endpoint) return none('Koda island unavailable. Answer in the terminal.\n');
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd: data.directory, sessionId: sessionToken(data.sessionID), agent: 'opencode', onDiagnostic: () => {} };
     if (typeof now === 'function') options.clock = { now, setTimer: setTimeout, clearTimer: clearTimeout };
     const detail = describe(data.type, data.title, data.metadata);
@@ -46,7 +46,7 @@ async function handleOpencodeHook({ event, input, env = {}, argv = [], now, clie
       if (result.answer.value === 'allow' && !detail.lossy) return { stdout: OC_ALLOW, stderr: '', exitCode: 0 };
       if (result.answer.value === 'deny') return { stdout: OC_DENY, stderr: '', exitCode: 0 };
     }
-    if (result && result.status === 'unavailable') return none('Abito island unavailable. Answer in the terminal.\n');
+    if (result && result.status === 'unavailable') return none('Koda island unavailable. Answer in the terminal.\n');
     return none(formatNoDecision(result) + '\n');
   } catch { return none(); }
 }

@@ -147,7 +147,7 @@
     if (sameTurn && before.state === turn.state) return null;
     if (turn.state === 'completed') {
       const reply = turn.reply.length > 300 ? turn.reply.slice(0, 300) + '…' : turn.reply;
-      return `Abito respondió: ${reply}`;
+      return `Koda respondió: ${reply}`;
     }
     if (turn.state === 'error') return (turn.error && turn.error.safe_message) || 'Error';
     return stateLabel(turn.state) || null;
@@ -163,8 +163,8 @@
   const DISPLAY_NAME_MAX = 80; // mirrors prefs.rs DISPLAY_NAME_MAX
   // T7.3 (design isla-chat-empty): the empty state is ONE visible line; the long honest sentence stays in aria.
   const EMPTY_ICONS = Object.freeze([]);
-  const EMPTY_LINE = 'Escribile a Abito';
-  const EMPTY_ARIA = 'Escribile a Abito. Responde el modelo local de esta máquina; no ve tu pantalla ni ejecuta nada.';
+  const EMPTY_LINE = 'Escribile a Koda';
+  const EMPTY_ARIA = 'Escribile a Koda. Responde el modelo local de esta máquina; no ve tu pantalla ni ejecuta nada.';
 
   // A name is text the person typed: never markup. A non-string is absent (fail
   // closed), control characters become spaces, the length is bounded in Unicode
@@ -330,7 +330,7 @@
   const GATES = Object.freeze({
     ready: 'Listo',
     queue: 'En cola',
-    needs_load: 'Requiere cargarlo (Abito no lo hace)',
+    needs_load: 'Requiere cargarlo (Koda no lo hace)',
     unknown: 'Desconocido',
     unavailable: 'No disponible',
   });
@@ -448,7 +448,7 @@
   // «i» sentence for the panel: the paragraph that used to be on screen.
   function modelsInfo(listing) {
     if (!listing) return 'Leyendo modelos locales.';
-    const kept = listing.persisted === false && listing.selected ? ' Elección sólo en memoria: se pierde al cerrar Abito.' : '';
+    const kept = listing.persisted === false && listing.selected ? ' Elección sólo en memoria: se pierde al cerrar Koda.' : '';
     return `${listing.choice_note || ''} ${listing.remote || ''}${kept}`.replace(/\s+/g, ' ').trim();
   }
   const modelsCount = listing => (listing && Array.isArray(listing.profiles) ? listing.profiles.filter(p => p.selectable === true && p.profile_id).length : 0);
@@ -477,12 +477,12 @@
     const list = specialists && Array.isArray(specialists.specialists) ? specialists.specialists : [];
     const valid = list.filter(s => s && typeof s.id === 'string' && s.id && typeof s.name === 'string' && s.name.trim());
     const active = specialists && valid.some(s => s.id === specialists.active) ? specialists.active : null;
-    return [{ id: null, text: 'Abito', aria: 'Hablar con Abito', current: active === null },
+    return [{ id: null, text: 'Koda', aria: 'Hablar con Koda', current: active === null },
       ...valid.map(s => ({ id: s.id, text: s.name.trim(), aria: `Hablar con ${s.name.trim()}`, current: s.id === active }))];
   }
   function conversationRows(listing) {
     return ((listing && Array.isArray(listing.conversations)) ? listing.conversations : []).map(c => {
-      const specialist = c.specialist && c.specialist.name || 'Abito';
+      const specialist = c.specialist && c.specialist.name || 'Koda';
       const activity = new Date(c.last_activity).toLocaleString('es-AR');
       return { id: c.id, text: `${c.title} · ${specialist} · ${activity}`, aria: `${c.title}. ${specialist}. Última actividad: ${activity}` };
     });

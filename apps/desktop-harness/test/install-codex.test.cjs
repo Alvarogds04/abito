@@ -1,5 +1,6 @@
 'use strict';
-// Temp dirs only (mkdtemp under os.tmpdir()); the real ~/.codex is never touched.
+const { tmpBase, assertMode, unixOnly } = require('./platform-env.cjs');
+// Temp dirs only (mkdtemp under tmpBase()); the real ~/.codex is never touched.
 // S4/T2 (human L3, option A): the installed entries are NOTICE-ONLY — PermissionRequest (notice), PreToolUse with matcher
 // `request_user_input` (plan-mode questions, notice) and Stop (finished notice + the clearing frame). No entry asks the
 // island for a decision any more, so no `--timeout-sec` rides the command: the notice is fire-and-forget and bounded.
@@ -13,7 +14,7 @@ const cx = require('../src/install-codex.cjs');
 
 const BIN = path.resolve(__dirname, '../bin/abito-hook.cjs');
 function tmp(t) {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instcodex-')));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(tmpBase(), 'abito-instcodex-')));
   fs.chmodSync(d, 0o700);
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
@@ -24,17 +25,17 @@ const FIX = '{\n  "description": "third \\u00e9 party",\n  "big": 12345678901234
 function fixture(d, text = FIX) { const p = path.join(d, 'hooks.json'); fs.writeFileSync(p, text, { mode: 0o600 }); return p; }
 function io(extra = {}) {
   const r = { out: '', err: '', prompts: [] };
-  r.opts = { out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid(), prompt: async q => { r.prompts.push(q); return 'install'; }, now: () => new Date('2026-01-02T03:04:05.678Z'), ...extra };
+  r.opts = { out: s => { r.out += s; }, err: s => { r.err += s; }, isTTY: () => true, uid: process.getuid?.(), prompt: async q => { r.prompts.push(q); return 'install'; }, now: () => new Date('2026-01-02T03:04:05.678Z'), ...extra };
   return r;
 }
 const ls = d => fs.readdirSync(d).sort();
 const plan = (p, o = {}) => cx.planCodexHooks({ settingsPath: p, ...o });
 const q = cx.shellQuote;
 const NOTICE_ENTRIES = {
-  PermissionRequest: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex permission-request`, timeout: 5, statusMessage: 'Abito island' },
-  PreToolUse: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex pre-tool-use`, timeout: 5, statusMessage: 'Abito island' },
-  PostToolUse: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex post-tool-use`, timeout: 5, statusMessage: 'Abito island' },
-  Stop: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex stop`, timeout: 15, statusMessage: 'Abito island' },
+  PermissionRequest: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex permission-request`, timeout: 5, statusMessage: 'Koda island' },
+  PreToolUse: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex pre-tool-use`, timeout: 5, statusMessage: 'Koda island' },
+  PostToolUse: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex post-tool-use`, timeout: 5, statusMessage: 'Koda island' },
+  Stop: { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex stop`, timeout: 15, statusMessage: 'Koda island' },
 };
 
 test('install adds exactly our three notice groups; outside hooks byte-exact; third-party semantically exact', t => {
@@ -90,9 +91,9 @@ test('migration: a legacy answered-install is replaced by the notice entries, fo
   const legacy = {
     hooks: {
       PermissionRequest: [{ hooks: [moshi('moshi-hook perm'), moshi('herdr-agent-state.sh permission'),
-        { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex permission-request --timeout-sec 35`, timeout: 35, statusMessage: 'Abito island' }] }],
+        { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex permission-request --timeout-sec 35`, timeout: 35, statusMessage: 'Koda island' }] }],
       PreToolUse: [{ matcher: 'request_user_input', hooks: [moshi('herdr-agent-state.sh question')] }],
-      Stop: [{ hooks: [moshi('moshi-hook stop'), { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex stop`, timeout: 15, statusMessage: 'Abito island' }] }],
+      Stop: [{ hooks: [moshi('moshi-hook stop'), { type: 'command', command: `${q(process.execPath)} ${q(BIN)} codex stop`, timeout: 15, statusMessage: 'Koda island' }] }],
     },
   };
   fs.writeFileSync(p, JSON.stringify(legacy, null, 2) + '\n', { mode: 0o600 });
@@ -138,7 +139,7 @@ test('identification works when the bin path contains quotes', t => {
   assert.equal(JSON.parse(plan(p, { binPath: bin, remove: true }).after).hooks, undefined);
 });
 
-test('shell quoting matrix through a real sh -c: each path is one intact argument, nothing else runs', t => {
+test('shell quoting matrix through a real sh -c: each path is one intact argument, nothing else runs', unixOnly('POSIX sh quoting of paths with glob/quote characters; Windows paths cannot contain them and are quoted by quoteWindowsCommandPath, covered by win-fs.test.cjs'), t => {
   const d = tmp(t);
   const names = ['a b', "it's", 'dollar$HOME', 'back`id`tick', 'semi;touch PWN', 'amp&touch PWN2', 'ünï©ode', "q'';'", '$(touch PWN3)', '*glob?'];
   for (const n of names) {
@@ -191,7 +192,7 @@ test('apply refused without TTY (77); wrong/empty word aborts; right word writes
   const names = ls(d); assert.equal(names.length, 2);
   const bk = path.join(d, names[1]);
   assert.ok(names[1].startsWith('hooks.json.abito-backup-'));
-  assert.equal(fs.statSync(bk).mode & 0o777, 0o600);
+  assertMode(bk, 0o600);
   assert.equal(fs.readFileSync(bk, 'utf8'), FIX);
   assert.match(r.out, /\/hooks/);
   assert.ok(!/dangerously/i.test(r.out));
@@ -287,7 +288,7 @@ test('the notice entries are fixed: no path, timeout or flag is ever built from 
   // a bad timeout is still refused at the plan boundary (the CLI flag stays a validated number)
   assert.equal(cx.CODEX_PROFILE.defaultTimeoutSec, 5, 'the default is the notice bound, not a question budget');
   for (const bad of ['4; touch PWN', 4.5, '', NaN, 0, 3601, '035', null]) {
-    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'abito-instcodex-'));
+    const d = fs.mkdtempSync(path.join(tmpBase(), 'abito-instcodex-'));
     try {
       assert.throws(() => cx.planCodexHooks({ settingsPath: path.join(d, 'h.json'), timeoutSec: bad }), /timeout-sec/, String(bad));
     } finally { fs.rmSync(d, { recursive: true, force: true }); }

@@ -43,20 +43,19 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   assert(calls.some(([c,p])=>c==='agent_action'&&p.action==='agents_list'));
   const hookList=all(ui).find(e=>e.attrs.id==='agent-hook-list');
   assert(hookList, 'only host-reported agents belong in the expanded upstream list');
-  assert.deepEqual(hookList.children.map(e=>e.attrs.id),['agent-row-pi','agent-row-hermes','agent-row-claude-code','agent-row-codex','agent-row-gemini-cli','agent-row-copilot-cli','agent-row-muse','agent-row-antigravity','agent-row-cursor','agent-row-opencode','agent-row-amp'], '0.2.1 S2: Pi, Hermes, Claude Code, Codex, Gemini CLI, then the not-in-this-version rows');
-  // 0.2.1 S2: the other agents are visible but disabled, say «No disponible en esta versión» and offer NO install button
-  for(const id of ['muse','antigravity','cursor','amp']) {
-    const row=all(ui).find(e=>e.attrs.id===`agent-row-${id}`);
-    assert(text(row).includes('No disponible en esta versión'),id);
-    assert.equal(all(row).filter(e=>e.tagName==='button'&&!String(e.className).includes('switch')).length,0,`${id}: no install button`);
-    assert(all(row).filter(e=>String(e.className).includes('switch')).every(e=>e.disabled),`${id}: disabled switch`);
-  }
+  assert.deepEqual(hookList.children.map(e=>e.attrs.id),['agent-row-pi','agent-row-claude-code','agent-row-codex','agent-row-gemini-cli','agent-row-copilot-cli','agent-row-opencode'], 'HU-076: only the agents that work in this version');
+  // HU-076 (Human 30-oct («Tambien la parte de agentes de ajustes la podemos diseñar de una manera mucho mas comodo, hay mucho texto y la ui es confusa» → «Ocultar lo no disponible + textos de una línea»)): rows that cannot work in this version are hidden, not greyed
+  for(const id of ['hermes','muse','antigravity','cursor','amp']) assert(!all(ui).some(e=>e.attrs.id===`agent-row-${id}`),`${id} hidden`);
+  assert(!text(ui).includes('No disponible en esta versión'));
   assert(text(all(ui).find(e=>e.attrs.id==='agent-row-copilot-cli')).includes('GitHub Copilot CLI'));
   const plan=ui.children[1];
   assert(all(plan).filter(e=>e.tagName==='button'&&!String(e.className).includes('switch')&&!String(e.className).includes('hub-info')&&e.textContent!=='Instalar…').every(e=>e.disabled), 'only the relay installer is a live button here');
   assert.deepEqual(calls.filter(([c])=>c==='plan_action'),[], '0.2.1 S5/L4: no plan reads here; Codex plan usage is for 0.3');
   assert(!/\d+ %/.test(text(plan)), 'numbers belong to the island usage view, not to settings');
   assert(text(plan).includes('Claude Code · uso del plan') && !text(plan).includes('Codex'),'only Claude Code plan usage is shown');
+  // HU-076: one line per row; the long explanation lives in the ⓘ, never as visible paragraph text
+  assert(!all(plan).some(e=>String(e.className).includes('detail')&&text(e).includes('Koda agrega un relay')),'plan explanation is not a visible paragraph');
+  assert(all(plan).some(e=>e.attrs['aria-label']==='Más información: Claude Code · uso del plan'),'plan explanation is in an ⓘ');
   assert(all(plan).some(e=>e.attrs.id==='agent-integration-statusline'), 'the relay is an installable integration block');
   const planSwitches=all(plan).filter(e=>e.tagName==='button'&&String(e.className).includes('switch'));
   assert.equal(planSwitches.length,1);assert(planSwitches.every(e=>!e.disabled), 'the plan switch follows its Abito pref');
@@ -108,7 +107,7 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   state.agents=[];state.hooks=[];
   ui=await renderAgentSettings(opts);await ui.settled();
   // #503 S20: with nothing reported the table still lists Claude Code and Pi (each honest about its state); nothing is invented
-  assert.deepEqual(all(ui).find(e=>e.attrs.id==='agent-hook-list').children.map(e=>e.attrs.id),['agent-row-pi','agent-row-hermes','agent-row-claude-code','agent-row-codex','agent-row-gemini-cli','agent-row-copilot-cli','agent-row-muse','agent-row-antigravity','agent-row-cursor','agent-row-opencode','agent-row-amp']);
+  assert.deepEqual(all(ui).find(e=>e.attrs.id==='agent-hook-list').children.map(e=>e.attrs.id),['agent-row-pi','agent-row-claude-code','agent-row-codex','agent-row-gemini-cli','agent-row-copilot-cli','agent-row-opencode']);
   assert(text(all(ui).find(e=>e.attrs.id==='agent-row-claude-code')).includes('No disponible todavía'),'an unreported agent says so');
   assert(!text(ui.children[0]).includes('No disponible todavía No disponible todavía'));
   ui.dispose();
@@ -214,6 +213,19 @@ const { dom, all, text } = require('./settings-accounts-check.cjs');
   assert(text(unavailable).includes('README · https://github.com/Alvarogds04/abito#windows-limitations'));
   assert(!calls.some(([cmd]) => cmd === 'open_chat_url'), 'settings cannot invoke the main-window-only Linux opener');
   ui.dispose();
+  // Windows report (29-oct): with Node not found by the host (agentsRuntime node_missing/failed) the WHOLE table vanished — a row
+  // the host never reports (hermes) was read as undefined after the section had been cleared. Every row still renders.
+  for (const runtime of ['node_missing', 'failed']) {
+    state = { connection:'no_daemon', agentsRuntime: runtime, directAgents:[], directHooks:[] };
+    ui = await renderAgentSettings(opts); await ui.settled();
+    const list = all(ui).find(e => e.attrs.id === 'agent-hook-list');
+    assert(list, `${runtime}: the agents table is drawn`);
+    for (const id of ['pi','claude-code','codex','gemini-cli','copilot-cli','opencode']) assert(all(list).some(e => e.attrs.id === `agent-row-${id}`), `${runtime}: row ${id}`);
+    // a later push with the same runtime repaints, never empties the section
+    events['agent:state']({ payload: { agentsRuntime: runtime, directAgents: [] } });
+    assert(all(ui).find(e => e.attrs.id === 'agent-hook-list'), `${runtime}: still drawn after a push`);
+    ui.dispose();
+  }
   for(const name of ['agents.ts','chat.ts']) {const src=fs.readFileSync(path.join(base,name),'utf8');assert(!/innerHTML|setAttribute\(['"]style/.test(src));}
   console.log('PASS settings-agents: exact section order, closed hook review, four key payloads, trust, lifecycle and disabled missing backends');
 })().catch(e=>{console.error(e);process.exitCode=1;});

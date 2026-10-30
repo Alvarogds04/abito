@@ -5,7 +5,7 @@ import { notchSection, notchRow, notchHint, infoTip } from "./notch.js";
 import { t } from "./i18n-es.js";
 import { mount, modelsControl } from "./dictation-pages.js";
 const definitions = {
-  voice: ["OK Abito", "Say « OK Abito », then ask anything: add a pill, play music, the weather, an email to prepare.", "Enable"]
+  voice: ["OK Koda", "Say « OK Koda », then ask anything: add a pill, play music, the weather, an email to prepare.", "Enable"]
 };
 function renderUnavailable(page) {
   if (page === "phone") {
@@ -33,9 +33,9 @@ function renderUnavailable(page) {
     const steps = h(
       "ol",
       { id: "phone-steps", class: "phone-steps" },
-      h("li", { text: "Abrí Abito en el teléfono." }),
+      h("li", { text: "Abrí Koda en el teléfono." }),
       h("li", { text: "Cuando esté disponible, escaneá el código con el teléfono." }),
-      h("li", { text: "Confirmá en el teléfono el código que te mostrará Abito." })
+      h("li", { text: "Confirmá en el teléfono el código que te mostrará Koda." })
     );
     const code = h("div", { id: "phone-code", class: "hint", text: "El código de verificación aparecerá aquí cuando el enlace esté disponible." });
     const noQr = h("div", { id: "phone-no-qr", class: "hint", text: "El emparejamiento con código QR no está disponible en la versión 0.2." });
@@ -56,7 +56,7 @@ function renderUnavailable(page) {
       t("Android phone"),
       status,
       security,
-      notchHint(t("Send your agents' sessions to Abito for Android and answer permission requests from the phone. Off by default; it only listens on your local network.")),
+      notchHint(t("Send your agents' sessions to Koda for Android and answer permission requests from the phone. Off by default; it only listens on your local network.")),
       notchRow(t("Phone link"), sw),
       steps,
       code,
@@ -89,20 +89,20 @@ const inactivePages = Object.fromEntries(
       });
       for (const b of output.querySelectorAll("button")) b.disabled = true;
       container.append(
-        ctx.hero("voice", "OK Abito", t(subtitle)),
+        ctx.hero("voice", "OK Koda", t(subtitle)),
         label(t("Listening")),
         card(
-          row(t("Listen for « OK Abito »"), t("The microphone stays open; only what follows « OK Abito » goes further."), off),
+          row(t("Listen for « OK Koda »"), t("The microphone stays open; only what follows « OK Koda » goes further."), off),
           divider(),
-          row(t("Parakeet, on your computer"), t("Hears « OK Abito » here, without the internet."), download)
+          row(t("Parakeet, on your computer"), t("Hears « OK Koda » here, without the internet."), download)
         ),
         label(t("Answers")),
-        card(row(t("Abito answers out loud"), null, output)),
+        card(row(t("Koda answers out loud"), null, output)),
         label(t("Privacy")),
         card(
-          h("div", { class: "hub-note", text: t("Your voice never leaves this computer: Parakeet turns it into text here. Only the words after « OK Abito » go to Anthropic with your Claude key, and to ElevenLabs if you picked it for the answers.") }),
+          h("div", { class: "hub-note", text: t("Your voice never leaves this computer: Parakeet turns it into text here. Only the words after « OK Koda » go to Anthropic with your Claude key, and to ElevenLabs if you picked it for the answers.") }),
           divider(),
-          h("div", { class: "hub-note", text: t("An email is never sent by Abito: your mail app opens with it written, and you send it.") })
+          h("div", { class: "hub-note", text: t("An email is never sent by Koda: your mail app opens with it written, and you send it.") })
         ),
         h("div", { class: "hub-note", text: "pendiente de conectar" })
       );

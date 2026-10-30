@@ -36,10 +36,11 @@ fn a_model_in_use_cannot_be_deleted_and_an_unused_one_can() {
 }
 
 #[test]
-fn custom_words_are_kept_clean_and_abito_is_always_built_in() {
+fn custom_words_are_kept_clean_and_koda_is_always_built_in() {
     set_custom_words(&["  Kubernetes ".into(), "kubernetes".into(), "x".into()]);
     assert_eq!(super::words::correct("usa kubernetis", &words_for_test()), "usa Kubernetes");
-    assert_eq!(super::words::correct("Yavito, qué hora es", &words_for_test()), "Abito, qué hora es");
+    // Koda 0.1 T2
+    assert_eq!(super::words::correct("Qoda, qué hora es", &words_for_test()), "Koda, qué hora es");
     set_custom_words(&[]);
 }
 

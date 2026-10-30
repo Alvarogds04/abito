@@ -31,7 +31,7 @@
   const ID_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
   // Never a specialist id: the principal of the island and the engine CLIs the connectors
   // screen already talks to (#306), plus the prototype keys no plain object should ever take.
-  const FORBIDDEN_IDS = Object.freeze(['abito', 'pi', 'claude-code', 'codex', 'opencode', '__proto__', 'prototype', 'constructor']);
+  const FORBIDDEN_IDS = Object.freeze(['abito', 'koda', 'pi', 'claude-code', 'codex', 'opencode', '__proto__', 'prototype', 'constructor']);
   const ID_PREFIX = 'esp-';
   const ID_BYTES = 8;
 
@@ -219,7 +219,7 @@
       principal: !active,
       count: rows.length,
       countWord: countWord(rows.length),
-      principalNote: active ? '' : 'Ahora responde Abito, el principal. Elegí un especialista para cambiar de rol.',
+      principalNote: active ? '' : 'Ahora responde Koda, el principal. Elegí un especialista para cambiar de rol.',
       persistenceNote: persisted ? '' : 'Los cambios no se guardan en este equipo.',
     };
   }
@@ -252,7 +252,7 @@
   function catalogNote(listing) {
     const n = selectableModels(listing).length;
     if (n === 0) return 'No hay ningún modelo local verificado: el especialista va a usar el que elijas en «Modelo». No hay nube ni claves.';
-    if (n === 1) return 'Hoy hay un solo modelo local verificado en esta máquina, así que todos los especialistas lo usan. Abito no carga ni descarga modelos: para tener otro, cargalo vos en tu servicio local.';
+    if (n === 1) return 'Hoy hay un solo modelo local verificado en esta máquina, así que todos los especialistas lo usan. Koda no carga ni descarga modelos: para tener otro, cargalo vos en tu servicio local.';
     return 'Elegí, para cada especialista, uno de los modelos locales verificados de esta máquina.';
   }
 
@@ -322,7 +322,7 @@
 
   function roleChoices(view) {
     if (view.kind !== 'ready') return [];
-    const out = [{ id: null, label: 'Abito', principal: true, checked: !view.active, aria: 'Abito, el principal' + (!view.active ? ', en uso' : '') }];
+    const out = [{ id: null, label: 'Koda', principal: true, checked: !view.active, aria: 'Koda, el principal' + (!view.active ? ', en uso' : '') }];
     for (const r of view.rows) out.push({ id: r.id, label: r.name, principal: false, checked: r.active, aria: r.aria });
     return out;
   }

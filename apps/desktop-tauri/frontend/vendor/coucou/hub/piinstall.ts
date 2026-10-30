@@ -5,7 +5,8 @@ import { h, clear } from '../views/dom.js';
 import { action, trusted } from './runtime.js';
 
 export const PI_COMMAND = 'npm install -g @earendil-works/pi-coding-agent';
-type Phase = 'idle' | 'running' | 'done' | 'failed';
+type Phase = 'idle' | 'running' | 'done' | 'failed' | 'node_ready' | 'node_installer';
+const NODE_PLAN = 'Koda descarga el instalador oficial de Node.js desde nodejs.org, comprueba su huella SHA-256 y, en macOS y Windows, lo abre para que lo termines vos; en Linux lo deja en tu carpeta de usuario, sin permisos de administrador. No se instala nada sin tu clic.';
 const PLAN = `Se va a ejecutar: ${PI_COMMAND}, con el Node.js de tu equipo. No pide permisos de administrador. Tarda unos minutos y se corta a los 5.`;
 
 /** Which missing piece (if any) the engine state reports. Only the closed host codes count. */
@@ -25,14 +26,14 @@ export function piInstallControl({ call, watch, work, onDone }: { call: (cmd: st
   let missing: 'pi' | 'node' | null = null, phase: Phase = 'idle', say = '', confirming = false, finished = false, already = false, reason = '';
   const apply = (view: any) => {
     if (!view || typeof view !== 'object') return;
-    const next: Phase | null = ['idle', 'running', 'done', 'failed'].includes(view.phase) ? view.phase : null;
+    const next: Phase | null = ['idle', 'running', 'done', 'failed', 'node_ready', 'node_installer'].includes(view.phase) ? view.phase : null;
     if (!next) return;
     phase = next; confirming = false;
     say = typeof view.say === 'string' ? view.say : '';
     already = view.already === true;
     reason = typeof view.reason === 'string' ? view.reason : '';
     // Node showed up since the page last looked: from here on the normal two-step «Instalar Pi» is the way (nothing was installed)
-    if (view.reason === 'node_appeared' && missing === 'node') missing = 'pi';
+    if ((view.reason === 'node_appeared' || next === 'node_ready') && missing === 'node') missing = 'pi';
     if (next === 'done' && !finished) { finished = true; onDone?.(); }
     paint();
   };
@@ -46,22 +47,36 @@ export function piInstallControl({ call, watch, work, onDone }: { call: (cmd: st
   const openNode = () => {
     work(() => call('pi_install_action', { action: 'open_node' }), apply, () => { phase = 'failed'; say = 'No se pudo abrir nodejs.org. Abrilo en tu navegador.'; paint(); });
   };
+  // HU-069 (human, verbatim: «Descargar el instalador oficial de Node con un clic (recomendado)»): its own closed actions. The page never
+  // supplies a URL, a version or a path; the host downloads, verifies and (mac/Windows) only OPENS the installer.
+  const installNode = () => {
+    work(() => call('pi_install_action', { action: 'install_node' }), apply, () => { phase = 'failed'; say = 'No se pudo iniciar la descarga de Node.js.'; paint(); });
+  };
+  const checkNode = () => {
+    work(() => call('pi_install_action', { action: 'check_node' }), apply, () => { phase = 'failed'; say = 'No se pudo comprobar Node.js.'; paint(); });
+  };
   function paint() {
     clear(box);
-    box.hidden = !missing && phase !== 'running' && phase !== 'done';
+    box.hidden = !missing && phase !== 'running' && phase !== 'done' && phase !== 'node_installer';
     if (box.hidden) return;
     if (phase === 'running') {
-      box.append(h('span', { class: 'agent-progress', role: 'status' }, h('span', { class: 'hub-progress indeterminate', 'aria-hidden': 'true' }, h('i')), h('span', { class: 'hub-note', text: 'Instalando Pi… no cierres Abito.' })));
+      box.append(h('span', { class: 'agent-progress', role: 'status' }, h('span', { class: 'hub-progress indeterminate', 'aria-hidden': 'true' }, h('i')), h('span', { class: 'hub-note', text: 'Instalando Pi… no cierres Koda.' })));
       return;
     }
-    if (phase === 'done') { box.append(h('p', { class: 'hub-note', role: 'status', text: already ? 'Pi ya estaba instalado; el chat de Abito está listo.' : 'Pi quedó instalado y el chat de Abito arrancó.' })); return; }
+    if (phase === 'done') { box.append(h('p', { class: 'hub-note', role: 'status', text: already ? 'Pi ya estaba instalado; el chat de Koda está listo.' : 'Pi quedó instalado y el chat de Koda arrancó.' })); return; }
+    if (phase === 'node_installer') {
+      box.append(h('p', { class: 'hub-note', role: 'status', text: say }), action('Ya lo instalé', checkNode));
+      return;
+    }
+    if (phase === 'node_ready') box.append(h('p', { class: 'hub-note', role: 'status', text: say }));
     if (phase === 'failed' && say) box.append(h('p', { class: 'hub-note notice err', role: 'alert', text: say }));
     if (missing === 'node') {
-      box.append(h('p', { class: 'hub-note', text: 'El chat de Abito funciona con Pi, y Pi necesita Node.js, que no está instalado.' }),
-        action('Abrir nodejs.org', openNode));
+      box.append(h('p', { class: 'hub-note', text: 'El chat de Koda funciona con Pi, y Pi necesita Node.js, que no está instalado.' }),
+        h('p', { class: 'hub-note', id: 'node-install-plan', text: NODE_PLAN }),
+        action('Descargar e instalar Node.js', installNode), action('Abrir nodejs.org', openNode));
       return;
     }
-    box.append(h('p', { class: 'hub-note', text: `El chat de Abito funciona con Pi, que no está instalado. Instalalo con «Instalar Pi» o desde una terminal: ${PI_COMMAND}` }));
+    box.append(h('p', { class: 'hub-note', text: `El chat de Koda funciona con Pi, que no está instalado. Instalalo con «Instalar Pi» o desde una terminal: ${PI_COMMAND}` }));
     // «Reintentar» only after an install that really failed; after node_appeared nothing was tried, so the button is the plain «Instalar Pi»
     if (!confirming) { box.append(action(phase === 'failed' && reason !== 'node_appeared' ? 'Reintentar' : 'Instalar Pi', () => { confirming = true; paint(); })); return; }
     box.append(h('p', { class: 'hub-note', id: 'pi-install-plan', role: 'status', text: PLAN }),
@@ -70,5 +85,5 @@ export function piInstallControl({ call, watch, work, onDone }: { call: (cmd: st
   watch('pi-install:state', apply);
   work(() => call('pi_install_action', { action: 'status' }), v => { if (v?.phase === 'running') apply(v); }, () => {});
   paint();
-  return { element: trusted(box), update(state: any) { const m = missingPiece(state); if (m !== missing) { missing = m; if (!m && phase === 'failed') phase = 'idle'; paint(); } } };
+  return { element: trusted(box), update(state: any) { const m = missingPiece(state); if (m !== missing) { missing = m; if (!m && (phase === 'failed' || phase === 'node_ready')) phase = 'idle'; paint(); } } };
 }

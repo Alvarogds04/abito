@@ -122,13 +122,14 @@ function rotateAudit(file) {
 function winAppendAudit(w, file, record) {
   const line = Buffer.from(JSON.stringify(record) + '\n', 'utf8');
   for (let attempt = 0; attempt < 5; attempt++) {
-    let cur = w.readPrivate(file);
-    // The helper caps one write at 1 MiB: rotate (replacing the previous generation) well before that.
-    if (cur && cur.size + line.length > AUDIT_MAX_BYTES / 2) {
-      try { w.remove(file + '.1'); } catch (e) { if (e.reason !== 'missing') throw e; }
+    // The helper caps one read/write at 1 MiB, so the size is taken from the helper's facts BEFORE any read: a log that is already
+    // past half the cap is rotated (replacing the previous generation) and never read.
+    const facts = w.checkPath(file);
+    if (facts.exists && facts.size + line.length > AUDIT_MAX_BYTES / 2) {
+      try { w.remove(file + '.1'); } catch (e) { if (e.reason !== 'missing' && e.reason !== 'helper_failed') throw e; }
       w.move(file, file + '.1');
-      cur = null;
     }
+    const cur = w.readPrivate(file);
     try { w.writePrivate(file, cur ? Buffer.concat([cur.buf, line]) : line, cur ? cur.sha256 : null); return; }
     catch (e) { if (e.reason !== 'mismatch' && e.reason !== 'exists') throw e; }
   }
@@ -305,7 +306,14 @@ function winFailure(reason, fail) {
   if (WIN_FAILED.has(reason)) return fail(70, 'apply_failed', 'the plan could not be applied');
   return fail(65, 'unsafe_target', fixedMessage.unsafe);
 }
-const fixedMessage = { foreignExtension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.', unverified: 'the installed Abito files could not be verified; nothing was written', unsafe: 'the target or its folder is not private to this user or goes through a link; nothing was written', usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
+const shellArg = d => /^[A-Za-z0-9_@%+=:,./-]+$/.test(d) ? d : "'" + d.replace(/'/g, "'\\''") + "'";
+// HU-047: one sentence per reason, always naming the exact folder; chmod only where chmod can fix it.
+function unsafeFolderMessage({ dir, reason }) {
+  if (reason === 'writable') return `La carpeta ${dir} la puede modificar otro usuario o grupo; quitale el permiso de escritura (chmod g-w,o-w ${shellArg(dir)}) y volvé a intentar.`;
+  if (reason === 'foreign_owner') return `La carpeta ${dir} pertenece a otro usuario y Koda solo escribe en carpetas tuyas; cambiale el dueño a tu usuario (con permisos de administrador) y volvé a intentar.`;
+  return `La carpeta ${dir} tiene permisos de Windows (ACL) que dan acceso a otros usuarios o no es tuya; dejala accesible solo para tu usuario (Propiedades > Seguridad) y volvé a intentar.`;
+}
+const fixedMessage = { foreignExtension: 'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Koda no instaló: borrala o renombrala y volvé a conectar.', unverified: 'the installed Koda files could not be verified; nothing was written', unsafe: 'the target or its folder is not private to this user or goes through a link; nothing was written', usage: 'invalid arguments', refused: 'input or settings file refused', internal: 'unexpected failure; nothing was written' };
 
 // argv: arguments after `install`. Always prints exactly one JSON line through opts.out; returns the exit code.
 async function runInstallUi(argv, opts = {}) {
@@ -318,11 +326,11 @@ async function runInstallUi(argv, opts = {}) {
     try { out(JSON.stringify(obj) + '\n'); } catch { /* a closed stdout must not turn into a second line */ }
   };
   let refuseHash;
-  const fail = (exit, code, message) => {
+  const fail = (exit, code, message, extra) => {
     if (refuseHash !== undefined && code !== 'audit_unavailable') {
       try { appendAudit(opts.auditDir, { ts: Date.now(), event: 'refused', code, plan_hash: refuseHash }, opts.uid === undefined ? winfs.uidOf() : opts.uid, { create: false }); } catch { /* never blocks, never changes the exit */ }
     }
-    emit({ schema: SCHEMA, ok: false, code, message }); return exit;
+    emit({ schema: SCHEMA, ok: false, code, message, ...(extra || {}) }); return exit;
   };
   try {
     const parsed = parseUiArgs(argv);
@@ -347,6 +355,7 @@ async function runInstallUi(argv, opts = {}) {
     return await applyPlanned(parsed, opts, emit, fail);
   } catch (e) {
     if (e instanceof UiError) return fail(e.exitCode, e.code, e.message);
+    if (e instanceof core.InstallError && e.unsafeFolder) return fail(65, 'unsafe_folder', unsafeFolderMessage(e.unsafeFolder), { folder: e.unsafeFolder.dir, folder_reason: e.unsafeFolder.reason });
     if (e instanceof winfs.WinFsError) return winFailure(e.reason, fail);
     if (e instanceof core.InstallError && e.foreignExtension) return fail(65, 'foreign_extension', fixedMessage.foreignExtension);
     if (e instanceof core.InstallError && e.reason) return winFailure(e.reason, fail);
@@ -412,4 +421,4 @@ async function applyPlanned(parsed, opts, emit, fail) {
   } finally { releaseLock(lock); }
 }
 
-module.exports = { acquireLock, releaseLock, INSTALLER_VERSION, SCHEMA, AGENT_MARKERS, AUDIT_FILE, canonical, computePlanHash, checkIslandGuards, appendAudit, parseUiArgs, runInstallUi };
+module.exports = { acquireLock, releaseLock, INSTALLER_VERSION, SCHEMA, AGENT_MARKERS, AUDIT_FILE, canonical, computePlanHash, checkIslandGuards, appendAudit, parseUiArgs, runInstallUi, unsafeFolderMessage };

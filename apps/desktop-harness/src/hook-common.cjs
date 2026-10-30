@@ -13,7 +13,7 @@ const MAX_STDIN_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_SEC = 35, STOP_WATCHDOG_MS = 15000, MAX_ISLAND_WAIT_MS = 60000;
 const ALLOW = '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n';
 const DENY = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest',
-  decision: { behavior: 'deny', message: 'Denied from the Abito island by the user.' } } }) + '\n';
+  decision: { behavior: 'deny', message: 'Denied from the Koda island by the user.' } } }) + '\n';
 // Option sets per agent. LOSSY_OPTIONS is offered when the island cannot show the whole request:
 // `allow` is deliberately absent. Only the agents that can still ANSWER mint an option set (S4/T2 removed Codex's:
 // Codex only ever sends a notice, so nothing in this file is reached with agent 'Codex' any more).
@@ -107,7 +107,7 @@ function mapResult(result, lossy) {
     if (result.answer.value === 'allow' && !lossy) return { stdout: ALLOW, stderr: '', exitCode: 0 };
     if (result.answer.value === 'deny') return { stdout: DENY, stderr: '', exitCode: 0 };
   }
-  if (result && result.status === 'unavailable') return none('Abito island unavailable. Answer in the terminal.\n');
+  if (result && result.status === 'unavailable') return none('Koda island unavailable. Answer in the terminal.\n');
   return none(formatNoDecision(result) + '\n');
 }
 

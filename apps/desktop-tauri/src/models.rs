@@ -321,7 +321,7 @@ pub fn gate(alias: &str, meta: &RouterMeta, res: &Resources) -> Gate {
         return g(
             "needs_load",
             format!(
-                "{alias} está listado pero no cargado: {}. Abito no carga, descarga ni desaloja modelos; el cargado es {loaded}.",
+                "{alias} está listado pero no cargado: {}. Koda no carga, descarga ni desaloja modelos; el cargado es {loaded}.",
                 load_cost(meta, alias, res)
             ),
         );
@@ -331,7 +331,7 @@ pub fn gate(alias: &str, meta: &RouterMeta, res: &Resources) -> Gate {
             return g(
                 "needs_load",
                 format!(
-                    "{alias} está dormido: {}. Abito no carga modelos; despertalo desde su servicio.",
+                    "{alias} está dormido: {}. Koda no carga modelos; despertalo desde su servicio.",
                     load_cost(meta, alias, res)
                 ),
             )
@@ -428,7 +428,7 @@ pub fn listing(
                         "gate": gate(&other.id, m, res),
                         "context_tokens": other.n_ctx,
                         "size_bytes": other.size,
-                        "note": "Listado por el router pero no verificado para Abito: no se puede elegir.",
+                        "note": "Listado por el router pero no verificado para Koda: no se puede elegir.",
                     }));
                 }
             }
@@ -448,7 +448,7 @@ pub fn listing(
     let choice_note = if selectable <= 1 {
         "Hoy hay un solo modelo local verificado: una sola opción no es una elección. Para elegir de verdad hace falta otro alias local verificado, o cargar otro modelo existente con autorización explícita."
     } else {
-        "Elegí qué modelo local conversa con Abito. Se aplica desde el próximo mensaje."
+        "Elegí qué modelo local conversa con Koda. Se aplica desde el próximo mensaje."
     };
     json!({
         "revision": revision,

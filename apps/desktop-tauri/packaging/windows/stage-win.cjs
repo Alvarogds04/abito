@@ -23,7 +23,7 @@ if (fs.readFileSync(path.join(runtime, 'runtime.nsh'), 'utf8') !== nsisInclude()
 for (const f of RUNTIME_FILES) {
   if (L.sha256File(path.join(runtime, f)) !== L.sha256File(path.join(crate, '..', f))) throw new Error(`stale runtime payload: ${f}`);
 }
-const artifactNames = [...BINARY_FILES, `abito-island-${cfg.version}-win-x64-setup.exe`,
+const artifactNames = [...BINARY_FILES, `koda-${cfg.version}-win-x64-setup.exe`,
   ...RUNTIME_FILES.map(f => `windows-runtime/${f}`), 'windows-runtime/runtime.nsh'];
 const receiptPath = path.join(dist, 'receipt-windows.json');
 for (const name of artifactNames) {

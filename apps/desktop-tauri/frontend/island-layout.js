@@ -68,7 +68,7 @@
    * attributed to THIS row) / news (an unseen integration event).
    */
   // S4 (abito-avisos-ux): the Abito project folder is shown as «Abito» (same rule as AbitoNotify.projectLabel; display only)
-  const projectLabel = name => (typeof name === 'string' && /^sb-second-brain$/i.test(name.trim()) ? 'Abito' : name);
+  const projectLabel = name => (typeof name === 'string' && /^sb-second-brain$/i.test(name.trim()) ? 'Koda' : name);
   function blobRows(o) {
     if (!o || typeof o !== 'object') return [];
     const badges = o.badges instanceof Set ? o.badges : new Set();
@@ -199,7 +199,7 @@
     const v = o.view;
     if (v && v.state === 'error') return null;
     if (v && v.state === 'ready' && Array.isArray(v.rows) && v.rows.length) return null;
-    return { title: 'Todo tranquilo', sub: 'Arrastrá un archivo o preguntá.', cta: { label: 'Preguntar a Abito', action: 'new-chat' } };
+    return { title: 'Todo tranquilo', sub: 'Arrastrá un archivo o preguntá.', cta: { label: 'Preguntar a Koda', action: 'new-chat' } };
   }
 
   // ---- D: «Pi terminó» in the centre, the result untruncated ----------------------------------------------------------------------
@@ -248,10 +248,10 @@
     if (pending) {
       const n = 1 + queued;
       const what = pending === 'approval' ? (n === 1 ? 'un permiso espera' : `${n} permisos esperan`) : (n === 1 ? 'una pregunta espera' : `${n} preguntas esperan`);
-      return { state: pending, pulse: true, aria: `Abito: ${what}` };
+      return { state: pending, pulse: true, aria: `Koda: ${what}` };
     }
-    if (o && o.finished) return { state: 'finished', pulse: true, aria: 'Abito: algo terminó' };
-    return { state: 'rest', pulse: false, aria: 'Abito, en reposo' };
+    if (o && o.finished) return { state: 'finished', pulse: true, aria: 'Koda: algo terminó' };
+    return { state: 'rest', pulse: false, aria: 'Koda, en reposo' };
   }
 
   // ---- T1 · S2 (02 compacta, A): the mascot + up to 3 coloured mini-mascots + «+N», the real activity line, a state badge -----------

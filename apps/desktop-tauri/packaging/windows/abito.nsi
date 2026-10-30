@@ -32,8 +32,8 @@ Unicode true
 !endif
 !include "${RUNTIMEDIR}\runtime.nsh"
 
-Name "Abito Island"
-OutFile "${OUTDIR}\abito-island-${VERSION}-win-x64-setup.exe"
+Name "Koda"
+OutFile "${OUTDIR}\koda-${VERSION}-win-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\abito-island"
 RequestExecutionLevel user
 
@@ -45,24 +45,29 @@ RequestExecutionLevel user
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-Section "Abito Island"
+Section "Koda"
   SetOutPath "$INSTDIR"
   !insertmacro AbitoInstallPayload
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  CreateDirectory "$SMPROGRAMS\Abito Island"
-  CreateShortCut "$SMPROGRAMS\Abito Island\Abito Island.lnk" "$INSTDIR\abito-island.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "DisplayName" "Abito Island"
+  ; Koda 0.1: an upgrade replaces the old «Abito Island» Start-menu entry with «Koda» (same binary, same install dir).
+  Delete "$SMPROGRAMS\Abito Island\Abito Island.lnk"
+  RMDir "$SMPROGRAMS\Abito Island"
+  CreateDirectory "$SMPROGRAMS\Koda"
+  CreateShortCut "$SMPROGRAMS\Koda\Koda.lnk" "$INSTDIR\abito-island.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "DisplayName" "Koda"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "UninstallString" "$INSTDIR\uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "Publisher" "Abito (unsigned build)"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri" "Publisher" "Koda (unsigned build)"
 SectionEnd
 
 Section "Uninstall"
   !insertmacro AbitoUninstallPayload
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR" ; succeeds only when the folder is empty — never silent-recursion
+  Delete "$SMPROGRAMS\Koda\Koda.lnk"
+  RMDir "$SMPROGRAMS\Koda"
   Delete "$SMPROGRAMS\Abito Island\Abito Island.lnk"
   RMDir "$SMPROGRAMS\Abito Island"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\com.abitog.AbitoTauri"

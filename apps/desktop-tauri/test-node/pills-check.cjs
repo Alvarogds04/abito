@@ -233,7 +233,7 @@ test('a failed terminal launch shows a short message without «por clase»', asy
 
 test('#442 overview starts with Abito only; legacy defaults never become agents', async () => {
   const b = boot(); await flush();
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda'); // Koda 0.1 T2: the principal reads «Koda»
   assert.equal(b.get('pill-state').textContent, 'En reposo');
   assert.deepEqual(b.get('pill-choices').children.map(n => n.dataset.pillId), ['abito']);
   assert.equal(writes(b).length, 0);
@@ -243,25 +243,25 @@ test('#442 target selection uses the existing role command; synthetic, covered a
   const b = boot({ specs: SPECS }); b.load('specialists.js'); await flush();
   const id = 'pill-choice-esp-a';
   b.click(id, { isTrusted: false }); await flush();
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   for (const fields of [{ phase: 'compact' }, { phase: 'expanded', view: 'chat' },
     { phase: 'expanded', view: 'overview', card: 'pending' },
     { phase: 'expanded', view: 'overview', settings: 'open' },
     ...['pending', 'expired', 'outcome'].map(question => ({ phase: 'expanded', view: 'overview', question })),
     { phase: 'expanded', view: 'overview', noticeView: 'notices' }]) {
     b.get('capsule').dataset = fields; b.click(id); await flush();
-    assert.equal(b.get('pill-name').textContent, 'Abito');
+    assert.equal(b.get('pill-name').textContent, 'Koda');
   }
   assert.equal(b.backend.specCalls.length, 0);
   b.get('capsule').dataset = { phase: 'expanded', view: 'overview' };
   b.backend.rejectSpec = true; b.click(id); await flush();
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   assert.match(b.get('pill-live').textContent, /No se pudo/);
   b.click(id); await flush();
   assert.equal(b.get('pill-name').textContent, 'Revisor');
   assert.deepEqual(b.backend.specCalls.at(-1), { action: 'select', id: 'esp-a' });
   b.click('pill-choice-abito'); await flush();
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   assert.deepEqual(b.backend.specCalls.at(-1), { action: 'select', id: null });
   assert.match(b.get('pill-detail').textContent, /no inicia tareas/);
 });
@@ -290,7 +290,7 @@ test('#442 unknown legacy inputs never become island markup or invented agents',
 test('#442 failed preference read says so and shows Abito without writing', async () => {
   const b = boot({ failView: true }); await flush();
   assert.match(b.get('pill-live').textContent, /no se pudieron leer/i);
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   assert.equal(writes(b).length, 0);
 });
 
@@ -349,7 +349,7 @@ test('S6 actual legacy sound/gain/name/avatar handlers still retain pill choices
   b.click('dot-color-abito-blue'); await flush(); assert.equal(b.backend.prefs.avatarColors.abito,'blue');
   assert.equal(b.backend.prefs.mainPill,'agent_codex'); assert.deepEqual(b.backend.prefs.declaredPills,['ai_google']);
   assert.deepEqual(writes(b).map(x=>x.payload.action),['sound_on','set_sound_gain','set_display_name','set_avatar_color']);
-  assert.equal(b.get('pill-name').textContent,'Abito');
+  assert.equal(b.get('pill-name').textContent,'Koda');
   assert.ok(!b.get('open-screen-accounts'), '#408: no separate Cuentas/Conectores header buttons'); assert.ok(b.get('settings-tab-accounts')); assert.ok(!b.get('settings-tab-connectors'), 'S8: merged into Conexiones');
 });
 
@@ -741,7 +741,7 @@ test('#415 the blob model creates the human examples and refuses bad names, dupl
   ]);
   const before = clone(state);
   for (const [name, color] of [
-    ['abito github', ''], [' Abito correo ', ''], ['Abito', ''], ['ABITO', ''], // duplicates + the principal
+    ['abito github', ''], [' Abito correo ', ''], ['Abito', ''], ['ABITO', ''], ['Koda', ''], ['koda', ''], ['KODA', ''], // Koda 0.1 T2: duplicates + the principal, by either name
     ['', ''], ['Abito\u{0007}', ''], ['A'.repeat(41), ''], ['Abito GitHub', ''],
     ['Nuevo', 'teal'], ['Nuevo', 42],
   ]) assert.equal(M.createBlob(state, name, color), null, `«${name}» must be refused`);
@@ -784,7 +784,7 @@ const swatchOf = (b, color) => allByClass(b.get('blob-editor'), 'swatch').find(x
 test('#442 Ajustes → Blobs paints the principal (Abito), the agent tiles from the specialist store and the island strip; nothing is written by opening it', async () => {
   const b = await settingsBoot({ specs: SPECS });
   await flush();
-  assert.equal(b.get('blob-principal-card').getAttribute('aria-label'), 'Abito: siempre en la isla');
+  assert.equal(b.get('blob-principal-card').getAttribute('aria-label'), 'Koda: siempre en la isla');
   assert.deepEqual(allByClass(b.get('blob-agent-grid'), 'blob-tile').map(x => x.dataset.agentId), ['esp-a', 'esp-b']);
   assert.equal(b.get('blob-count').textContent, '2/3');
   assert.ok(b.get('pill-principal-card') === null, 'the old principal card is gone');
@@ -1061,12 +1061,12 @@ test('#442 off-island active target stays honest, Abito stays reachable, deleted
   b.click('pill-choice-abito'); await flush();
   assert.deepEqual(b.backend.specCalls.at(-1), { action: 'select', id: null });
   assert.equal(b.backend.specs.active, null);
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   b.emit({ islandAgents: ['esp-a', 'esp-b'] });
   b.click('pill-choice-esp-a'); await flush();
   await b.window.AbitoSpecialistsPanel.act({ action: 'delete', id: 'esp-a' });
   assert.equal(b.backend.specs.active, null, 'the backend deletion projection clears target');
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   assert.equal(b.get('pill-choice-esp-a'), null);
 });
 
@@ -1182,7 +1182,7 @@ test('#489 declared integration pills with a live poller show with their colour;
   assert.deepEqual(ids(), [...base, 'integration_n8n'], 'design 16: the focused pill is the card AND stays a marked row of the column');
   assert.equal(b.get('pill-choice-integration_n8n').getAttribute('aria-pressed'), 'true'); assert.equal(b.get('pill-choice-integration_n8n').dataset.centre, 'true');
   assert.equal(b.backend.specCalls.length, 0, 'never a chat target');
-  assert.equal(b.get('pill-name').textContent, 'Abito');
+  assert.equal(b.get('pill-name').textContent, 'Koda');
   b.click('pill-choice-esp-a'); await flush();
   assert.deepEqual(focus, ['integration_n8n', null], 'choosing a chat target releases the integration card');
   assert.deepEqual(ids(), [...base, 'integration_n8n'], 'and the pill returns to the grid');

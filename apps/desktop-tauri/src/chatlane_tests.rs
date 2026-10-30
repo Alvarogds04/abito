@@ -113,7 +113,7 @@ fn availability_maps_the_preflight_honestly() {
 fn system_prompt_asks_for_neutral_spanish_and_names_abito_plainly() {
     let p = super::SYSTEM_PROMPT;
     assert!(p.contains("español neutro"), "{p}");
-    assert!(p.starts_with("Te llamas Abito"), "{p}");
+    assert!(p.starts_with("Te llamas Koda"), "{p}");
     for voseo in ["rioplatense", "Sos ", "Respondé", "Corrés", "podés", "explicá"] {
         assert!(!p.contains(voseo), "voseo left in the prompt: {voseo}");
     }
@@ -126,8 +126,8 @@ fn system_prompt_asks_for_neutral_spanish_and_names_abito_plainly() {
 fn system_prompt_names_only_abito_and_knows_the_app_features() {
     let p = super::SYSTEM_PROMPT;
     assert!(!p.contains("Second Brain"), "{p}");
-    assert!(p.contains("la app Abito"), "{p}");
-    for feature in ["dictado", "OK Abito", "Spotify", "GitHub", "Vercel", "Stripe", "n8n", "Notion",
+    assert!(p.contains("la app Koda"), "{p}");
+    for feature in ["dictado", "OK Koda", "Spotify", "GitHub", "Vercel", "Stripe", "n8n", "Notion",
         "Cal.com", "correo", "teléfono", "personaje de escritorio", "Claude Code", "Codex", "Pi",
         "especialistas", "Ajustes", "ventana activa"] {
         assert!(p.contains(feature), "the prompt does not mention {feature}");

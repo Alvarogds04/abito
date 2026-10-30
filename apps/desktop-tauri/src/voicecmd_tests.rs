@@ -56,10 +56,12 @@ fn prefs_round_trip_and_a_corrupt_file_falls_back_to_off() {
 
 #[test]
 fn the_wake_phrase_is_split_from_the_command() {
-    assert_eq!(split_wake("ok abito pon música"), Some("pon música".to_string()));
-    assert_eq!(split_wake("Okay, Abito: añade una pastilla"), Some("añade una pastilla".to_string()));
-    assert_eq!(split_wake("ok abito"), Some(String::new()));
-    assert_eq!(split_wake("abito pon música"), None);
+    // Koda 0.1 T2
+    assert_eq!(split_wake("ok koda pon música"), Some("pon música".to_string()));
+    assert_eq!(split_wake("Okay, Koda: añade una pastilla"), Some("añade una pastilla".to_string()));
+    assert_eq!(split_wake("ok koda"), Some(String::new()));
+    assert_eq!(split_wake("koda pon música"), None);
+    assert_eq!(split_wake("ok abito pon música"), None, "Abito no longer wakes");
     assert_eq!(split_wake("hola qué tal"), None);
 }
 

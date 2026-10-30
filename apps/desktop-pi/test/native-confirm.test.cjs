@@ -46,7 +46,7 @@ test('island «Sí» first: confirm resolves true, the terminal dialog is withdr
   r.abito.resolvers[0]({ status: 'answered', answer: { type: 'option', value: 'yes' } });
   assert.equal(await run, true);
   assert.equal(r.term.calls[0].opts.signal.aborted, true, 'terminal withdrawn');
-  assert.match(r.term.notes.at(-1)[0], /Abito.*Sí/);
+  assert.match(r.term.notes.at(-1)[0], /Koda.*Sí/);
 });
 
 test('island «No» first: confirm resolves false, terminal withdrawn', async () => {

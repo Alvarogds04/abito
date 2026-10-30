@@ -574,7 +574,7 @@ pub fn build_report(rec: &FailureRecord, log: &[String], home: &str, user: &str)
     let title = format!("[{}] {}: {} ({fp})", rd(&rec.process), rd(&rec.step), first.trim());
     let log_lines = safe_log_lines(log, home, user, LOG_LINES);
     let body = format!(
-        "## What happened\n- While: {step}\n- Process: {process}\n- Error: {msg}\n\n## Environment\n- Abito: {version}\n- OS: {os}\n- Session: {session}\n- Fingerprint: `{fp}`\n\n## Last log lines\n```\n{log}\n```\n\n## Details (optional, written by you)\n\n",
+        "## What happened\n- While: {step}\n- Process: {process}\n- Error: {msg}\n\n## Environment\n- Koda: {version}\n- OS: {os}\n- Session: {session}\n- Fingerprint: `{fp}`\n\n## Last log lines\n```\n{log}\n```\n\n## Details (optional, written by you)\n\n",
         step = rd(&rec.step), process = rd(&rec.process), version = rd(&rec.version), os = rd(&rec.os), session = rd(&rec.session),
         log = log_lines.join("\n"));
     Report { title, body }

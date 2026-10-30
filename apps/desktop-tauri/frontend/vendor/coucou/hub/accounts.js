@@ -319,7 +319,7 @@ async function renderAccounts({ invoke, V, listen, timers, page = "all", keys: s
         saving = true;
         work(() => agent({ action: "abito_account_remove", accountId: a.accountId }), (next) => {
           apply(next);
-          message.textContent = "Conexión quitada. La clave se borró del almacén de Abito.";
+          message.textContent = "Conexión quitada. La clave se borró del almacén de Koda.";
         }).finally(() => {
           saving = false;
           if (s.alive()) paint();

@@ -28,8 +28,8 @@ export const SHORTCUT_TEXT = {
   nextPill: N_("Next pill"),
   prevPill: N_("Previous pill"),
   // Abito adaptation: reserved character name replaced; action IDs stay unchanged.
-  muteToggle: N_("Mute or unmute Abito"),
-  desktopToggle: N_("Send Abito to the desktop"),
+  muteToggle: N_("Mute or unmute Koda"),
+  desktopToggle: N_("Send Koda to the desktop"),
   wardrobeToggle: N_("Open the wardrobe"),
   island: {
     nextPrev: N_("Next or previous pill"),

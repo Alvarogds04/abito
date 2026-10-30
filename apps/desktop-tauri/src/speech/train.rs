@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use super::wake::{levenshtein, NAMES, OK_WORDS};
+use super::wake::{NAMES, OK_WORDS};
 use crate::voiceintent::normalise;
 
 pub const TARGET: usize = 5;
@@ -50,7 +50,7 @@ fn plain_word(w: &str) -> bool {
 
 fn valid_name(w: &str) -> bool {
     let n = w.chars().count();
-    plain_word(w) && (5..=12).contains(&n) && !COMMON.contains(&w) && !OK_WORDS.contains(&w) && levenshtein(&w[w.len() - 5..], "abito") <= 2
+    plain_word(w) && (5..=12).contains(&n) && !COMMON.contains(&w) && !OK_WORDS.contains(&w) && w.ends_with("oda") && !super::words::NEVER_KODA.contains(&w)
 }
 
 fn valid_lead(w: &str) -> bool {

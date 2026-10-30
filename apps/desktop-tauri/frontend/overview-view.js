@@ -161,7 +161,7 @@
     return /^(hoy|ayer)$/.test(age) ? age[0].toUpperCase() + age.slice(1) : `Hace ${age}`;
   }
   // S4 (abito-avisos-ux): the Abito project folder is shown as «Abito» (same rule as AbitoNotify.projectLabel; display only)
-  const projectLabel = name => (typeof name === 'string' && /^sb-second-brain$/i.test(name.trim()) ? 'Abito' : name);
+  const projectLabel = name => (typeof name === 'string' && /^sb-second-brain$/i.test(name.trim()) ? 'Koda' : name);
   function noticeBandView(notices, now) {
     const base = noticeView(notices, now); // null for nothing admitted
     if (!base) return null;
@@ -295,7 +295,7 @@
     }
     if (view.status === 'permission_pending') {
       return { kind: 'permission_pending', word: 'Aceptá el permiso', icon: 'info', tone: 'sun',
-        aria: `Aceptá el permiso: el sistema te pregunta si Abito puede usar el atajo ${combo}; respondé una sola vez y queda guardado` };
+        aria: `Aceptá el permiso: el sistema te pregunta si Koda puede usar el atajo ${combo}; respondé una sola vez y queda guardado` };
     }
     if (view.status === 'active' && view.limited === true) {
       const why = view.portal_note === 'permission_denied' ? ' Rechazaste el permiso del sistema, por eso no usa el atajo global.'

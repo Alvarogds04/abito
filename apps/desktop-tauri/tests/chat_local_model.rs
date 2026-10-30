@@ -97,7 +97,7 @@ fn local_model_answer_is_streamed_and_completed() {
 /// byte for byte the one Abito always sent.
 #[test]
 fn the_turn_sends_the_system_message_the_caller_froze_at_submit() {
-    const FROZEN: &str = "Sos Abito, el compañero de escritorio.\n\nAhora hablás como «Investigador»: buscá fuentes y citá.";
+    const FROZEN: &str = "Sos Koda, el compañero de escritorio.\n\nAhora hablás como «Investigador»: buscá fuentes y citá.";
     let fake = FakeModel::start(FakeModelConfig::default());
     let lane = Lane::new("c-327");
     let turn = submit(&lane, "¿quién sos?", "req-0000000001");

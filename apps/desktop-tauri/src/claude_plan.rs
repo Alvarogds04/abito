@@ -59,7 +59,7 @@ pub fn read_at(runtime: &Path, now_ms: i64) -> Option<Value> {
         return None;
     }
     let at = o.get("at")?.as_i64()?;
-    if at > now_ms || now_ms - at > MAX_AGE_MS {
+    if at > now_ms.saturating_add(crate::protocol::CLOCK_SKEW_MS as i64) || now_ms - at > MAX_AGE_MS {
         return None;
     }
     let five = window(o.get("five_hour"), now_ms);
