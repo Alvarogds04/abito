@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+const { hookNodeArgs, pipeEnv } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -13,7 +14,7 @@ const stop = JSON.stringify({ session_id: 's1', cwd, hook_event_name: 'Stop', st
 
 function run(args, input, env, { closeStdin = true } = {}) {
   return new Promise(resolve => {
-    const child = spawn(process.execPath, [bin, ...args], { env: { PATH: process.env.PATH, ABITO_SOCKET_DIR: '/nonexistent-abito-test', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [...hookNodeArgs, bin, ...args], { env: { PATH: process.env.PATH, ABITO_SOCKET_DIR: '/nonexistent-abito-test', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', c => { stdout += c; }); child.stderr.on('data', c => { stderr += c; });
     child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
@@ -22,7 +23,7 @@ function run(args, input, env, { closeStdin = true } = {}) {
     if (closeStdin) child.stdin.end();
   });
 }
-const envOf = r => ({ ABITO_DESKTOP_SOCKET: r.endpoint, ABITO_SOCKET_DIR: r.runtime });
+const envOf = r => ({ ABITO_DESKTOP_SOCKET: r.endpoint, ABITO_SOCKET_DIR: r.runtime, ...pipeEnv(r) });
 const oneLineOrEmpty = s => assert.ok(s === '' || (s.endsWith('\n') && s.trim().split('\n').length === 1));
 const settle = async rcv => { for (let i = 0; i < 40 && !rcv.frames.some(f => f.type === 'settled'); i++) await new Promise(r => setTimeout(r, 25)); };
 const answer = (rcv, value) => rcv.next('question').then(q => rcv.send({ v: 1, type: 'answer', questionVersion: 1, project: q.project,
@@ -34,7 +35,8 @@ test('e2e allow / deny', async t => {
     const p = answer(rcv, v);
     const r = await run(['claude', 'permission-request'], permission, envOf(rcv));
     await p;
-    assert.equal(r.code, 0); assert.equal(r.stdout, exp); oneLineOrEmpty(r.stdout);
+    // CI diagnostics for the Windows pipe path (flaky once in 4 runs: empty stdout after ~0.5 s): what the child said and what the island saw
+    assert.equal(r.code, 0, `stderr=${r.stderr}`); assert.equal(r.stdout, exp, `${v}: stderr=${JSON.stringify(r.stderr)} frames=${rcv.frames.map(f => f.type)} t=${rcv.rawFrames.length}`); oneLineOrEmpty(r.stdout);
     const q = rcv.frames.find(f => f.type === 'question');
     assert.equal(q.expiresAt - q.at, 30000);
   }
@@ -105,7 +107,8 @@ test('e2e AskUserQuestion: the island answer travels in decision.allow + updated
   const p = answer(rcv, 'o1');
   const r = await run(['claude', 'permission-request'], askInput, envOf(rcv));
   await p;
-  assert.equal(r.code, 0); oneLineOrEmpty(r.stdout);
+  assert.equal(r.code, 0, r.stderr); oneLineOrEmpty(r.stdout);
+  assert.notEqual(r.stdout, '', `empty stdout; stderr=${r.stderr}; frames=${rcv.frames.map(f => f.type)}`); // CI diagnostics for the Windows pipe path
   const out = JSON.parse(r.stdout).hookSpecificOutput;
   assert.equal(out.hookEventName, 'PermissionRequest'); assert.equal(out.decision.behavior, 'allow');
   assert.deepEqual(out.decision.updatedInput.answers, { 'Which one?': 'Beta' });
@@ -113,4 +116,13 @@ test('e2e AskUserQuestion: the island answer travels in decision.allow + updated
   assert.equal(none.code, 0); assert.equal(none.stdout, '');
   const gone = await run(['claude', 'pre-tool-use'], askInput, envOf(rcv));
   assert.equal(gone.code, 64, 'the removed sub-command is a usage error, never a silent success');
+});
+
+// Windows twin of the fail-closed contract with the REAL transport: an island is listening but the native relay is not installed on
+// this runner (it is covered by windows-transport.test.cjs and the HU-054 Windows smoke), so the unmodified hook cannot reach it and
+// must stay silent: exit 0, empty stdout, nothing on the wire. Without ABITO_TEST_PIPE the preload is inert.
+test('Windows no-relay: with an island listening but no relay installed the hook fails closed (exit 0, empty stdout, no frame)', { skip: process.platform !== 'win32' && 'Windows-only transport' }, async t => {
+  const rcv = await fakeReceiver(t, { questions: true });
+  const r = await run(['claude', 'permission-request'], permission, { ABITO_DESKTOP_SOCKET: rcv.endpoint, ABITO_SOCKET_DIR: rcv.runtime });
+  assert.equal(r.code, 0); assert.equal(r.stdout, ''); assert.equal(rcv.frames.length, 0);
 });

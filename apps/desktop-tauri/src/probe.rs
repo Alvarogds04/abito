@@ -64,7 +64,7 @@ fn readback(app: &AppHandle, step: &str) {
     // Tauri getters from what the WM actually applied.
     // FIX-B: identified by _NET_WM_PID == our pid (title secondary); a
     // failure is printed as `x11_window_error`, never replaced by a guess.
-    let found = abito_island::workarea::x11_find_own_window("Abito");
+    let found = abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE);
     let x11_error = found.as_ref().err().map(|e| e.as_str());
     let x11win = found.ok();
     let x11json = x11win.as_ref().map(|w| {
@@ -962,7 +962,7 @@ fn capture_sequence(app: &AppHandle, name: &str, fps: u32, millis: u64, action: 
         return;
     };
     let Some(page) = main_window(app) else { return };
-    let Ok(win) = abito_island::workarea::x11_find_own_window("Abito") else {
+    let Ok(win) = abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE) else {
         action();
         return;
     };
@@ -1714,7 +1714,7 @@ fn native_resize_flash_scene(app: &AppHandle) {
     let (g2, s2) = (geom.clone(), stop.clone());
     let sampler = std::thread::spawn(move || {
         while !s2.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Ok(w) = abito_island::workarea::x11_find_own_window("Abito") {
+            if let Ok(w) = abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE) {
                 if let Ok(mut g) = g2.lock() {
                     if g.len() < 4000 {
                         g.push((crate::now_ms(), w.x, w.y, w.w, w.h));
@@ -2500,7 +2500,7 @@ fn capture_visual(app: &AppHandle, name: &str) {
     };
     let _ = app;
     let Some(page) = main_window(app) else { return }; // WebviewWindow, for the body class only
-    let win = match abito_island::workarea::x11_find_own_window("Abito") {
+    let win = match abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE) {
         Ok(w) => w,
         Err(e) => {
             emit(&json!({"step": "visual", "name": name, "error": e.as_str()}));
@@ -2610,7 +2610,7 @@ fn island_validation(app: &AppHandle) {
     let visible = compact.first().and_then(|v| v["visible"].as_array());
     let small = visible.map_or(false, |v| (v[0].as_f64().unwrap_or(0.0) - geometry::COMPACT_BAR.0 as f64).abs() <= 0.5 && (v[1].as_f64().unwrap_or(0.0) - geometry::COMPACT_BAR.1 as f64).abs() <= 0.5);
     scene("isla-compacta", compact_size && small, "tamaño compacto no observado", json!({"page":compact,"native_expected":[native_size.0,native_size.1]}));
-    let above = wait(&|| abito_island::workarea::x11_find_own_window("Abito").map(|w| w.wm_state_above == Some(true)).unwrap_or(false));
+    let above = wait(&|| abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE).map(|w| w.wm_state_above == Some(true)).unwrap_or(false));
     scene("isla-siempre-encima", above, "falta _NET_WM_STATE_ABOVE al arrancar", json!({"above":above}));
     let _ = crate::dispatch_action(app, &state, abito_island::bridge::Action::Expand, None);
     let expanded = page_state("expanded");
@@ -2655,18 +2655,18 @@ fn island_validation(app: &AppHandle) {
         // Two deliberate presses, not duplicate reports from two backends.
         wait(&|| first_press.elapsed() >= Duration::from_millis(abito_island::hotkey::PRESS_DEDUP_MS + 50));
         crate::hotkeyhost::press_on_main(app);
-        wait(&|| win.is_visible().unwrap_or(false) && abito_island::workarea::x11_find_own_window("Abito").is_ok());
-        let own = abito_island::workarea::x11_find_own_window("Abito").map_err(|e|e.as_str().to_owned())?.id;
+        wait(&|| win.is_visible().unwrap_or(false) && abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE).is_ok());
+        let own = abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE).map_err(|e|e.as_str().to_owned())?.id;
         let mapped = || conn.get_window_attributes(own).ok().and_then(|c|c.reply().ok()).map(|a|a.map_state == MapState::VIEWABLE).unwrap_or(false);
         let on_top = wait(&|| {
             let list = stack();
             let order = match (list.iter().position(|w| *w==own), list.iter().position(|w| *w==rival)) {
                 (Some(a),Some(b)) => a>b, _=>false
             };
-            mapped() && order && abito_island::workarea::x11_find_own_window("Abito").map(|w|w.wm_state_above == Some(true)).unwrap_or(false)
+            mapped() && order && abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE).map(|w|w.wm_state_above == Some(true)).unwrap_or(false)
         });
         // Keep the rival connection alive until after the capture.
-        let evidence = json!({"hidden":hidden,"rival_ready":rival_ready,"rival":rival,"own":own,"stack_before":before,"stack_after":stack(),"mapped":mapped(),"above":abito_island::workarea::x11_find_own_window("Abito").map(|w|w.wm_state_above == Some(true)).unwrap_or(false),"withdrawal_fixture":"clear ABOVE while hidden, as Mutter does","input":"hotkeyhost::press_on_main, same shortcut callback; not injected keys"});
+        let evidence = json!({"hidden":hidden,"rival_ready":rival_ready,"rival":rival,"own":own,"stack_before":before,"stack_after":stack(),"mapped":mapped(),"above":abito_island::workarea::x11_find_own_window(abito_island::workarea::WINDOW_TITLE).map(|w|w.wm_state_above == Some(true)).unwrap_or(false),"withdrawal_fixture":"clear ABOVE while hidden, as Mutter does","input":"hotkeyhost::press_on_main, same shortcut callback; not injected keys"});
         scene("isla-atajo-sobre-rival", hidden && rival_ready && on_top, "atajo no restauró la isla mapeada y encima del rival con ABOVE", evidence);
         Ok(json!(true))
     })();
@@ -2952,7 +2952,7 @@ fn feature_validation(app: &AppHandle) {
     let text=std::fs::read_to_string(&entry).unwrap_or_default();
     let off=tray("autostart");
     sleep(Duration::from_millis(350));
-    record("autoinicio",json!({"ok":on["ok"]==true && off["ok"]==true && text.lines().any(|s|s=="Name=Abito") && text.contains(" --autostart") && !entry.exists(),"written":text,"removed":!entry.exists(),"on":on,"off":off}));
+    record("autoinicio",json!({"ok":on["ok"]==true && off["ok"]==true && text.lines().any(|s|s=="Name=Koda") && text.contains(" --autostart") && !entry.exists(),"written":text,"removed":!entry.exists(),"on":on,"off":off}));
     let mut character=run(&win,"AbitoValidate.character(true)");
     sleep(Duration::from_millis(250));
     let mapped=app.get_webview_window("character").map(|w|w.is_visible().unwrap_or(false) && w.is_always_on_top().unwrap_or(false)).unwrap_or(false);

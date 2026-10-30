@@ -27,8 +27,8 @@ fn entry_is_the_closed_template() {
     let rest: Vec<&str> = lines.collect();
     for key in [
         "Type=Application",
-        "Name=Abito",
-        "Comment=Abito",
+        "Name=Koda",
+        "Comment=Koda",
         "Exec=\"/opt/abito/bin/abito-island\" --autostart",
         "Icon=/opt/abito/bin/abito-island.png",
         "Terminal=false",
@@ -155,12 +155,13 @@ fn enable_creates_a_missing_autostart_directory() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// Human L54: «la app se llamara abito»: the visible launcher name is just «Abito».
+/// Koda 0.1 — Human 30-oct («Vamosa a cerrar esta version cambiar el nombre del repo por Koda y apartir de aqui empezaremos esta sera la version 0.1» → «Todo se llama Koda, repo nuevo desde 0.1» + «Solo lo visible»): the visible launcher name is «Koda»; the binary, icon file and class stay internal.
 #[test]
-fn the_visible_app_name_is_abito() {
+fn the_visible_app_name_is_koda() {
     let text = super::desktop_entry(std::path::Path::new("/opt/abito/abito-island-launcher")).unwrap();
-    assert!(text.contains("\nName=Abito\n"), "{text}");
-    assert!(text.contains("\nComment=Abito\n"), "{text}");
+    assert!(text.contains("\nName=Koda\n"), "{text}");
+    assert!(text.contains("\nComment=Koda\n"), "{text}");
+    assert!(text.contains("abito-island-launcher\" --autostart"), "the launcher keeps its internal name: {text}");
     assert!(!text.contains("Tauri"), "{text}");
 }
 

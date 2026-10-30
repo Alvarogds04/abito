@@ -142,7 +142,7 @@ class FakeProfiles {
 }
 
 function tmpRuntime(t) {
-	const base = fs.mkdtempSync(path.join(os.tmpdir(), "abito-srv-"));
+	const base = fs.mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-srv-"));
 	t.after(() => fs.rmSync(base, { recursive: true, force: true }));
 	return path.join(base, "run");
 }
@@ -247,7 +247,8 @@ test("max clients is enforced", async (t) => {
 	await waitFor(() => second.closed);
 });
 
-test("socket is 0600 inside a 0700 private directory; path guard", async (t) => {
+const WIN = process.platform === "win32";
+test("socket is 0600 inside a 0700 private directory; path guard", { skip: WIN && "Unix socket mechanism; Windows twin: «Windows: the endpoint is a named pipe…» below" }, async (t) => {
 	const { endpoint, runtimeDir } = await setup(t);
 	assert.equal(fs.lstatSync(endpoint).mode & 0o7777, 0o600);
 	assert.ok(fs.lstatSync(endpoint).isSocket());
@@ -256,15 +257,27 @@ test("socket is 0600 inside a 0700 private directory; path guard", async (t) => 
 	const long = new IslandServer({ runtimeDir: path.join(tmpRuntime(t), "x".repeat(120)), token: TOKEN, engine: new FakeEngine() });
 	await assert.rejects(long.start());
 });
+// Windows twins (W1): no socket file, no private directory, no leftovers: the endpoint is a named pipe whose exact shape the Rust client checks
+// (winpolicy::pipe_endpoint_ok), the token gate is the access control, and a pipe vanishes with its server.
+test("Windows: the endpoint is a named pipe abito-<32 hex>, nothing is created on disk, and it disappears with the server", { skip: !WIN && "Windows only; Unix twin: «socket is 0600 inside a 0700 private directory»" }, async (t) => {
+	const { server, endpoint, runtimeDir } = await setup(t);
+	assert.match(endpoint, /^\\\\\.\\pipe\\abito-[0-9a-f]{32}$/);
+	const entries = fs.existsSync(runtimeDir) ? fs.readdirSync(runtimeDir) : [];
+	assert.deepEqual(entries.filter((n) => n.startsWith("p-")), [], "no socket directory on Windows (the runtime root itself may exist)");
+	const c = await login(t, endpoint);
+	assert.ok(c);
+	await server.close();
+	await assert.rejects(new Promise((resolve, reject) => { const s = require("node:net").connect(endpoint); s.once("connect", () => { s.destroy(); resolve(); }); s.once("error", reject); }));
+});
 
-test("a non-private runtime directory is refused", async (t) => {
+test("a non-private runtime directory is refused", { skip: WIN && "no runtime directory on Windows (named pipe); twin: «Windows: the endpoint is a named pipe…»" }, async (t) => {
 	const dir = tmpRuntime(t);
 	fs.mkdirSync(dir, { mode: 0o755 });
 	fs.chmodSync(dir, 0o755);
 	await assert.rejects(new IslandServer({ runtimeDir: dir, token: TOKEN, engine: new FakeEngine() }).start());
 });
 
-test("stale socket of a dead server is cleaned; a live one is kept", async (t) => {
+test("stale socket of a dead server is cleaned; a live one is kept", { skip: WIN && "pipes vanish with their server: no stale endpoint exists; twin: «Windows: the endpoint is a named pipe…»" }, async (t) => {
 	const runtimeDir = tmpRuntime(t);
 	fs.mkdirSync(runtimeDir, { mode: 0o700 });
 	const stale = path.join(runtimeDir, "p-abc123");
@@ -784,7 +797,7 @@ test("wire-wide secret scan: accounts/profiles/auth frames carry no key, baseUrl
 
 test("real AccountManager + fake helper: account_create -> accounts frame end to end (no secrets)", async (t) => {
 	const { AccountManager, helperEnv } = require("../src/auth.cjs");
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "abito-srv-real-"));
+	const root = fs.mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-srv-real-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const accountsRoot = path.join(root, "accounts");
 	const manager = new AccountManager({
@@ -1542,11 +1555,11 @@ test("set_paused: a persistence failure answers failed, keeps the previous state
 
 // ----- HU-041 T6a-1: custom provider account frames, end to end (real manager + store) -----
 
-test("custom provider: create -> key via auth_start/auth_reply -> discovery; inert for inference; nothing secret on the wire", async (t) => {
+test("custom provider: create -> key via auth_start/auth_reply -> discovery; guarded activation; nothing secret on the wire", async (t) => {
 	const http = require("node:http");
 	const { AccountManager, helperEnv } = require("../src/auth.cjs");
 	const { ProfileStore } = require("../src/profiles.cjs");
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "abito-srv-custom-"));
+	const root = fs.mkdtempSync(path.join(require("node:fs").realpathSync.native(os.tmpdir()), "abito-srv-custom-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const KEY = "sk-fake-SECRET-2468-DO-NOT-LEAK";
 	const hits = [];
@@ -1594,16 +1607,30 @@ test("custom provider: create -> key via auth_start/auth_reply -> discovery; ine
 	c.send({ type: "models_list", providerId: "custom-gateway", accountId: "gateway" });
 	await c.wait((f) => f.type === "models");
 
-	// Inert: no profile can be saved or selected for it through any public frame.
+	// T6a-2: the guarded transport is installed on activation (profile frames carry no URL/key).
 	c.send({ type: "profile_save", id: "gw", label: "G", role: "main", accountId: "gateway", provider: "custom-gateway", modelId: "model-a" });
-	await c.wait((f) => f.type === "error" && f.code === "failed" && f.seq > prompt.seq);
+	await c.wait((f) => f.type === "profiles" && f.profiles.length === 1);
 	c.send({ type: "profile_select", id: "gw" });
-	await waitFor(() => c.frames.filter((f) => f.type === "error" && f.code === "failed").length >= 3);
-	assert.deepEqual(profiles.list().profiles, []);
-	assert.equal(fs.existsSync(path.join(root, "island", "agent", "auth.json")), false);
+	await waitFor(() => profiles.list().active === "gw");
+	assert.equal(fs.existsSync(path.join(root, "island", "agent", "extensions", "abito-custom-provider.js")), true);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(root, "island", "agent", "custom-provider.json"), "utf8")).baseUrl, baseUrl);
+	c.send({ type: "profile_save", id: "bad", label: "B", role: "main", accountId: "gateway", provider: "custom-gateway", modelId: "model-z" });
+	await c.wait((f) => f.type === "profiles" && f.profiles.length === 2);
+	c.send({ type: "profile_select", id: "bad" });
+	await c.wait((f) => f.type === "error" && f.code === "failed");
+	assert.equal(profiles.list().active, "gw", "a refused activation changes nothing");
 
 	c.send({ type: "accounts_list" });
 	await c.wait((f) => f.type === "accounts" && f.accounts.length === 1 && f.accounts[0].configured === true);
 	const wire = JSON.stringify(c.frames);
-	for (const banned of [KEY, "sk-fake", "127.0.0.1", "baseUrl", "model-a"]) assert.equal(wire.includes(banned), false, banned);
+	for (const banned of [KEY, "sk-fake", "127.0.0.1", "baseUrl"]) assert.equal(wire.includes(banned), false, banned);
+});
+
+test("a refused (non-private) credential store reaches the client as the closed code store_not_private, not as a generic failure", async (t) => {
+	const { endpoint, accounts } = await setup(t);
+	const { CredentialStoreError } = require("../src/auth.cjs");
+	accounts.createAccount = async () => { throw new CredentialStoreError(); };
+	const c = await login(t, endpoint);
+	c.send({ type: "account_create", label: "x", provider: "p" });
+	await c.wait((f) => f.type === "error" && f.code === "store_not_private");
 });

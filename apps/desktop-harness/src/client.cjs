@@ -120,6 +120,11 @@ function openConnection(endpoint, platform) {
 // never passes it, so the choice is process.platform.
 const options_platform = platform => platform ?? process.platform;
 
+// The island stamps `at` with ITS clock; this process reads another one. On Windows two processes' Date.now() differ by a few
+// milliseconds (coarse timer), so an honest answer could land "before the question" or "in the future" and be dropped as a
+// protocol error. A skew far smaller than any replay worth rejecting (staleness stays 15 s, future stays rejected) is tolerated.
+const CLOCK_SKEW_MS = 1000;
+
 class IslandClient {
   constructor({ endpoint, runtime, cwd, sessionId, agent, projectName, onDiagnostic, connectTimeoutMs = 3000,
     handshakeTimeoutMs = 3000, clock, open, platform } = {}) {
@@ -257,7 +262,7 @@ class IslandClient {
         if (m.project !== l.project || m.sessionId !== l.sessionId) { violation('scope_mismatch'); return; }
         const base = ['v', 'type', 'questionVersion', 'project', 'sessionId', 'at', 'id', 'source'];
         if (m.v !== 1 || m.questionVersion !== 1 || !Number.isSafeInteger(m.at) ||
-            m.at < l.at || m.at > now || m.at < now - 15000) { violation('invalid_frame'); return; }
+            m.at < l.at - CLOCK_SKEW_MS || m.at > now + CLOCK_SKEW_MS || m.at < now - 15000) { violation('invalid_frame'); return; }
         if (m.type === 'question_closed') {
           if (!exact(m, [...base, 'reason']) || !['human', 'system'].includes(m.source) ||
               !['cancelled', 'busy'].includes(m.reason) || (m.source === 'human' && m.reason !== 'cancelled')) {
@@ -352,6 +357,6 @@ function formatNoDecision(result) {
     'protocol_error', 'invalid_request', 'disconnected', 'session_changed'];
   let raw; try { raw = result?.status; } catch { raw = undefined; }
   const status = known.includes(raw) ? raw : 'error';
-  return `Abito island: no answer (${status}). Answer in the terminal.`;
+  return `Koda island: no answer (${status}). Answer in the terminal.`;
 }
 module.exports = { IslandClient, formatNoDecision, createFrameGate, normalizeRequest, normalizeAttention, ATTENTION_TITLE_MAX, ATTENTION_DETAIL_MAX };

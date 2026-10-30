@@ -78,12 +78,13 @@
   // returns to its previous view by itself. The host keeps `notice` in its snapshot; only a NEW
   // outcome (a question that was pending is gone, or the notice word changed) restarts the clock.
   const OUTCOME_MS = 3000, OUTCOME_PROBLEM_MS = 4000;
-  let outcomeKey = null, outcomeUntil = 0, outcomeTimer = 0;
+  let outcomeKey = null, outcomeUntil = 0, outcomeTimer = 0, outcomeAgent = ''; // HU-075: who asked the question that just went away («<Agente> sigue con tu respuesta»)
   function trackOutcome(prev, next) {
     const view = N.phase(next, { inFlight: false, now: Date.now() });
-    if (view.kind !== 'outcome') { outcomeKey = null; outcomeUntil = 0; return; }
+    if (view.kind !== 'outcome') { outcomeKey = null; outcomeUntil = 0; outcomeAgent = ''; return; }
     const word = view.outcome.outcome;
     const before = prev ? N.fromPending(prev.pending) : null;
+    if (before) outcomeAgent = N.askerName(before);
     const fresh = !!before || (prev && prev.notice !== next.notice) || (outcomeKey !== null && outcomeKey !== word);
     if (fresh) {
       outcomeKey = word;
@@ -359,7 +360,12 @@
     stateEl.setAttribute('aria-label', o.aria);
     putIcon($('question-state-icon'), o.icon);
     $('question-state-word').textContent = o.word;
+    // HU-075: «Recibida · <Agente> sigue con tu respuesta» — only the producer's own acknowledgement carries the phrase
+    if (!noteEl) { noteEl = el('span', ''); noteEl.id = 'question-state-note'; stateEl.parentNode.insertBefore(noteEl, stateEl.nextSibling); }
+    noteEl.textContent = o.outcome === 'answered' && outcomeAgent ? `${outcomeAgent} sigue con tu respuesta` : '';
+    noteEl.hidden = !noteEl.textContent;
   }
+  let noteEl = null;
 
   // Auto-size: the card is as tall as its content (min 148), the island follows through `abito:question-size`; past the cap the card
   // scrolls inside itself. Measured with height:auto, so nothing is ever clipped and the buttons stay inside the card.
@@ -383,6 +389,8 @@
   }
   function fitCard() {
     const state = capsule.dataset.question;
+    // HU-075: «Recibida» keeps the height the pending question had (no 255 -> 224 -> 150); the close below publishes the closed size once
+    if (state === 'outcome') return;
     if (state !== 'pending' && state !== 'expired') {
       const closed = N.sizeSync({ question: state, islandH: 0 });
       sizedKey = ''; root.style.height = ''; root.style.overflowY = '';

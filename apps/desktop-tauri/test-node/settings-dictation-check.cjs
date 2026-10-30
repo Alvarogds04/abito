@@ -44,7 +44,7 @@ const { dom, Element, all, text } = require('./settings-accounts-check.cjs');
   const launchInvoke=async (cmd,{payload:p})=>{launchCalls.push([cmd,p]);if(p.action==='set_open_settings_at_launch'){if(launchFail)throw Error('refused');launchEnabled=p.enabled;}return {openSettingsAtLaunch:launchEnabled};};
   const page = new Element('div'); await flowSettingsPage(page,ctx,launchInvoke); await Promise.resolve(); await Promise.resolve();
   assert(text(page).includes('Ctrl+V'), 'Flow settings must explain manual clipboard paste');
-  assert(!text(page).includes('si Abito puede escribir por ti'), 'Abito never asks to type automatically');
+  assert(!text(page).includes('si Koda puede escribir por ti'), 'Koda never asks to type automatically');
   assert(String(page.children[0].className).includes('hub-hero'), 'D3: the hero is the first thing on the page; the feedback line must not sit above it');
   const labels = all(page).filter(e=>e.className==='hub-label').map(e=>e.textContent);
   assert.deepEqual(labels,['Probar','Activación','Audio','Datos'], '0.2.1 L2 (Ajustes de dictado: A): Probar first, then Activación, Audio, Datos');
@@ -92,7 +92,7 @@ const { dom, Element, all, text } = require('./settings-accounts-check.cjs');
   const goto=all(linked).find(e=>e.tagName==='button'&&e.textContent==='Ir a Ajustes de dictado');assert(goto,'link to the one place that prepares dictation');
   goto.fire('click',false);assert.equal(went,null);goto.fire('click');assert.equal(went,'flowsettings');leave();
   calls.length=0;
-  for(const keys of ['pending','denied','unsupported']) { state.keys=keys; const p=new Element('div'); await flowSettingsPage(p,ctx);assert(text(p).includes('Abito no puede vigilar el teclado aquí'));leave(); }
+  for(const keys of ['pending','denied','unsupported']) { state.keys=keys; const p=new Element('div'); await flowSettingsPage(p,ctx);assert(text(p).includes('Koda no puede vigilar el teclado aquí'));leave(); }
   history=[{id:'saved-1',date:Date.now(),text:'Dictado guardado',words:2,seconds:1}];
   const populated=new Element('div'); await dictationPage(populated,ctx);
   const copy=all(populated).find(e=>e.attrs.title==='Copiar');

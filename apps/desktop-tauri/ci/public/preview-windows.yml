@@ -174,7 +174,7 @@ jobs:
         timeout-minutes: 15
         run: |
           $config = Get-Content -Raw tauri.conf.json | ConvertFrom-Json
-          $setup = "dist/abito-island-$($config.version)-win-x64-setup.exe"
+          $setup = "dist/koda-$($config.version)-win-x64-setup.exe"
           ./ci/public/smoke-windows.ps1 -Setup $setup
       - name: Upload Windows installer and smoke evidence
         if: always()

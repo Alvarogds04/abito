@@ -372,7 +372,7 @@ pub async fn chat_action(
             let missing = specialistshost::select_conversation_role(&app, &state, role_id)?;
             l.activate_conversation(summary, page);
             state.chat_context.lock().expect("chat context lock").new_conversation();
-            if missing { l.history_notice("El especialista de esta conversación ya no existe; ahora responde Abito principal."); }
+            if missing { l.history_notice("El especialista de esta conversación ya no existe; ahora responde Koda principal."); }
             drop(l);
             publish_chat(&app);
             Ok(chat_view(&app, &state))
@@ -446,7 +446,7 @@ where
 {
     let island = island_root().ok_or_else(|| {
         attach_error(chat::ChatError::invalid_input(
-            "La carpeta de trabajo de Abito todavía no existe: abrí el chat cuando el motor esté disponible.",
+            "La carpeta de trabajo de Koda todavía no existe: abrí el chat cuando el motor esté disponible.",
         ))
     })?;
     tauri::async_runtime::spawn_blocking(move || {

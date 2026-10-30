@@ -1,5 +1,5 @@
 'use strict';
-// #503 T3 · S22 · 22 Voz / OK Abito → Opción A: a live status banner on top (icon + word) and three blocks:
+// #503 T3 · S22 · 22 Voz / OK Koda → Opción A: a live status banner on top (icon + word) and three blocks:
 // Activación (listen switch + sensitivity with its value and «Probar»), Respuestas, Privacidad (collapsible).
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -46,17 +46,17 @@ test('S22 Voz: blocks in the approved order: Activación first, then Modelo de v
   const { page } = await mount();
   // The original three blocks keep their relative order; the model picker (S5, L5: «en el mismo ajuste») and the
   // training (S2) sit between Activación and Respuestas. Activación stays first and Privacidad last.
-  // 0.2.1 (L2 «OK Abito: A · Avanzado desplegable»): Activación and Respuestas first; the shared model, the language and the training sit in one fold
+  // 0.2.1 (L2 «OK Koda: A · Avanzado desplegable»): Activación and Respuestas first; the shared model, the language and the training sit in one fold
   assert.deepEqual(cardTitles(page), ['Activación', 'Respuestas', 'Reconocimiento', 'Entrenamiento', 'Privacidad']);
   assert(all(page).some(e => e.tagName === 'details' && e.attrs.id === 'voice-advanced'), 'the fold exists');
   assert.deepEqual(cardTitles(page).filter(t => ['Activación', 'Respuestas', 'Privacidad'].includes(t)), ['Activación', 'Respuestas', 'Privacidad']);
   assert.equal(all(page).filter(e => e.className === 'hub-card').length, 5);
   const act = all(page).find(e => e.className === 'hub-card');
-  assert(text(act).includes('Escuchar « OK Abito »')); assert(text(act).includes('Parakeet, en tu ordenador')); assert(text(act).includes('Sensibilidad de « OK Abito »'));
+  assert(text(act).includes('Escuchar « OK Koda »')); assert(text(act).includes('Parakeet, en tu ordenador')); assert(text(act).includes('Sensibilidad de « OK Koda »'));
   const privacy = all(page).find(e => e.tagName === 'details' && e.attrs.id === 'voice-privacy');
   assert(privacy, 'Privacidad is a real disclosure'); assert(!privacy.attrs.open, 'collapsed by default');
   assert(all(privacy).some(e => e.tagName === 'summary' && e.textContent === 'Privacidad'));
-  assert(text(privacy).includes('Tu voz nunca sale de este ordenador') && text(privacy).includes('Abito nunca envía un correo'), 'both privacy notes are kept, only folded');
+  assert(text(privacy).includes('Tu voz nunca sale de este ordenador') && text(privacy).includes('Koda nunca envía un correo'), 'both privacy notes are kept, only folded');
 });
 
 test('S22 Voz: sensitivity shows its numeric value live and «Probar» checks it locally without opening the microphone', async () => {

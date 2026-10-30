@@ -101,7 +101,7 @@
     const focusedEl = doc.activeElement && host.contains(doc.activeElement) ? doc.activeElement.id : null;
     const currentStore = store();
     const agents = root.AbitoSpecialists?.agentsView(currentStore, prefs, A).agents || [];
-    const rows = [{ id: A.PRINCIPAL_ID, name: 'Abito', color: A.resolveColor(A.PRINCIPAL_ID, prefs.avatarColors) }, ...agents];
+    const rows = [{ id: A.PRINCIPAL_ID, name: 'Koda', color: A.resolveColor(A.PRINCIPAL_ID, prefs.avatarColors) }, ...agents];
     const storedActive = currentStore?.specialists?.find(r => r.id === currentStore.active);
     const selected = storedActive ? storedActive.id : A.PRINCIPAL_ID;
     const pickedSession = !focused && sessionRows().find(r => r.id === sessionFocus);
@@ -229,6 +229,6 @@
     const observed = version;
     invoke('prefs_action', { payload: { action: 'view' } }).then(raw => {
       if (version === observed) apply(raw);
-    }, () => say('No se pudieron leer tus blobs guardados. Se muestra Abito sin guardar.'));
-  } else say('Sin acceso a preferencias. Se muestra Abito sin guardar.');
+    }, () => say('No se pudieron leer tus blobs guardados. Se muestra Koda sin guardar.'));
+  } else say('Sin acceso a preferencias. Se muestra Koda sin guardar.');
 })(typeof window !== 'undefined' ? window : this);

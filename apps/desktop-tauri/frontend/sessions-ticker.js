@@ -311,6 +311,7 @@ function mount(V) {
   function openOverlay() { overlay.hidden = false; paintOverlay(); (overlayButtons().find(b => b.getAttribute('aria-current')) || overlayButtons()[0] || overlayBack).focus(); }
   function closeOverlay(refocus) { if (overlay.hidden) return; overlay.hidden = true; if (refocus && !seeAll.hidden) seeAll.focus(); }
   seeAll.addEventListener('click', event => { if (event.isTrusted === true && canFocus()) openOverlay(); });
+  document.addEventListener('abito:sessions-all-open', () => { if (canFocus()) openOverlay(); });
   overlayBack.addEventListener('click', event => { if (event.isTrusted === true) closeOverlay(true); });
   overlay.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeOverlay(true); return; }
@@ -336,15 +337,28 @@ function mount(V) {
     document.dispatchEvent(new CustomEvent('abito:session-focused', { detail: { id } }));
     show(lastView);
   };
-  jump.addEventListener('click', async event => {
-    if (event.isTrusted !== true || !memory.focus || jump.hidden || jump.disabled) return;
-    jump.disabled = true;
-    // The focused session's own key (the daemon's row id) lets Rust find THAT session's terminal from /proc; a row
-    // without a well-formed id, or no row, is the plain closed verb as before. Nothing but this id ever travels.
-    const key = memory.focus && typeof memory.focus.id === 'string' && /^s-[0-9a-f]{8}$/.test(memory.focus.id) ? memory.focus.id : null;
+  // ONE closed host verb for both entries (the «↗» button and the Nusa Agentes row): nothing but a well-formed session id ever travels.
+  const SESSION_KEY = /^s-[0-9a-f]{8}$/;
+  let jumping = false;
+  const openTerminal = async key => {
+    if (jumping) return;
+    jumping = true; jump.disabled = true;
     try { await invoke('focus_host', { payload: key ? { target: 'terminal', session: key } : { target: 'terminal' } }); }
     catch { const live = document.getElementById('pill-live'); if (live) live.textContent = 'No se pudo abrir una terminal.'; }
-    finally { jump.disabled = false; }
+    finally { jumping = false; jump.disabled = false; }
+  };
+  jump.addEventListener('click', event => {
+    if (event.isTrusted !== true || !memory.focus || jump.hidden || jump.disabled) return;
+    // The focused session's own key (the daemon's row id) lets Rust find THAT session's terminal from /proc; a row
+    // without a well-formed id, or no row, is the plain closed verb as before.
+    openTerminal(typeof memory.focus.id === 'string' && SESSION_KEY.test(memory.focus.id) ? memory.focus.id : null);
+  });
+  // Nusa Agentes rows: their trusted «↗» click dispatches this event (the trust gate is theirs, as for the other Nusa opener); the same
+  // closed verb for THAT row's id, same canFocus gate as selecting. A malformed id is refused here.
+  document.addEventListener('abito:session-jump', event => {
+    const id = event.detail?.id;
+    if (typeof id !== 'string' || !SESSION_KEY.test(id) || !canFocus()) return;
+    openTerminal(id);
   });
   const memory = V.newMemory();
   const frame = now => { raf = 0; if (ticker) { ticker.tick(now); if (ticker.animating && !document.hidden) raf = requestAnimationFrame(frame); } };

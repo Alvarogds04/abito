@@ -58,8 +58,8 @@ pub fn desktop_entry(exe: &Path) -> Option<String> {
     Some(format!(
         "[Desktop Entry]\n\
          Type=Application\n\
-         Name=Abito\n\
-         Comment=Abito\n\
+         Name=Koda\n\
+         Comment=Koda\n\
          Exec={exec} --autostart\n\
          Icon={icon}\n\
          Terminal=false\n\

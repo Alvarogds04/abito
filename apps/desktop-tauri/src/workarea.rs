@@ -315,7 +315,7 @@ impl OwnWindowError {
 
 /// Identity criterion for "our window" (FIX-B, spec lane 4aa7c63):
 /// 1. PRIMARY: `_NET_WM_PID` equals this process id. A title is not an
-///    identity — any other client can set its title to "Abito".
+///    identity — any other client can set its title to "Koda".
 /// 2. SECONDARY: among our own windows, the one titled `title` wins; a single
 ///    own window is ours even untitled; several untitled → `Ambiguous`.
 /// 3. No own window, but a window with our title and NO `_NET_WM_PID` →
@@ -503,7 +503,7 @@ pub fn x11_window_origin() -> Option<(i32, i32)> {
         }
         *cache.lock().expect("wid cache lock") = None; // stale id: rescan
     }
-    let win = match x11_find_own_window("Abito") {
+    let win = match x11_find_own_window(WINDOW_TITLE) {
         Ok(win) => win,
         Err(error) => {
             // Visible, once per distinct reason: the caller falls back to
@@ -528,6 +528,9 @@ pub fn x11_window_origin() -> Option<(i32, i32)> {
     None
 }
 
+/// Koda 0.1 T2: the native window title (tauri.conf.json carries the same text). The own-window probes match on it.
+pub const WINDOW_TITLE: &str = "Koda";
+
 /// No X server/EWMH client list exists here, so report the existing truthful error.
 #[cfg(not(target_os = "linux"))]
 pub fn x11_find_own_window(_title: &str) -> Result<X11Window, OwnWindowError> {
@@ -551,6 +554,15 @@ pub fn current(win: &WebviewWindow) -> WorkArea {
 
 #[cfg(test)]
 mod tests {
+    // Koda 0.1 T2: the native window title is ONE constant; tauri.conf.json must carry the same text, or the
+    // own-window probes (which match on it) would stop finding the island.
+    #[test]
+    fn the_native_window_title_is_koda_and_matches_the_tauri_config() {
+        assert_eq!(super::WINDOW_TITLE, "Koda");
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["app"]["windows"][0]["title"], super::WINDOW_TITLE);
+    }
+
     use super::*;
 
     fn cand(id: u32, pid: Option<u32>, title: &str) -> Candidate {
@@ -625,42 +637,42 @@ mod tests {
 
     #[test]
     fn our_window_is_the_one_with_our_pid_and_our_title() {
-        let list = [cand(1, Some(999), "Abito"), cand(2, Some(42), "Abito")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Ok(2));
+        let list = [cand(1, Some(999), WINDOW_TITLE), cand(2, Some(42), WINDOW_TITLE)];
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Ok(2));
     }
 
     #[test]
     fn a_foreign_window_titled_abito_is_never_taken_for_ours() {
-        // another process opens a window titled exactly "Abito"
-        let list = [cand(7, Some(999), "Abito")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Err(OwnWindowError::NotFound));
+        // another process opens a window titled exactly "Koda"
+        let list = [cand(7, Some(999), WINDOW_TITLE)];
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Err(OwnWindowError::NotFound));
     }
 
     #[test]
     fn a_window_without_net_wm_pid_fails_visibly_instead_of_guessing() {
-        let list = [cand(7, None, "Abito")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Err(OwnWindowError::PidMissing));
+        let list = [cand(7, None, WINDOW_TITLE)];
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Err(OwnWindowError::PidMissing));
         // even when a pid-less window is listed first, a proven own one wins
-        let list = [cand(7, None, "Abito"), cand(8, Some(42), "Abito")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Ok(8));
+        let list = [cand(7, None, WINDOW_TITLE), cand(8, Some(42), WINDOW_TITLE)];
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Ok(8));
     }
 
     #[test]
     fn title_is_secondary_among_our_own_windows() {
         // our process may own helper windows; prefer the titled one
-        let list = [cand(3, Some(42), "helper"), cand(4, Some(42), "Abito")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Ok(4));
+        let list = [cand(3, Some(42), "helper"), cand(4, Some(42), WINDOW_TITLE)];
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Ok(4));
         // exactly one own top-level window: it is ours even untitled
         let list = [cand(5, Some(42), "")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Ok(5));
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Ok(5));
         // several own windows, none titled: ambiguous, refuse
         let list = [cand(5, Some(42), "a"), cand(6, Some(42), "b")];
-        assert_eq!(pick_own_window(&list, 42, "Abito"), Err(OwnWindowError::Ambiguous));
+        assert_eq!(pick_own_window(&list, 42, WINDOW_TITLE), Err(OwnWindowError::Ambiguous));
     }
 
     #[test]
     fn empty_list_is_not_found() {
-        assert_eq!(pick_own_window(&[], 42, "Abito"), Err(OwnWindowError::NotFound));
+        assert_eq!(pick_own_window(&[], 42, WINDOW_TITLE), Err(OwnWindowError::NotFound));
     }
 
     // ---- F010: the work area of ONE monitor, computed from INJECTED monitors ----

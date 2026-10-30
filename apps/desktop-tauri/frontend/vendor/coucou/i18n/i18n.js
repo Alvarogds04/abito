@@ -75,7 +75,7 @@ const messages = {
   // S10 (L30): weekly recap (views/recap.ts, recap/summary.ts)
   "Weekly recap": "Resumen semanal",
   "No activity last week": "Sin actividad la semana pasada",
-  "Abito counts your agent sessions as they happen — check back next Monday.": "Abito cuenta tus sesiones de agentes a medida que ocurren: volvé el próximo lunes.",
+  "Koda counts your agent sessions as they happen — check back next Monday.": "Koda cuenta tus sesiones de agentes a medida que ocurren: volvé el próximo lunes.",
   coding: "programando",
   session: "sesión",
   sessions: "sesiones",
@@ -91,7 +91,7 @@ const messages = {
   "{allowed} allowed, {denied} denied": "{allowed} permitidos, {denied} denegados",
   Questions: "Preguntas",
   "Share image": "Compartir imagen",
-  "The share image is not available in Abito yet.": "La imagen para compartir todavía no está disponible en Abito.",
+  "The share image is not available in Koda yet.": "La imagen para compartir todavía no está disponible en Koda.",
   OK: "OK",
   Sunday: "domingo",
   Monday: "lunes",
@@ -103,13 +103,13 @@ const messages = {
   "{n}m": "{n} min",
   "{n}h": "{n} h",
   "{h}h {m}m": "{h} h {m} min",
-  "Unavailable features": "No disponible en Abito todavía: carpeta de sonidos; recarga y contador de sonidos; inicio automático; idioma; resumen."
+  "Unavailable features": "No disponible en Koda todavía: carpeta de sonidos; recarga y contador de sonidos; inicio automático; idioma; resumen."
 };
 function interpolate(text, vars) {
   return vars ? text.replace(/\{(\w+)\}/g, (whole, name) => name in vars ? String(vars[name]) : whole) : text;
 }
 function t(key, vars) {
-  if (!Object.prototype.hasOwnProperty.call(messages, key)) throw new Error(`Traducción de Abito no disponible: ${key}`);
+  if (!Object.prototype.hasOwnProperty.call(messages, key)) throw new Error(`Traducción de Koda no disponible: ${key}`);
   return interpolate(messages[key], vars);
 }
 function tn(one, other, count, vars) {

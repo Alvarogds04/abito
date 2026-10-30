@@ -317,7 +317,7 @@ impl PortalGrabber {
                 (on_press.lock().expect("press callback lock"))();
             }
         });
-        let description = crate::hotkey::Target::ALL.into_iter().find(|t| t.portal_id() == id).map(|t| t.description()).unwrap_or("Atajo de Abito");
+        let description = crate::hotkey::Target::ALL.into_iter().find(|t| t.portal_id() == id).map(|t| t.description()).unwrap_or("Atajo de Koda");
         hub.apply(vec![BindRequest { id: id.to_owned(), description: description.to_owned(), trigger: combo.portal_trigger() }], false);
         PortalGrabber { hub }
     }

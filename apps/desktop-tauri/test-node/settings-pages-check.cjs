@@ -43,7 +43,7 @@ const { dom, Element, all, text } = require('./settings-accounts-check.cjs');
       await config.flowPages[id](container, {});
       assert.deepEqual(invoked, [[id, undefined]]);
     } else if (id === 'voice') {
-      assert(!inactivePages.voice || config.flowPages.voice !== inactivePages.voice, 'OK Abito is wired (voice-page-check.cjs covers it)');
+      assert(!inactivePages.voice || config.flowPages.voice !== inactivePages.voice, 'OK Koda is wired (voice-page-check.cjs covers it)');
       continue;
     } else if (config.flowPages[id]) {
       await config.flowPages[id](container, { hero, status: { prefs: { key: 'right_ctrl' }, platform: 'linux', models: { parakeet: { state: 'missing' }, downloadMb: 670 } }, navigate() {}, set onLeave(_) {} });
@@ -59,10 +59,10 @@ const { dom, Element, all, text } = require('./settings-accounts-check.cjs');
       if (id === 'voice') {
         assert.deepEqual(all(container).filter(e=>e.className==='hub-label').map(text),['Escucha','Respuestas','Privacidad']);
         assert.equal(all(container).filter(e=>e.className==='hub-card').length,3);
-        assert(text(container).includes('Escuchar « OK Abito »'));
+        assert(text(container).includes('Escuchar « OK Koda »'));
         assert(text(container).includes('Parakeet, en tu ordenador'));
-        assert(text(container).includes('Abito responde en voz alta'));
-        assert(text(container).includes('Abito nunca envía un correo'));
+        assert(text(container).includes('Koda responde en voz alta'));
+        assert(text(container).includes('Koda nunca envía un correo'));
       }
     } else {
       const cleanup = await config.renderNotch(id, container);
@@ -79,7 +79,7 @@ const { dom, Element, all, text } = require('./settings-accounts-check.cjs');
         }
       }
     }
-    // L42: the voice-model control (Notetaker, OK Abito) is live; everything else is disabled
+    // L42: the voice-model control (Notetaker, OK Koda) is live; everything else is disabled
     for (const e of all(container).filter(e => ['button','input','select','textarea'].includes(e.tagName) && !String(e.className).includes('hub-info') && !(['notes','voice'].includes(id) && String(e.textContent || '').trim() === 'Descargar'))) assert.equal(e.disabled, true, id);
   }
   assert(source.includes("page === 'agents'") && source.includes("part: 'tools'") && source.includes("part: 'island'") && source.includes("part: 'abito'"), '0.2.1 S1 (option B): Agentes composes the main tool, the CLI table, the island switches and the Abito part; Integraciones is the services only');

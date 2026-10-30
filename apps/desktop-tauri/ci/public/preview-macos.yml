@@ -36,7 +36,7 @@ jobs:
           echo "SHERPA_ONNX_LIB_DIR=$LIB/lib" >> "$GITHUB_ENV"
       - name: macOS unit tests and installed runtime lookup
         run: |
-          cargo test --lib --locked -- daemonhost transport agentconn
+          cargo test --lib --locked -- daemonhost transport agentconn handoff
           # Installed behavior: release excludes Linux-only debug probes.
           cargo test --release --locked --test platform_runtime
       - name: Build .app and .dmg (unsigned)
@@ -63,10 +63,10 @@ jobs:
           set -euo pipefail
           out="$GITHUB_WORKSPACE/out"; mkdir -p "$out"
           (cd target/release/bundle/macos
-           ditto -c -k --keepParent *.app "$out/Abito-macos-arm64.zip")
-          cp target/release/bundle/dmg/*.dmg "$out/Abito-macos-arm64.dmg"
+           ditto -c -k --keepParent *.app "$out/Koda-macos-arm64.zip")
+          cp target/release/bundle/dmg/*.dmg "$out/Koda-macos-arm64.dmg"
           (cd "$out"
-           shasum -a 256 Abito-macos-arm64.* > SHA256SUMS-macos.txt
+           shasum -a 256 Koda-macos-arm64.* > SHA256SUMS-macos.txt
            cat SHA256SUMS-macos.txt)
       - name: Install isolated smoke runtimes
         run: |

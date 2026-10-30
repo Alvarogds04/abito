@@ -15,12 +15,12 @@ const FLOW_PAGES = [
   { id: "flowsettings", icon: "sliders", title: () => "Ajustes de dictado" }
 ];
 const NOTCH_PAGES = [
-  { id: "general", icon: "gear", title: () => t("General"), subtitle: () => t("Abito, his sounds and how the island behaves.") },
+  { id: "general", icon: "gear", title: () => t("General"), subtitle: () => t("Koda, his sounds and how the island behaves.") },
   // 0.2.1 (S1, option B): «Integraciones» (services) and «Agentes» (the CLI hooks) are two pages.
-  { id: "integrations", icon: "puzzle", title: () => "Integraciones", subtitle: () => "Los servicios que Abito usa y cuáles se ven en la isla." },
+  { id: "integrations", icon: "puzzle", title: () => "Integraciones", subtitle: () => "Los servicios que Koda usa y cuáles se ven en la isla." },
   { id: "agents", icon: "terminal", title: () => "Agentes", subtitle: () => "Los hooks de cada agente de línea de comandos." },
   { id: "chat", icon: "chat", title: () => t("Chat"), subtitle: () => t("The AI of the island's chat, with your own keys.") },
-  { id: "voice", icon: "wave", title: () => "OK Abito" },
+  { id: "voice", icon: "wave", title: () => "OK Koda" },
   { id: "phone", icon: "phone", title: () => t("Android phone"), subtitle: () => t("Your agents and their approvals on your Android phone, over your Wi-Fi.") },
   { id: "shortcuts", icon: "keyboard", title: () => t("Shortcuts"), subtitle: () => t("The keys that open the island and its actions.") },
   { id: "privacy", icon: "lock", title: () => "Privacidad", subtitle: () => "Avisos de fallos y reportes que vos decidís enviar." }
@@ -176,7 +176,7 @@ async function startHub(root, opts) {
   }
   const side = h("nav", { class: "hub-side" });
   const logo = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  side.append(h("div", { class: "hub-brand" }, logo, h("span", { text: "Abito" })));
+  side.append(h("div", { class: "hub-brand" }, logo, h("span", { text: "Koda" })));
   liveMochi(logo);
   const group = (title, pages) => {
     const shown = pages.filter((p) => !isPaused(p.id));
@@ -191,7 +191,7 @@ async function startHub(root, opts) {
   };
   group("Flow", FLOW_PAGES);
   group(t("Notch"), NOTCH_PAGES);
-  side.append(h("div", { class: "spacer" }), statusLine, h("div", { class: "hub-version", text: `Abito ${opts.version}` }));
+  side.append(h("div", { class: "spacer" }), statusLine, h("div", { class: "hub-version", text: `Koda ${opts.version}` }));
   clear(root);
   scroll.append(h("p", { class: "hub-loading", text: "Cargando…" }));
   root.append(side, h("main", { class: "hub-panel" }, scroll));

@@ -37,7 +37,7 @@ export async function renderAppearance({ invoke, listen, V, S, A }: any) {
     const restore = preserveFocus(root); clear(root);
     const theme = V.themeView(prefs), pick = trusted(select(theme.options.map((o: any) => [o.id, o.label]), theme.mode, value => save({ action: 'set_theme', theme: value })));
     pick.setAttribute('id', 'appearance-theme'); pick.setAttribute('aria-label', 'Tema');
-    root.append(section('Tema', row('Tema', null, pick)), colors(V, A, prefs, [{id:A.PRINCIPAL_ID,name:'Abito'}, ...S.identityView(store).identities], save), section('Movimiento', row('Animación reducida', 'No disponible en esta ventana')), message);
+    root.append(section('Tema', row('Tema', null, pick)), colors(V, A, prefs, [{id:A.PRINCIPAL_ID,name:'Koda'}, ...S.identityView(store).identities], save), section('Movimiento', row('Animación reducida', 'No disponible en esta ventana')), message);
     if (S.identityView(store).kind !== 'ready') root.append(note('Colores de especialistas no disponibles: no se pudieron cargar sus identidades.'));
     restore();
   }
@@ -54,7 +54,7 @@ export async function renderPills({ invoke, listen, V, S, A, P, C, part = 'tools
   // Product/Pestañas-activas: keep the selector below for a future release, unreachable for now.
   if (part === 'tools') {
     // Same non-interactive card/row pattern and wording as Notetaker in pages.ts.
-    root.append(card(row('Herramienta principal: No disponible todavía', null)));
+    // HU-076: the main-tool selector is not available in this version, so nothing is shown (it used to say so in a card).
     return s.finish();
   }
   let prefs: any = {}, store: any = null, saving = false;
@@ -79,7 +79,7 @@ export async function renderPills({ invoke, listen, V, S, A, P, C, part = 'tools
     for (const b of root.querySelectorAll('button')) (b as HTMLButtonElement).disabled = true;
     work(plan!, () => { message.textContent = 'Guardado.'; }).finally(() => { saving = false; lastKey = ''; if (s.alive()) paint(); });
   }
-  const principalInstructions = h('textarea',{id:'abito-instructions',class:'hub-input','aria-label':'Instrucciones de Abito'}) as HTMLTextAreaElement;
+  const principalInstructions = h('textarea',{id:'abito-instructions',class:'hub-input','aria-label':'Instrucciones de Koda'}) as HTMLTextAreaElement;
   let instructionsDraft = false;
   principalInstructions.addEventListener('input',e => { if(e.isTrusted) instructionsDraft = true; });
   function paint() {
@@ -99,7 +99,7 @@ export async function renderPills({ invoke, listen, V, S, A, P, C, part = 'tools
       // ONE «En la isla» control for the specialists (S1/T2): the model is a pure read over the two stored lists; the write goes through
       // set_island_agents, so nothing stored changes shape. Pills (agents, services) toggle on their own pages through toggle_declared_pill.
       const m = P.islandModel(prefs, agents());
-      const spec = notchTipSection('Especialistas', 'Los especialistas se definen en el código de Abito. Elegí cuáles se ven en la isla (hasta ' + m.specialistsMax + ').');
+      const spec = notchTipSection('Especialistas', 'Los especialistas se definen en el código de Koda. Elegí cuáles se ven en la isla (hasta ' + m.specialistsMax + ').');
       const base = owned();
       if (base.kind !== 'ready') spec.append(note(base.persistenceNote || 'Leyendo especialistas…'));
       else {
@@ -115,8 +115,8 @@ export async function renderPills({ invoke, listen, V, S, A, P, C, part = 'tools
     if (part === 'abito') {
       if (!instructionsDraft) principalInstructions.value = prefs.abitoInstructions || '';
       principalInstructions.maxLength = S.MAX_INSTRUCTIONS;
-      root.append(section('Abito',row('Instrucciones',null,infoTip('Se aplican a los próximos mensajes del chat de Abito.','Más información: Instrucciones'),principalInstructions,action('Guardar instrucciones',() => { run({type:'set_abito_instructions',text:principalInstructions.value}); }))),
-        colors(V,A,prefs,[{id:A.PRINCIPAL_ID,name:'Abito'},...S.identityView(store).identities],(p: any) => run({type:'prefs',payload:p})));
+      root.append(section('Koda',row('Instrucciones',null,infoTip('Se aplican a los próximos mensajes del chat de Koda.','Más información: Instrucciones'),principalInstructions,action('Guardar instrucciones',() => { run({type:'set_abito_instructions',text:principalInstructions.value}); }))),
+        colors(V,A,prefs,[{id:A.PRINCIPAL_ID,name:'Koda'},...S.identityView(store).identities],(p: any) => run({type:'prefs',payload:p})));
     }
     root.append(message); restore();
   }

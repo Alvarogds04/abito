@@ -92,8 +92,27 @@ const cls = (e, c) => all(e).filter(x => (x.className || '').split(' ').includes
   assert.match(css, /\.recap-chip \.v \{ font: 700 17px var\(--font\)/); assert.match(css, /#recap-card \.btn::after \{[^}]*inset: 7px 0/);
   // L32: Coucou's recap view is 184 high; the card asks island.js for that island and gives it back on close
   const island = fs.readFileSync(path.join(frontend, 'island.js'), 'utf8');
-  assert.match(island, /const RECAP_H = 208;/); assert.match(island, /recapShown \? RECAP_H : questionShown \? questionH : finishedH \|\| \(engineBandOn/);
+  assert.match(island, /const RECAP_H = 208;/);
+  // HU-057 (odd/tasks/isla-nusa.md): the height expression grew cardH / fitFinished, so the old source regex on it was a design fossil. The invariant
+  // («the recap card asks island.js for the RECAP height and gives the overview height back on close») is asserted BEHAVIOURALLY below, on the real
+  // island in a real browser: the card's own event, then the measured #island box.
   assert.match(island, /document\.addEventListener\('abito:recap'/); assert.match(src, /new CustomEvent\('abito:recap', \{ detail: \{ show \} \}\)/);
   assert.match(css, /#recap-card \{[^}]*height: 156px; z-index: 3;/, 'the card sits under the character (z 4)');
+  const H = require('./island-geometry-harness.cjs');
+  if (!H.findPlaywright()) { console.log('SKIPPED island-recap-check (real-layout part): no playwright — NOT a pass'); return; }
+  const ui = await H.open({ quick: true, sessions: [] });
+  try {
+    const islandH = async () => (await ui.measure('#island'))[0];
+    const recap = async show => { await ui.page.evaluate(show => document.dispatchEvent(new CustomEvent('abito:recap', { detail: { show } })), show); await ui.page.waitForTimeout(1500); };
+    const before = await islandH();
+    assert.ok(before.shown && Math.abs(before.h - 150) <= 1 && Math.abs(before.w - 720) <= 1, 'HU-057 overview notch is 720x150 before the recap: ' + JSON.stringify(before));
+    await recap(true);
+    const open = await islandH();
+    assert.ok(Math.abs(open.h - 208) <= 1, 'recap open: the island grows to RECAP_H (208), measured ' + open.h);
+    assert.ok(Math.abs(open.w - 720) <= 1, 'recap keeps the 720 width, measured ' + open.w);
+    await recap(false);
+    const after = await islandH();
+    assert.ok(Math.abs(after.h - before.h) <= 1, 'recap closed: the island gives the overview height back (' + before.h + '), measured ' + after.h);
+  } finally { await ui.close(); }
   console.log('PASS island-recap');
 })().catch(e => { console.error('FAIL', e.stack); process.exit(1); });

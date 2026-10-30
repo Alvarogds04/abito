@@ -23,7 +23,7 @@ test('S24 Teléfono: header status «Esperando», the link switch, and the three
   assert(all(status).some(e => e.className === 'state-ico' && e.attrs['aria-hidden'] === 'true'));
   assert(words(ui).includes('Enlace con el teléfono'));
   const steps = all(ui).find(e => e.tagName === 'ol' && e.attrs.id === 'phone-steps'); assert(steps, 'a real numbered list');
-  assert.deepEqual(steps.children.map(words), ['Abrí Abito en el teléfono.', 'Cuando esté disponible, escaneá el código con el teléfono.', 'Confirmá en el teléfono el código que te mostrará Abito.']);
+  assert.deepEqual(steps.children.map(words), ['Abrí Koda en el teléfono.', 'Cuando esté disponible, escaneá el código con el teléfono.', 'Confirmá en el teléfono el código que te mostrará Koda.']);
 });
 
 test('S24 Teléfono: NO QR anywhere, no pairing code invented, no device invented; the page says why in words', async () => {

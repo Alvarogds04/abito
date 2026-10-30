@@ -107,7 +107,7 @@ test('finishedCardView: name + verb from the host title, the detail is the bold 
   // S10 (L25): the additive wire fields give Coucou's «<project> <agent> terminó»; bad or partial ones fall back to the title
   const label = slug => ({ 'claude-code': 'Claude Code', codex: 'Codex', pi: 'Pi' }[slug] || slug);
   const rich = O.finishedCardView({ title: 'Pi terminó su turno', detail: 'Hecho.', projectName: 'sb-second-brain', agent: 'claude-code' }, label);
-  assert.deepEqual([rich.name, rich.verb, rich.message], ['Abito', 'Claude Code terminó', 'Hecho.'], 'S4: the Abito project folder (sb-second-brain) is shown as «Abito»');
+  assert.deepEqual([rich.name, rich.verb, rich.message], ['Koda', 'Claude Code terminó', 'Hecho.'], 'S4: the Koda project folder (sb-second-brain) is shown as «Koda»'); // Koda 0.1 T2
   assert.equal(O.finishedCardView({ title: 'x terminó', detail: '', projectName: 'otro-proyecto', agent: 'codex' }, label).name, 'otro-proyecto', 'any other project keeps its own name');
   for (const bad of [{ projectName: 'x' }, { agent: 'pi' }, { projectName: 'a/b', agent: 'pi' }, { projectName: 'x', agent: 'Pi' }, { projectName: '<b>', agent: 'pi' }]) {
     const v2 = O.finishedCardView({ title: 'Pi terminó su turno', detail: 'd', ...bad }, label);

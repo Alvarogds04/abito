@@ -1,9 +1,11 @@
 'use strict';
 const { test } = require('node:test');
+const { offlineEnv, offlineDir, stubEndpoint } = require('./platform-env.cjs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { handleClaudeHook, parseArgs, watchdogMs, startWatchdog, ALLOW, DENY } = require('../src/claude.cjs');
-const { fakeReceiver } = require('./fake-receiver.cjs');
+const { handleClaudeHook: raw_handleClaudeHook, parseArgs, watchdogMs, startWatchdog, ALLOW, DENY } = require('../src/claude.cjs');
+const { fakeReceiver, transportOf, viaPipe } = require('./fake-receiver.cjs');
+const handleClaudeHook = viaPipe(raw_handleClaudeHook);
 
 const cwd = path.resolve(__dirname, '..');
 const permission = (over = {}) => JSON.stringify({ session_id: 'sess-1', transcript_path: '/home/x/SECRETPATH/t.jsonl', cwd,
@@ -12,7 +14,7 @@ const permission = (over = {}) => JSON.stringify({ session_id: 'sess-1', transcr
 const stopInput = (over = {}) => JSON.stringify({ session_id: 'sess-1', cwd, hook_event_name: 'Stop', stop_hook_active: false,
   last_assistant_message: 'SECRETREPLY', ...over });
 // An empty env would resolve the REAL default runtime (/run/user/<uid>/abito-island) and could reach the live island.
-const NO_ISLAND = { ABITO_SOCKET_DIR: '/nonexistent-abito-test' };
+const NO_ISLAND = offlineDir('nonexistent-abito-test');
 const envOf = r => ({ ABITO_DESKTOP_SOCKET: r.endpoint, ABITO_SOCKET_DIR: r.runtime });
 const stub = status => () => ({ ask: async () => ({ status }), notify: async () => ({ status: 'sent' }) });
 function assertOut(r) { assert.equal(r.exitCode, 0); assert.ok(r.stdout === '' || (/\n$/.test(r.stdout) && r.stdout.trim().split('\n').length === 1 && JSON.parse(r.stdout))); }
@@ -36,7 +38,7 @@ test('allow => exact allow JSON; deny => exact deny JSON', async t => {
     assert.equal(r.stdout, expected); assert.equal(r.stderr, '');
   }
   assert.deepEqual(JSON.parse(ALLOW), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
-  assert.deepEqual(JSON.parse(DENY), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: 'Denied from the Abito island by the user.' } } });
+  assert.deepEqual(JSON.parse(DENY), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: 'Denied from the Koda island by the user.' } } });
 });
 test('question frame: kind question, two options, 30 s budget, short text', async t => {
   const rcv = await fakeReceiver(t, { questions: true });
@@ -58,7 +60,7 @@ test('--timeout-sec 20 => no question, empty; 34 too', async t => {
 });
 test('every non-answer status => empty stdout, exit 0, no content on stderr', async () => {
   for (const s of ['expired', 'busy', 'cancelled', 'human_cancelled', 'unavailable', 'unsupported_receiver', 'protocol_error', 'invalid_request', 'weird']) {
-    const r = await handleClaudeHook({ event: 'permission-request', input: permission(), env: { ABITO_DESKTOP_SOCKET: '/nope' }, argv: [], clientFactory: stub(s) });
+    const r = await handleClaudeHook({ event: 'permission-request', input: permission(), env: stubEndpoint(), argv: [], clientFactory: stub(s) });
     assertOut(r); assert.equal(r.stdout, ''); assert.doesNotMatch(r.stderr, /SECRET|Bash|ls/);
   }
   const u = await handleClaudeHook({ event: 'permission-request', input: permission(), env: NO_ISLAND, argv: [], clientFactory: stub('unavailable') });
@@ -66,7 +68,7 @@ test('every non-answer status => empty stdout, exit 0, no content on stderr', as
 });
 test('answer that is not allow/deny, or status answered with text => empty', async () => {
   for (const answer of [{ type: 'option', value: 'always' }, { type: 'text', text: 'allow' }, undefined]) {
-    const r = await handleClaudeHook({ event: 'permission-request', input: permission(), env: { ABITO_DESKTOP_SOCKET: '/x' }, argv: [],
+    const r = await handleClaudeHook({ event: 'permission-request', input: permission(), env: stubEndpoint('x'), argv: [],
       clientFactory: () => ({ ask: async () => ({ status: 'answered', answer }) }) });
     assert.equal(r.stdout, '');
   }
@@ -76,10 +78,10 @@ test('no endpoint / old receiver / unavailable transport => empty with generic s
   assertOut(r); assert.equal(r.stdout, '');
   const old = await fakeReceiver(t, { questions: false });
   r = await handleClaudeHook({ event: 'permission-request', input: permission(), env: envOf(old), argv: [],
-    clientFactory: o => new (require('../src/client.cjs').IslandClient)({ ...o, handshakeTimeoutMs: 100 }) });
+    clientFactory: o => new (require('../src/client.cjs').IslandClient)({ ...o, ...transportOf(old), handshakeTimeoutMs: 100 }) });
   assertOut(r); assert.equal(r.stdout, '');
   const un = await handleClaudeHook({ event: 'permission-request', input: permission(), env: envOf(old), argv: [], clientFactory: stub('unavailable') });
-  assert.match(un.stderr, /^Abito island unavailable\. Answer in the terminal\.\n$/);
+  assert.match(un.stderr, /^Koda island unavailable\. Answer in the terminal\.\n$/);
 });
 test('malformed / huge / wrong event / bad cwd / bad tool => empty and no network', async t => {
   const rcv = await fakeReceiver(t, { questions: true });

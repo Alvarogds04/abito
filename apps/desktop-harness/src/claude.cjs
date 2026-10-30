@@ -64,13 +64,13 @@ async function handleClaudeHook({ event, input, env = {}, argv = [], now, client
     if (event === 'permission-request') {
       if (typeof data.tool_name !== 'string' || data.tool_name.length === 0) return none();
       const deadline = computeDeadline({ cliTimeoutMs: args.timeoutSec * 1000, maxMs: MAX_ISLAND_WAIT_MS });
-      if (deadline.mode !== 'ask') return none('Abito island: hook timeout too short for a question. Answer in the terminal.\n');
+      if (deadline.mode !== 'ask') return none('Koda island: hook timeout too short for a question. Answer in the terminal.\n');
       budget = deadline.timeoutMs;
     } else if (data.stop_hook_active === true) return none();
 
     let config;
-    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Abito island: invalid configuration.\n'); }
-    if (!config.endpoint) return none('Abito island unavailable. Answer in the terminal.\n');
+    try { config = resolveConfig(env, process.getuid?.()); } catch { return none('Koda island: invalid configuration.\n'); }
+    if (!config.endpoint) return none('Koda island unavailable. Answer in the terminal.\n');
     const session = sessionToken(data.session_id);
     const options = { endpoint: config.endpoint, runtime: config.runtime, cwd, sessionId: session, agent: 'claude-code',
       projectName: titles.loadTitle(env, TITLE_KIND, session) || undefined, onDiagnostic: () => {} };
@@ -85,7 +85,7 @@ async function handleClaudeHook({ event, input, env = {}, argv = [], now, client
       // One queue slot and one deadline, including the questionnaire summary. No partial answers.
       const result = await client.ask(ask.requestFor(askPlan, budget));
       const answers = ask.answersFor(askPlan, result);
-      if (answers === null) return result && result.status === 'unavailable' ? none('Abito island unavailable. Answer in the terminal.\n') : none(formatNoDecision(result) + '\n');
+      if (answers === null) return result && result.status === 'unavailable' ? none('Koda island unavailable. Answer in the terminal.\n') : none(formatNoDecision(result) + '\n');
       return { stdout: questionOutput(data.tool_input, answers), stderr: '', exitCode: 0 };
     }
     const detail = describeFilePermission(data.tool_name, data.tool_input, cwd) || toolDescription(data.tool_name, data.tool_input);
